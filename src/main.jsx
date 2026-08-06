@@ -131,6 +131,7 @@ function App() {
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [curriculumQuery, setCurriculumQuery] = useState('');
   const [showNotes, setShowNotes] = useState(false);
+  const [academyOpen, setAcademyOpen] = useState(() => savedState?.academyOpen ?? true);
   const [captureState, setCaptureState] = useState({ status: 'idle', message: '' });
   const [captures, setCaptures] = useState([]);
   const [captureQuery, setCaptureQuery] = useState('');
@@ -168,8 +169,8 @@ function App() {
   }, [captures, captureQuery]);
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId })); } catch { /* local persistence is best-effort */ }
-  }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen })); } catch { /* local persistence is best-effort */ }
+  }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen]);
   useEffect(() => {
     try { localStorage.setItem(COMMAND_CENTER_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, projects, tasks })); } catch { /* local persistence is best-effort */ }
   }, [projects, tasks]);
@@ -284,14 +285,21 @@ function App() {
     setPracticeResults((results) => ({ ...results, [activeDrill.id]: { answer: selectedAnswer, correct: selectedAnswer === activeDrill.answer, completedAt: new Date().toISOString() } }));
   };
   const selectNextDrill = () => { const next = practiceQueue.find((drill) => drill.id !== activeDrill.id) || practiceDrills.find((drill) => drill.id !== activeDrill.id) || activeDrill; setActiveDrillId(next.id); setSelectedAnswer(null); };
-  const setNotesOpen = (open) => { setShowNotes(open); window.desktopShell?.setAcademyVisible?.(!open); };
+  const setNotesOpen = (open) => { setShowNotes(open); };
+  const toggleAcademy = () => setAcademyOpen((open) => !open);
+  useEffect(() => {
+    window.desktopShell?.setAcademyVisible?.(view === 'curriculum' && academyOpen && !showNotes);
+    const visible = view === 'curriculum' && academyOpen;
+    appRef.current?.style.setProperty('--academy-width', visible ? (appRef.current.style.getPropertyValue('--academy-width') && appRef.current.style.getPropertyValue('--academy-width') !== '0px' ? appRef.current.style.getPropertyValue('--academy-width') : '44%') : '0px');
+    if (!visible) window.desktopShell?.setAcademyBounds?.({ x: window.innerWidth, width: 0 });
+  }, [view, academyOpen, showNotes]);
   const syncAcademyBounds = useCallback(() => {
     if (!appRef.current || !splitterRef.current) return;
     const appRect = appRef.current.getBoundingClientRect();
     const splitterRect = splitterRef.current.getBoundingClientRect();
     window.desktopShell?.setAcademyBounds?.({ x: splitterRect.right - appRect.left, width: appRect.right - splitterRect.right });
   }, []);
-  useEffect(() => { const observer = new ResizeObserver(syncAcademyBounds); if (appRef.current) observer.observe(appRef.current); syncAcademyBounds(); return () => observer.disconnect(); }, [syncAcademyBounds]);
+  useEffect(() => { const observer = new ResizeObserver(syncAcademyBounds); if (appRef.current) observer.observe(appRef.current); if (view === 'curriculum' && academyOpen) syncAcademyBounds(); return () => observer.disconnect(); }, [syncAcademyBounds, view, academyOpen]);
   useEffect(() => {
     if (!dragging) return undefined;
     const move = (event) => { const appRect = appRef.current?.getBoundingClientRect(); if (!appRect) return; const academyWidth = Math.max(320, Math.min(appRect.width - 210 - 260, appRect.right - event.clientX)); appRef.current.style.setProperty('--academy-width', `${academyWidth}px`); syncAcademyBounds(); };
@@ -319,7 +327,7 @@ function App() {
     </aside>
 
     <main className="main">
-      <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div></div></header>
+      <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
       <div className="main-scroll">
         <section className="hero"><div><span className="eyebrow">AI EXECUTIVE COACH COMMAND CENTER</span><h1>See what matters. Choose what moves. <span>✦</span></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
         <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>No projects, tasks, coach, or external integrations are connected yet</small></div></section>
@@ -336,8 +344,8 @@ function App() {
         </>}
       </div>
     </main>
-    <div className={dragging ? 'academy-splitter dragging' : 'academy-splitter'} ref={splitterRef} role="separator" aria-label="Resize Academy panel" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); setDragging(true); }}><span/></div>
-    <div className="academy-slot" aria-label="Anthropic Academy native browser panel" />
+    {view === 'curriculum' && academyOpen && <div className={dragging ? 'academy-splitter dragging' : 'academy-splitter'} ref={splitterRef} role="separator" aria-label="Resize Academy panel" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); setDragging(true); }}><span/></div>}
+    {view === 'curriculum' && academyOpen && <div className="academy-slot" aria-label="Anthropic Academy native browser panel" />}
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
   </div>;
 }
