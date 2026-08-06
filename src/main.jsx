@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, Play, Search, Settings, Target, X } from 'lucide-react';
+import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Play, Search, Settings, Target, X } from 'lucide-react';
 import './styles.css';
 
 const examFacts = [
@@ -78,11 +78,27 @@ const restoreModules = (savedModules) => {
   return curriculum.map((module) => ({ ...module, lessons: restore(module.lessons) }));
 };
 
+const getCommandCenterSnapshot = ({ current, completed, total, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews }) => {
+  const needsReview = studyMaterials.filter((material) => studyReviews?.[material.id]?.status === 'Needs review').length;
+  const unreviewed = studyMaterials.filter((material) => !studyReviews?.[material.id] || studyReviews[material.id].status === 'Not reviewed').length;
+  return {
+    current,
+    completion: { completed, total, progress },
+    readiness: readinessOverall,
+    nextActions: [
+      ...reviewQueue.slice(0, 5).map((lesson) => ({ id: `lesson:${lesson.id}`, kind: 'lesson', label: lesson.title, detail: `${getStatus(lesson)} · ${lesson.duration}`, item: lesson })),
+      ...studyMaterials.filter((material) => studyReviews?.[material.id]?.status === 'Needs review').slice(0, 3).map((material) => ({ id: `flashcard:${material.id}`, kind: 'flashcard', label: material.sourceTitle || 'Academy flashcard', detail: 'Needs review', item: material })),
+      ...practiceQueue.slice(0, 3).map((drill) => ({ id: `practice:${drill.id}`, kind: 'practice', label: drill.title, detail: 'App-created practice', item: drill }))
+    ].slice(0, 8),
+    counts: { remainingOfficial: reviewQueue.length, practice: practiceQueue.length, captures: captures.length, materials: studyMaterials.length, needsReview, unreviewed }
+  };
+};
+
 function App() {
   const savedState = useMemo(readSavedState, []);
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
-  const [view, setView] = useState(() => savedState?.view || 'overview');
+  const [view, setView] = useState(() => ['overview', 'curriculum', 'practice', 'command-center'].includes(savedState?.view) ? savedState.view : 'command-center');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
   const [notes, setNotes] = useState(() => savedState?.notes || '');
   const [practiceResults, setPracticeResults] = useState(() => savedState?.practiceResults || {});
@@ -96,6 +112,7 @@ function App() {
   const [selectedCaptureId, setSelectedCaptureId] = useState(null);
   const [selectedCaptureIds, setSelectedCaptureIds] = useState([]);
   const [studyMaterials, setStudyMaterials] = useState([]);
+  const [studyReviews, setStudyReviews] = useState({});
   const appRef = useRef(null);
   const splitterRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -170,6 +187,8 @@ function App() {
   const loadStudyMaterials = async () => {
     const result = await window.desktopShell?.getAcademyStudyMaterials?.();
     if (result?.ok) setStudyMaterials(result.materials);
+    const reviews = await window.desktopShell?.getAcademyStudyReviews?.();
+    if (reviews?.ok) setStudyReviews(reviews.reviews || {});
   };
   const generateFlashcards = async () => {
     if (!selectedCaptureIds.length) { setCaptureState({ status: 'error', message: 'Select one or more saved captures first.' }); return; }
@@ -182,9 +201,10 @@ function App() {
     if (result?.ok) { setStudyMaterials(result.materials); setCaptureState({ status: 'success', message: 'Generated flashcard deleted.' }); }
     else setCaptureState({ status: 'error', message: result?.error || 'Flashcard deletion failed safely.' });
   };
-  useEffect(() => { if (view === 'captures' || view === 'materials') { loadCaptures(); loadStudyMaterials(); } }, [view]);
+  useEffect(() => { if (view === 'command-center' || view === 'captures' || view === 'materials') { loadCaptures(); loadStudyMaterials(); } }, [view]);
   const activeDrill = practiceDrills.find((drill) => drill.id === activeDrillId) || practiceDrills[0];
   const practiceQueue = practiceDrills.filter((drill) => !practiceResults[drill.id]);
+  const commandCenter = useMemo(() => getCommandCenterSnapshot({ current, completed, total: officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews }), [current, completed, officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews]);
   const submitDrill = () => {
     if (selectedAnswer === null) return;
     setPracticeResults((results) => ({ ...results, [activeDrill.id]: { answer: selectedAnswer, correct: selectedAnswer === activeDrill.answer, completedAt: new Date().toISOString() } }));
@@ -210,6 +230,7 @@ function App() {
       <div className="brand"><div className="brand-icon">✦</div><div><b>Claude Architect</b><small>Professional certification</small></div></div>
       <div className="nav-label">WORKSPACE</div>
       <nav>
+        <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => setView('command-center')}><ListChecks size={17}/> Command center</button>
         <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Overview</button>
         <button className={view === 'curriculum' ? 'nav active' : 'nav'} onClick={() => setView('curriculum')}><BookOpen size={17}/> Curriculum <em>{completed}/{officialLessons.length}</em></button>
         <button className="nav" onClick={() => setNotesOpen(true)}><FileText size={17}/> My notes</button>
@@ -220,19 +241,20 @@ function App() {
     </aside>
 
     <main className="main">
-      <header><div className="crumb">CCAR-P <ChevronRight size={14}/> <b>{view === 'curriculum' ? 'Curriculum' : view === 'practice' ? 'Practice' : 'Study workspace'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Focused study workspace</div></div></header>
+      <header><div className="crumb">CCAR-P <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'curriculum' ? 'Curriculum' : view === 'practice' ? 'Practice' : 'Study workspace'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Focused study workspace</div></div></header>
       <div className="main-scroll">
         <section className="hero"><div><span className="eyebrow">CLAUDE CERTIFICATION</span><h1>Claude Certified Architect – Professional <span>✦</span></h1><p>Build toward CCAR-P with official preparation, supplemental study, and clearly labeled app practice.</p></div><div className="progress"><strong>{progress}%</strong><small>official learning completion</small></div></section>
         <section className="stats"><div className="stat"><label>OFFICIAL LEARNING COMPLETION</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Courses, modules, lectures, and quizzes · exam readiness is separate</small></div><div className="stat"><label>ESTIMATED EXAM READINESS</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>PREREQUISITES</label><b>None required</b><small>Courses are recommended, not mandatory</small></div></section>
+        {view === 'command-center' && <section className="command-center"><div className="command-intro"><div><span className="eyebrow">LEARNING COMMAND CENTER</span><h2>Know what matters next.</h2><p>A read-only coordination layer over your existing curriculum, review, practice, notes, and Academy study data.</p></div><button className="primary" onClick={() => openReviewItem(commandCenter.nextActions[0]?.item || current)}><Play size={15}/> Continue learning</button></div><div className="command-grid"><button className="command-card" onClick={() => setView('curriculum')}><BookOpen size={20}/><label>OFFICIAL COMPLETION</label><b>{progress}%</b><small>{completed}/{officialLessons.length} items complete or skipped</small></button><button className="command-card" onClick={() => setView('overview')}><Target size={20}/><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}</b><small>App-derived estimate, not a passing prediction</small></button><button className="command-card" onClick={() => setView('practice')}><Brain size={20}/><label>PRACTICE BACKLOG</label><b>{commandCenter.counts.practice}</b><small>App-created drills remaining</small></button><button className="command-card" onClick={() => setNotesOpen(true)}><FileText size={20}/><label>PERSONAL NOTES</label><b>{notes.trim() ? 'Active' : 'Ready'}</b><small>{notes.trim() ? `${notes.trim().length} characters saved locally` : 'Capture your next insight'}</small></button></div><section className="command-panel"><div className="section-head compact"><div><h2>Next actions</h2><p>Prioritized from existing state; opening this list never changes progress.</p></div><span className="queue-count">{commandCenter.nextActions.length} shown</span></div>{commandCenter.nextActions.length ? <div className="command-actions">{commandCenter.nextActions.map((action) => <button className="command-action" key={action.id} onClick={() => action.kind === 'lesson' ? openReviewItem(action.item) : action.kind === 'practice' ? setView('practice') : setView('command-center')}><span className="review-icon"><Play size={13}/></span><span><b>{action.label}</b><small>{action.detail}</small></span><ChevronRight size={16}/></button>)}</div> : <div className="review-empty"><Check size={18}/> Nothing needs attention right now.</div>}</section><div className="command-foot"><span><b>{commandCenter.counts.captures}</b> saved Academy captures</span><span><b>{commandCenter.counts.materials}</b> generated flashcards</span><span><b>{commandCenter.counts.unreviewed}</b> unreviewed cards</span><span><b>{commandCenter.counts.needsReview}</b> cards needing review</span></div></section>}
         {view === 'overview' && <><section className="practice-card"><Target size={22}/><h2>CCAR-P exam overview</h2><p><b>Claude Certified Architect – Professional</b> · Passing score 720 on a 100–1,000 scaled score · $175 USD · Online proctored or Pearson VUE test center · Credential valid for 12 months.</p><div className="exam-facts">{examFacts.map(([label, value]) => <div key={label}><label>{label}</label><b>{value}</b></div>)}</div><p><b>No mandatory prerequisites or required courses.</b> Recommended preparation helps build context; readiness is not represented by course completion alone.</p></section><section className="readiness-card"><div className="readiness-heading"><div><span className="eyebrow">ESTIMATED APP READINESS</span><h2>Exam-domain readiness</h2><p>Transparent evidence from official curriculum statuses. This is an estimate, not an official passing prediction.</p></div><div className="readiness-total">{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}<small>weighted evidence</small></div></div><div className="readiness-list">{readiness.map((domain) => <div className="readiness-row" key={domain.id}><div className="readiness-label"><b>{domain.label}</b><span>{domain.weight}% exam weight · {domain.mapped.length} mapped official item{domain.mapped.length === 1 ? '' : 's'}</span></div><strong>{domain.evidence === null ? 'Not assessed' : `${domain.evidence}%`}</strong><div className="readiness-bar"><i style={{ width: `${domain.evidence || 0}%` }}/></div></div>)}</div><div className="readiness-method"><b>How the estimate is formed</b><span>Complete = 100% evidence · In progress = 50% · Not started = 0% · Skipped items are excluded. Course completion changes evidence only; it never marks a domain mastered.</span></div></section></>}
-        <>
+        {view !== 'command-center' && <>
           <div className="section-head"><div><h2>{view === 'curriculum' ? 'Official curriculum & practice' : 'Continue learning'}</h2><p>Use this focused workspace to move through the certification path, track progress, and study alongside Anthropic Academy.</p></div>{view !== 'curriculum' && <button className="link" onClick={() => setView('curriculum')}>View full curriculum <ChevronRight size={15}/></button>}</div>
           <section className="lesson-card"><div className="lesson-art"><BookOpen size={27}/><span>01</span></div><div className="lesson-copy"><label>{current.type === 'practice' ? 'APP-CREATED PRACTICE' : current.title.toUpperCase()}</label><h3>{current.title}</h3><p>{current.note || 'Official course or module metadata is shown without inventing lecture titles.'}</p><small><Play size={13}/> {current.duration} &nbsp; · &nbsp; {current.type === 'practice' ? 'App practice' : 'Anthropic preparation'}</small></div>{current.academyUrl ? <button className="academy-hint academy-launch" onClick={() => openAcademyCourse(current)} title={`Open ${current.title} in Anthropic Academy`}><Play size={15}/> Open in Academy</button> : <span className="academy-hint"><ExternalLink size={15}/> Academy is live on the right</span>}</section>
           {view !== 'curriculum' && <section className="review-next"><div className="section-head compact"><div><h2>Review next</h2><p>Official items needing attention, with in-progress work first. App-created practice is kept separate.</p></div><span className="queue-count">{reviewQueue.length} remaining</span></div>{reviewQueue.length ? <div className="review-list">{reviewQueue.slice(0, 8).map((lesson) => <button className="review-item" key={lesson.id} onClick={() => openReviewItem(lesson)}><span className="review-icon"><Play size={13}/></span><span><b>{lesson.title}</b><small>{getStatus(lesson)} · {lesson.type === 'practice' ? 'App-created practice' : lesson.duration}</small></span><span className="review-link">Review next</span><ChevronRight size={16}/></button>)}</div> : <div className="review-empty"><Check size={18}/> All official curriculum items are complete or skipped.</div>}</section>}
           <div className="section-head compact"><div><h2>Learning path</h2><p>Recommended order is logical guidance only; Anthropic does not require it.</p></div></div>
           <label className="curriculum-search"><Search size={16}/><input value={curriculumQuery} onChange={(e) => setCurriculumQuery(e.target.value)} placeholder="Search courses, modules, or practice..." aria-label="Search curriculum" />{curriculumQuery && <button type="button" onClick={() => setCurriculumQuery('')} aria-label="Clear curriculum search"><X size={15}/></button>}</label>
           <div className="modules">{visibleModules.length ? visibleModules.map((module) => <div className="module" key={module.id}><button className="module-header" onClick={() => setExpanded((x) => ({ ...x, [module.id]: !x[module.id] }))}><i style={{ background: module.accent }}/><div><b>{module.title}</b><small>{module.lessons.length} matching item{module.lessons.length === 1 ? '' : 's'}</small></div><span>{module.lessons.filter((l) => getStatus(l) === 'Complete' || getStatus(l) === 'Skipped / already experienced').length}/{module.lessons.length}</span>{expanded[module.id] ? <ChevronDown size={17}/> : <ChevronRight size={17}/>}</button>{expanded[module.id] && <><p className="module-note">{module.note}</p><div className="lesson-list">{module.lessons.map((lesson) => <div key={lesson.id}><button className={lesson.id === activeLesson ? 'lesson-row selected' : 'lesson-row'} onClick={() => setActiveLesson(lesson.id)}><b>{lesson.title}</b><small>{lesson.duration} · {getProgress(lesson)}%</small></button><div className="status-controls"><span>{lesson.children?.length ? `${lesson.children.length} sub-items` : lesson.type}</span><select value={lesson.status} onChange={(e) => updateStatus(lesson.id, e.target.value)} aria-label={`Status for ${lesson.title}`}>{STATUS_LABELS.map((status) => <option key={status}>{status}</option>)}</select></div>{lesson.children?.length && <div className="subitems">{lesson.children.map((child) => <div className="subitem" key={child.id}><span>{child.title}</span><select value={child.status} onChange={(e) => updateStatus(child.id, e.target.value)} aria-label={`Status for ${child.title}`}>{STATUS_LABELS.map((status) => <option key={status}>{status}</option>)}</select></div>)}</div>}</div>)}</div></>}</div>) : <div className="empty-search"><Search size={18}/><b>No curriculum items found</b><span>Try a different course, module, or practice term.</span></div>}</div>
-        </>
+        </>}
       </div>
     </main>
     <div className={dragging ? 'academy-splitter dragging' : 'academy-splitter'} ref={splitterRef} role="separator" aria-label="Resize Academy panel" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); setDragging(true); }}><span/></div>
