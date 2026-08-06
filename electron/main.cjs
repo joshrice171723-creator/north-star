@@ -239,13 +239,14 @@ function academyBounds() {
   const fallbackWidth = Math.max(420, Math.round(width * 0.44));
   const fallback = { x: width - fallbackWidth, width: fallbackWidth };
   const requested = academyLayout || fallback;
+  const requestedWidth = Math.max(0, Math.round(requested.width));
   const next = {
-    x: Math.max(210, Math.min(width - 260, Math.round(requested.x))),
+    x: requestedWidth === 0 ? width : Math.max(210, Math.min(width - 260, Math.round(requested.x))),
     y: 58,
-    width: Math.max(320, Math.min(width - 210, Math.round(requested.width))),
+    width: requestedWidth === 0 ? 1 : Math.max(320, Math.min(width - 210, requestedWidth)),
     height: Math.max(200, height - 58)
   };
-  next.width = Math.min(next.width, width - next.x);
+  next.width = Math.min(next.width, Math.max(1, width - next.x));
   academyView.setBounds(academyVisible ? next : { x: 0, y: 0, width: 1, height: 1 });
 }
 
