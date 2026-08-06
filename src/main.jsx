@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Play, Search, Settings, Target, X } from 'lucide-react';
+import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
 import './styles.css';
 
 const examFacts = [
@@ -58,6 +58,19 @@ const curriculum = [
 
 const prompts = ['Explain this lesson simply', 'Quiz me on what I studied', 'Give me an architecture scenario'];
 const STORAGE_KEY = 'claude-architect-study-workspace-v1';
+const COMMAND_CENTER_STORAGE_KEY = 'executive-command-center-workspace-v1';
+const PROJECT_STATUSES = [
+  ['backlog', 'Backlog'], ['todo', 'To do'], ['in-progress', 'In progress'], ['done', 'Done']
+];
+const readCommandCenterState = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COMMAND_CENTER_STORAGE_KEY) || 'null');
+    if (parsed?.schemaVersion !== 1 || !Array.isArray(parsed.projects) || !Array.isArray(parsed.tasks)) return { projects: [], tasks: [] };
+    const projectIds = new Set(parsed.projects.map((project) => project.id));
+    return { projects: parsed.projects, tasks: parsed.tasks.filter((task) => projectIds.has(task.projectId) && PROJECT_STATUSES.some(([status]) => status === task.status)) };
+  } catch { return { projects: [], tasks: [] }; }
+};
+const makeLocalId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const defaultExpanded = { recommended: true, 'professional-prep': true, supplemental: false, practice: false };
 const practiceDrills = [
   { id: 'drill-integration', title: 'Integration boundary drill', domainIds: ['domain-1'], prompt: 'A team needs Claude to summarize support tickets while keeping customer records in its own systems. Which design choice best preserves a clear integration boundary?', options: ['Send the full customer database to the model on every request.', 'Use a controlled service boundary that retrieves only the relevant fields and logs the request.', 'Let each client call the model directly with a shared production key.'], answer: 1, rationale: 'A controlled boundary limits data exposure, centralizes policy, and makes the integration observable.' },
@@ -96,9 +109,21 @@ const getCommandCenterSnapshot = ({ current, completed, total, progress, readine
 
 function App() {
   const savedState = useMemo(readSavedState, []);
+  const savedCommandCenter = useMemo(readCommandCenterState, []);
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
+  const [projects, setProjects] = useState(() => savedCommandCenter.projects);
+  const [tasks, setTasks] = useState(() => savedCommandCenter.tasks);
+  const [selectedProjectId, setSelectedProjectId] = useState(() => savedCommandCenter.projects[0]?.id || null);
+  const [projectDraft, setProjectDraft] = useState('');
+  const [taskDraft, setTaskDraft] = useState('');
+  const [editingProjectId, setEditingProjectId] = useState(null);
+  const [editingProjectName, setEditingProjectName] = useState('');
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState('');
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
+  const selectedTasks = tasks.filter((task) => task.projectId === selectedProject?.id);
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
-  const [view, setView] = useState(() => ['overview', 'curriculum', 'practice', 'command-center'].includes(savedState?.view) ? savedState.view : 'command-center');
+  const [view, setView] = useState(() => ['overview', 'curriculum', 'practice', 'command-center', 'projects'].includes(savedState?.view) ? savedState.view : 'command-center');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
   const [notes, setNotes] = useState(() => savedState?.notes || '');
   const [practiceResults, setPracticeResults] = useState(() => savedState?.practiceResults || {});
@@ -145,6 +170,55 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId })); } catch { /* local persistence is best-effort */ }
   }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId]);
+  useEffect(() => {
+    try { localStorage.setItem(COMMAND_CENTER_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, projects, tasks })); } catch { /* local persistence is best-effort */ }
+  }, [projects, tasks]);
+
+  const addProject = () => {
+    const name = projectDraft.trim();
+    if (!name) return;
+    const now = new Date().toISOString();
+    const project = { id: makeLocalId('project'), name, createdAt: now, updatedAt: now };
+    setProjects((items) => [...items, project]);
+    setSelectedProjectId(project.id);
+    setProjectDraft('');
+  };
+  const saveProjectName = (id) => {
+    const name = editingProjectName.trim();
+    if (!name) return;
+    setProjects((items) => items.map((project) => project.id === id ? { ...project, name, updatedAt: new Date().toISOString() } : project));
+    setEditingProjectId(null);
+  };
+  const deleteProject = (id) => {
+      if (tasks.some((task) => task.projectId === id)) return;
+      setProjects((items) => {
+        const remaining = items.filter((project) => project.id !== id);
+        if (selectedProjectId === id) setSelectedProjectId(remaining[0]?.id || null);
+        return remaining;
+      });
+    };
+  const addTask = () => {
+    const title = taskDraft.trim();
+    if (!title || !selectedProject) return;
+    const now = new Date().toISOString();
+    const order = selectedTasks.filter((task) => task.status === 'todo').length;
+    setTasks((items) => [...items, { id: makeLocalId('task'), projectId: selectedProject.id, title, status: 'todo', order, createdAt: now, updatedAt: now }]);
+    setTaskDraft('');
+  };
+  const moveTask = (id, status) => {
+    setTasks((items) => items.map((task) => task.id === id ? { ...task, status, order: items.filter((candidate) => candidate.projectId === task.projectId && candidate.status === status).length, updatedAt: new Date().toISOString() } : task));
+  };
+  const saveTaskTitle = (id) => {
+    const title = editingTaskTitle.trim();
+    if (!title) return;
+    setTasks((items) => items.map((task) => task.id === id ? { ...task, title, updatedAt: new Date().toISOString() } : task));
+    setEditingTaskId(null);
+  };
+  const deleteTask = (id) => setTasks((items) => items.filter((task) => task.id !== id));
+  const editTaskTitle = (id) => {
+    const title = window.prompt('Edit task title', tasks.find((task) => task.id === id)?.title || '')?.trim();
+    if (title) setTasks((items) => items.map((task) => task.id === id ? { ...task, title, updatedAt: new Date().toISOString() } : task));
+  };
 
   const updateStatus = (id, status) => setModules((items) => items.map((m) => ({ ...m, lessons: updateEntries(m.lessons, id, status) })));
   const openReviewItem = (lesson) => {
@@ -227,27 +301,32 @@ function App() {
 
   return <div className="app" ref={appRef}>
     <aside className="sidebar">
-      <div className="brand"><div className="brand-icon">✦</div><div><b>Claude Architect</b><small>Professional certification</small></div></div>
-      <div className="nav-label">WORKSPACE</div>
+      <div className="brand"><div className="brand-icon">✦</div><div><b>Executive Coach</b><small>Command center</small></div></div>
+      <div className="nav-label">COMMAND CENTER</div>
       <nav>
         <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => setView('command-center')}><ListChecks size={17}/> Command center</button>
-        <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Overview</button>
-        <button className={view === 'curriculum' ? 'nav active' : 'nav'} onClick={() => setView('curriculum')}><BookOpen size={17}/> Curriculum <em>{completed}/{officialLessons.length}</em></button>
-        <button className="nav" onClick={() => setNotesOpen(true)}><FileText size={17}/> My notes</button>
+        <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => setView('projects')}><Target size={17}/> Projects <em>{projects.length}</em></button>
+        <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Readiness</button>
+      </nav>
+      <div className="nav-label nav-label-spaced">LEARNING &amp; DEVELOPMENT</div>
+      <nav>
+        <button className={view === 'curriculum' ? 'nav active' : 'nav'} onClick={() => setView('curriculum')}><BookOpen size={17}/> Learning path <em>{completed}/{officialLessons.length}</em></button>
+        <button className="nav" onClick={() => setNotesOpen(true)}><FileText size={17}/> Personal notes</button>
         <button className={view === 'practice' ? 'nav active' : 'nav'} onClick={() => setView('practice')}><Brain size={17}/> Practice</button>
       </nav>
       <div className="path-card"><div className="path-symbol"><Target size={16}/></div><div><b>CCAR-P</b><small>Claude Certified Architect</small></div><ChevronRight size={15}/></div>
-      <div className="sidebar-footer"><button className="nav"><Settings size={17}/> Settings</button><div className="profile"><div className="avatar">J</div><div><b>Josh</b><small>Professional path</small></div></div></div>
+      <div className="sidebar-footer"><div className="local-badge"><span className="local-dot"/> Local-first workspace</div><div className="profile"><div className="avatar">J</div><div><b>Josh</b><small>Executive workspace</small></div></div></div>
     </aside>
 
     <main className="main">
-      <header><div className="crumb">CCAR-P <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'curriculum' ? 'Curriculum' : view === 'practice' ? 'Practice' : 'Study workspace'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Focused study workspace</div></div></header>
+      <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div></div></header>
       <div className="main-scroll">
-        <section className="hero"><div><span className="eyebrow">CLAUDE CERTIFICATION</span><h1>Claude Certified Architect – Professional <span>✦</span></h1><p>Build toward CCAR-P with official preparation, supplemental study, and clearly labeled app practice.</p></div><div className="progress"><strong>{progress}%</strong><small>official learning completion</small></div></section>
-        <section className="stats"><div className="stat"><label>OFFICIAL LEARNING COMPLETION</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Courses, modules, lectures, and quizzes · exam readiness is separate</small></div><div className="stat"><label>ESTIMATED EXAM READINESS</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>PREREQUISITES</label><b>None required</b><small>Courses are recommended, not mandatory</small></div></section>
-        {view === 'command-center' && <section className="command-center"><div className="command-intro"><div><span className="eyebrow">LEARNING COMMAND CENTER</span><h2>Know what matters next.</h2><p>A read-only coordination layer over your existing curriculum, review, practice, notes, and Academy study data.</p></div><button className="primary" onClick={() => openReviewItem(commandCenter.nextActions[0]?.item || current)}><Play size={15}/> Continue learning</button></div><div className="command-grid"><button className="command-card" onClick={() => setView('curriculum')}><BookOpen size={20}/><label>OFFICIAL COMPLETION</label><b>{progress}%</b><small>{completed}/{officialLessons.length} items complete or skipped</small></button><button className="command-card" onClick={() => setView('overview')}><Target size={20}/><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}</b><small>App-derived estimate, not a passing prediction</small></button><button className="command-card" onClick={() => setView('practice')}><Brain size={20}/><label>PRACTICE BACKLOG</label><b>{commandCenter.counts.practice}</b><small>App-created drills remaining</small></button><button className="command-card" onClick={() => setNotesOpen(true)}><FileText size={20}/><label>PERSONAL NOTES</label><b>{notes.trim() ? 'Active' : 'Ready'}</b><small>{notes.trim() ? `${notes.trim().length} characters saved locally` : 'Capture your next insight'}</small></button></div><section className="command-panel"><div className="section-head compact"><div><h2>Next actions</h2><p>Prioritized from existing state; opening this list never changes progress.</p></div><span className="queue-count">{commandCenter.nextActions.length} shown</span></div>{commandCenter.nextActions.length ? <div className="command-actions">{commandCenter.nextActions.map((action) => <button className="command-action" key={action.id} onClick={() => action.kind === 'lesson' ? openReviewItem(action.item) : action.kind === 'practice' ? setView('practice') : setView('command-center')}><span className="review-icon"><Play size={13}/></span><span><b>{action.label}</b><small>{action.detail}</small></span><ChevronRight size={16}/></button>)}</div> : <div className="review-empty"><Check size={18}/> Nothing needs attention right now.</div>}</section><div className="command-foot"><span><b>{commandCenter.counts.captures}</b> saved Academy captures</span><span><b>{commandCenter.counts.materials}</b> generated flashcards</span><span><b>{commandCenter.counts.unreviewed}</b> unreviewed cards</span><span><b>{commandCenter.counts.needsReview}</b> cards needing review</span></div></section>}
+        <section className="hero"><div><span className="eyebrow">AI EXECUTIVE COACH COMMAND CENTER</span><h1>See what matters. Choose what moves. <span>✦</span></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
+        <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>No projects, tasks, coach, or external integrations are connected yet</small></div></section>
+        {view === 'projects' && <section className="projects-workspace"><div className="section-head compact"><div><span className="eyebrow">LOCAL PROJECT CONTROL</span><h2>Projects and tasks</h2><p>Real local work only. Nothing is synced, generated, or shared.</p></div></div><div className="projects-layout"><aside className="projects-list"><div className="project-create"><input value={projectDraft} onChange={(event) => setProjectDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addProject()} placeholder="New project name" aria-label="New project name"/><button className="primary" onClick={addProject}><Plus size={15}/> Add</button></div>{projects.length ? projects.map((project) => <div className={project.id === selectedProject?.id ? 'project-row selected' : 'project-row'} key={project.id}><button onClick={() => setSelectedProjectId(project.id)}><b>{project.name}</b><small>{tasks.filter((task) => task.projectId === project.id).length} tasks</small></button><div className="row-actions"><button disabled={tasks.some((task) => task.projectId === project.id)} onClick={() => deleteProject(project.id)} aria-label={`Delete ${project.name}`}><Trash2 size={14}/></button></div></div>) : <div className="projects-empty"><Target size={18}/><b>No projects yet</b><span>Create a real project to start a board.</span></div>}</aside><div className="kanban-area">{selectedProject ? <><div className="kanban-toolbar"><div><h3>{selectedProject.name}</h3><span>{selectedTasks.length} tasks · stored locally</span></div><div className="task-create"><input value={taskDraft} onChange={(event) => setTaskDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addTask()} placeholder="Add a task" aria-label="New task title"/><button className="primary" onClick={addTask}><Plus size={15}/> Task</button></div></div><div className="kanban-board">{PROJECT_STATUSES.map(([status, label]) => <section className="kanban-column" key={status}><div className="column-heading"><b>{label}</b><span>{selectedTasks.filter((task) => task.status === status).length}</span></div>{selectedTasks.filter((task) => task.status === status).sort((a, b) => a.order - b.order).map((task) => <article className="task-card" key={task.id}><b>{task.title}</b><div className="task-card-actions"><button onClick={() => editTaskTitle(task.id)} aria-label={`Edit ${task.title}`}><FileText size={13}/></button><button onClick={() => deleteTask(task.id)} aria-label={`Delete ${task.title}`}><Trash2 size={13}/></button><select value={task.status} onChange={(event) => moveTask(task.id, event.target.value)} aria-label={`Move ${task.title}`}>{PROJECT_STATUSES.map(([option, optionLabel]) => <option value={option} key={option}>{optionLabel}</option>)}</select></div></article>)}{!selectedTasks.some((task) => task.status === status) && <div className="column-empty">No tasks here</div>}</section>)}</div></> : <div className="projects-empty large"><Target size={22}/><h3>Select or create a project</h3><p>Your local Kanban board will appear here.</p></div>}</div></div></section>}
+        {view === 'command-center' && <section className="command-center"><div className="command-intro"><div><span className="eyebrow">EXECUTIVE OPERATING PICTURE</span><h2>Know what matters next.</h2><p>This foundation brings existing learning and study state into a broader command-center shell without inventing projects, tasks, metrics, or coaching.</p></div><button className="primary" onClick={() => openReviewItem(commandCenter.nextActions[0]?.item || current)}><Play size={15}/> Continue learning</button></div><div className="command-grid"><button className="command-card" onClick={() => setView('curriculum')}><BookOpen size={20}/><label>LEARNING MODULE</label><b>{progress}%</b><small>{completed}/{officialLessons.length} items complete or skipped</small></button><button className="command-card" onClick={() => setView('overview')}><Target size={20}/><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}</b><small>App-derived estimate, not a passing prediction</small></button><button className="command-card" onClick={() => setView('practice')}><Brain size={20}/><label>PRACTICE BACKLOG</label><b>{commandCenter.counts.practice}</b><small>App-created drills remaining</small></button><button className="command-card" onClick={() => setNotesOpen(true)}><FileText size={20}/><label>PERSONAL NOTES</label><b>{notes.trim() ? 'Active' : 'Ready'}</b><small>{notes.trim() ? `${notes.trim().length} characters saved locally` : 'Capture your next insight'}</small></button></div><section className="command-panel"><div className="section-head compact"><div><h2>Next actions</h2><p>Prioritized from existing state; opening this list never changes progress.</p></div><span className="queue-count">{commandCenter.nextActions.length} shown</span></div>{commandCenter.nextActions.length ? <div className="command-actions">{commandCenter.nextActions.map((action) => <button className="command-action" key={action.id} onClick={() => action.kind === 'lesson' ? openReviewItem(action.item) : action.kind === 'practice' ? (setActiveDrillId(action.item.id), setView('practice')) : setNotesOpen(true)}><span className="review-icon">{action.kind === 'lesson' ? <BookOpen size={14}/> : action.kind === 'practice' ? <Brain size={14}/> : <FileText size={14}/>}</span><span><b>{action.label}</b><small>{action.detail}</small></span><ChevronRight size={15}/></button>)}</div> : <div className="review-empty"><Check size={18}/> No queued actions from the preserved learning state.</div>}<div className="command-foot"><span><b>{commandCenter.counts.captures}</b> Academy captures</span><span><b>{commandCenter.counts.materials}</b> generated materials</span><span><b>{commandCenter.counts.unreviewed}</b> unreviewed cards</span></div></section><section className="future-panel"><div><span className="eyebrow">NEXT SAFE CAPABILITY</span><h2>Projects, tasks, and Kanban</h2><p>Manage real local work without cloud sync, integrations, credentials, or AI coaching.</p></div><button className="link" onClick={() => setView('projects')}>Open Projects <ChevronRight size={15}/></button></section></section>}
         {view === 'overview' && <><section className="practice-card"><Target size={22}/><h2>CCAR-P exam overview</h2><p><b>Claude Certified Architect – Professional</b> · Passing score 720 on a 100–1,000 scaled score · $175 USD · Online proctored or Pearson VUE test center · Credential valid for 12 months.</p><div className="exam-facts">{examFacts.map(([label, value]) => <div key={label}><label>{label}</label><b>{value}</b></div>)}</div><p><b>No mandatory prerequisites or required courses.</b> Recommended preparation helps build context; readiness is not represented by course completion alone.</p></section><section className="readiness-card"><div className="readiness-heading"><div><span className="eyebrow">ESTIMATED APP READINESS</span><h2>Exam-domain readiness</h2><p>Transparent evidence from official curriculum statuses. This is an estimate, not an official passing prediction.</p></div><div className="readiness-total">{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}<small>weighted evidence</small></div></div><div className="readiness-list">{readiness.map((domain) => <div className="readiness-row" key={domain.id}><div className="readiness-label"><b>{domain.label}</b><span>{domain.weight}% exam weight · {domain.mapped.length} mapped official item{domain.mapped.length === 1 ? '' : 's'}</span></div><strong>{domain.evidence === null ? 'Not assessed' : `${domain.evidence}%`}</strong><div className="readiness-bar"><i style={{ width: `${domain.evidence || 0}%` }}/></div></div>)}</div><div className="readiness-method"><b>How the estimate is formed</b><span>Complete = 100% evidence · In progress = 50% · Not started = 0% · Skipped items are excluded. Course completion changes evidence only; it never marks a domain mastered.</span></div></section></>}
-        {view !== 'command-center' && <>
+        {view !== 'command-center' && view !== 'projects' && <>
           <div className="section-head"><div><h2>{view === 'curriculum' ? 'Official curriculum & practice' : 'Continue learning'}</h2><p>Use this focused workspace to move through the certification path, track progress, and study alongside Anthropic Academy.</p></div>{view !== 'curriculum' && <button className="link" onClick={() => setView('curriculum')}>View full curriculum <ChevronRight size={15}/></button>}</div>
           <section className="lesson-card"><div className="lesson-art"><BookOpen size={27}/><span>01</span></div><div className="lesson-copy"><label>{current.type === 'practice' ? 'APP-CREATED PRACTICE' : current.title.toUpperCase()}</label><h3>{current.title}</h3><p>{current.note || 'Official course or module metadata is shown without inventing lecture titles.'}</p><small><Play size={13}/> {current.duration} &nbsp; · &nbsp; {current.type === 'practice' ? 'App practice' : 'Anthropic preparation'}</small></div>{current.academyUrl ? <button className="academy-hint academy-launch" onClick={() => openAcademyCourse(current)} title={`Open ${current.title} in Anthropic Academy`}><Play size={15}/> Open in Academy</button> : <span className="academy-hint"><ExternalLink size={15}/> Academy is live on the right</span>}</section>
           {view !== 'curriculum' && <section className="review-next"><div className="section-head compact"><div><h2>Review next</h2><p>Official items needing attention, with in-progress work first. App-created practice is kept separate.</p></div><span className="queue-count">{reviewQueue.length} remaining</span></div>{reviewQueue.length ? <div className="review-list">{reviewQueue.slice(0, 8).map((lesson) => <button className="review-item" key={lesson.id} onClick={() => openReviewItem(lesson)}><span className="review-icon"><Play size={13}/></span><span><b>{lesson.title}</b><small>{getStatus(lesson)} · {lesson.type === 'practice' ? 'App-created practice' : lesson.duration}</small></span><span className="review-link">Review next</span><ChevronRight size={16}/></button>)}</div> : <div className="review-empty"><Check size={18}/> All official curriculum items are complete or skipped.</div>}</section>}
@@ -263,4 +342,3 @@ function App() {
   </div>;
 }
 createRoot(document.getElementById('root')).render(<App />);
-
