@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+out/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Electron / Vite caches
+.vite/
+.cache/
+
+# Local app data and logs
+*.log
+logs/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Hermes local planning/runtime files
+.hermes/
+
+# Electron user data if created inside the project
+user-data/
+
+# Temporary captures or diagnostics
+*.har
+*.trace
+screenshots/
