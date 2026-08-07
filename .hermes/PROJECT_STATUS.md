@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-08-06
+**Last updated:** 2026-08-07
 
 **Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 2.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
@@ -59,7 +59,7 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 
 ## Current next task
 
-Complete the manual SQLite-backed Electron acceptance checklist in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`. Do not begin Phase 3 until the user verifies the checklist in the production app.
+Verify the corrected workspace/project hierarchy in the production app. The seed-only database was reset and reloaded from the canonical CSV; no Phase 3 work is authorized.
 
 ## Not started
 
@@ -102,7 +102,7 @@ No automated test suite is defined in `package.json`; build and syntax checks ar
 
 ## Verification status
 
-Phase 1 source changes, build checks, syntax checks, diff checks, and a production Electron launch were completed. See the Phase 1 verification section above for exact evidence and limitations.
+The workspace/project hierarchy correction has passed renderer build, Electron syntax checks, diff checks, and direct SQLite assertions. The canonical seed now imports 1 workspace, 1 real project, 5 releases, 22 phases, 66 top-level tasks, and 36 subtasks. Interactive production-app acceptance remains a manual handoff.
 
 ## How to update this file
 

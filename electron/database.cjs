@@ -137,17 +137,43 @@ function createDatabase({ userDataPath, seedPath } = {}) {
 
   function projectRecord(input, kind = 'project') {
     const timestamp = now();
-    return { id: bounded(nonEmpty(input.id, id(kind)), 160), parentId: input.parentId || null, kind: input.kind || input.type || kind, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
+    const recordKind = input.kind || input.type || kind;
+    return { id: bounded(nonEmpty(input.id, id(recordKind)), 160), parentId: recordKind === 'workspace' ? null : (input.parentId || null), kind: recordKind, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
+  }
+  function validateProjectHierarchy(record) {
+    if (!['workspace', 'project', 'release', 'phase'].includes(record.kind)) throw new Error(`Invalid project kind: ${record.kind}.`);
+    if (record.kind === 'workspace') {
+      if (record.parentId) throw new Error('A workspace cannot have a parent.');
+      return;
+    }
+    if (!record.parentId) throw new Error(`${record.kind} must belong to its parent.`);
+    const parent = db.select().from(projects).where(eq(projects.id, record.parentId)).get();
+    if (!parent) throw new Error(`${record.kind} parent does not exist.`);
+    const expectedParent = { project: 'workspace', release: 'project', phase: 'release' }[record.kind];
+    if (parent.kind !== expectedParent) throw new Error(`${record.kind} must belong to a ${expectedParent}.`);
   }
   function taskRecord(input, kind = 'task') {
     const timestamp = now();
-    // parentId is the renderer display-tree parent. For a normal task it is
-    // commonly a phase/release/project, not another task. Keep that separate
-    // from parent_task_id so ordinary task updates do not become subtasks.
-    const parentTaskId = kind === 'subtask'
-      ? (input.parentTaskId || input.parentId || null)
-      : (input.parentTaskId || null);
-    return { id: bounded(nonEmpty(input.id, id(kind)), 160), projectId: bounded(nonEmpty(input.projectId, 'default'), 160), parentTaskId, releaseId: input.releaseId || null, phaseId: input.phaseId || null, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
+    const recordKind = kind || (input.type === 'subtask' ? 'subtask' : 'task');
+    const parentTaskId = recordKind === 'subtask' ? (input.parentTaskId || input.parentId || null) : null;
+    return { id: bounded(nonEmpty(input.id, id(recordKind)), 160), projectId: bounded(nonEmpty(input.projectId), 160), parentTaskId, releaseId: input.releaseId || null, phaseId: input.phaseId || null, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
+  }
+  function validateTaskHierarchy(record) {
+    const project = db.select().from(projects).where(eq(projects.id, record.projectId)).get();
+    if (!project || project.kind !== 'project') throw new Error('Task must belong to a real project.');
+    if (record.releaseId) {
+      const release = db.select().from(projects).where(eq(projects.id, record.releaseId)).get();
+      if (!release || release.kind !== 'release' || release.parentId !== record.projectId) throw new Error('Task release does not belong to its project.');
+    }
+    if (record.phaseId) {
+      const phase = db.select().from(projects).where(eq(projects.id, record.phaseId)).get();
+      if (!phase || phase.kind !== 'phase' || phase.parentId !== record.releaseId) throw new Error('Task phase does not belong to its release.');
+    }
+    if (record.parentTaskId) {
+      const parent = db.select().from(tasks).where(eq(tasks.id, record.parentTaskId)).get();
+      if (!parent || parent.parentTaskId || parent.projectId !== record.projectId) throw new Error('Subtask parent must be a top-level task in the same project.');
+      if ((parent.releaseId || null) !== (record.releaseId || null) || (parent.phaseId || null) !== (record.phaseId || null)) throw new Error('Subtask must share its parent task context.');
+    }
   }
 
   function seedDefaults() {
@@ -166,8 +192,8 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     db.transaction((tx) => {
       for (const [index, row] of rows.entries()) {
         const common = { id: row.item_id, parentId: row.parent_id || null, title: row.title, description: row.description, status: row.status || 'backlog', priority: row.priority || 'P1', orderIndex: Number(row.order_index || index), dueDate: row.due_date || null, nextAction: row.next_action, definitionOfDone: row.definition_of_done, blockedReason: row.blocked_reason, dependencies: row.dependencies, acceptanceCriteria: row.acceptance_criteria, securityPrivacyNotes: row.security_privacy_notes, sourceContext: row.source_context, confidence: row.confidence, createdAt: timestamp, updatedAt: timestamp, archived: false, deletedAt: null };
-        if (row.item_type === 'workspace' || row.item_type === 'release' || row.item_type === 'phase') tx.insert(projects).values({ ...common, kind: row.item_type }).onConflictDoNothing().run();
-        else tx.insert(tasks).values({ ...common, projectId: row.project_id || 'AICC-WS-001', parentTaskId: row.item_type === 'subtask' ? row.parent_id || null : null, releaseId: row.release_id || null, phaseId: row.phase_id || null }).onConflictDoNothing().run();
+        if (row.item_type === 'workspace' || row.item_type === 'project' || row.item_type === 'release' || row.item_type === 'phase') tx.insert(projects).values({ ...common, kind: row.item_type, parentId: row.item_type === 'workspace' ? null : (row.parent_id || null) }).onConflictDoNothing().run();
+        else tx.insert(tasks).values({ ...common, projectId: row.project_id, parentTaskId: row.item_type === 'subtask' ? row.parent_id || null : null, releaseId: row.release_id || null, phaseId: row.phase_id || null }).onConflictDoNothing().run();
       }
       tx.insert(userSettings).values({ key: 'roadmap_seed_version', value: JSON.stringify({ source: path.basename(seedPath), rows: rows.length }), updatedAt: now() }).run();
     });
@@ -179,11 +205,13 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   function bootstrap() {
     const projectRows = allProjects().map(projectToRenderer);
     const taskRows = allTasks().map(taskToRenderer);
-    const workspace = projectRows.find((row) => row.kind === 'workspace') || { id: 'default', kind: 'workspace', type: 'workspace', title: 'Executive roadmap', archived: false };
-    return { roadmap: { schemaVersion: 2, workspace, projects: projectRows.filter((row) => row.kind === 'workspace' || row.kind === 'project'), releases: projectRows.filter((row) => row.kind === 'release'), phases: projectRows.filter((row) => row.kind === 'phase'), tasks: taskRows.filter((row) => row.type === 'task'), subtasks: taskRows.filter((row) => row.type === 'subtask') }, notes: db.select().from(notes).where(eq(notes.id, 'personal-notes')).get()?.content || '', settings: Object.fromEntries(db.select().from(userSettings).all().map((setting) => [setting.key, JSON.parse(setting.value)])) };
+    const workspaces = projectRows.filter((row) => row.kind === 'workspace');
+    const workspace = workspaces[0] || { id: 'default', kind: 'workspace', type: 'workspace', title: 'Executive workspace', archived: false };
+    return { roadmap: { schemaVersion: 3, workspace, workspaces, projects: projectRows.filter((row) => row.kind === 'project'), releases: projectRows.filter((row) => row.kind === 'release'), phases: projectRows.filter((row) => row.kind === 'phase'), tasks: taskRows.filter((row) => row.type === 'task'), subtasks: taskRows.filter((row) => row.type === 'subtask') }, notes: db.select().from(notes).where(eq(notes.id, 'personal-notes')).get()?.content || '', settings: Object.fromEntries(db.select().from(userSettings).all().map((setting) => [setting.key, JSON.parse(setting.value)])) };
   }
   function upsertProject(input, kind) {
     const record = projectRecord(safeRecord(input, ['id', 'title'], 'project'), kind);
+    validateProjectHierarchy(record);
     const existing = db.select().from(projects).where(eq(projects.id, record.id)).get();
     insertOrUpdate(projects, record);
     if (existing?.archived && !record.archived) {
@@ -193,8 +221,9 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
   function upsertTask(input, kind) {
     const safeInput = safeRecord(input, ['id', 'title', 'projectId'], 'task');
-    const recordKind = kind || (safeInput.type === 'subtask' ? 'subtask' : 'task');
+    const recordKind = safeInput.type === 'subtask' || Boolean(safeInput.parentTaskId) ? 'subtask' : (kind || 'task');
     const record = taskRecord(safeInput, recordKind);
+    validateTaskHierarchy(record);
     insertOrUpdate(tasks, record);
     return taskToRenderer(db.select().from(tasks).where(eq(tasks.id, record.id)).get());
   }
@@ -249,7 +278,8 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   return {
     databasePath, seedResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
-    projects: { list: () => allActiveProjects().map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
+    workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
+    projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
     close: () => sqlite.close(),
   };

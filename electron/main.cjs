@@ -370,6 +370,10 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:save-note', (_event, content, title) => coachDatabase.saveNote(content, title));
   ipcMain.handle('coach:backup', () => coachDatabase.backup());
   ipcMain.handle('coach:projects:list', () => coachDatabase.projects.list());
+  ipcMain.handle('coach:workspaces:list', () => coachDatabase.workspaces.list());
+  ipcMain.handle('coach:workspaces:create', (_event, input) => coachDatabase.workspaces.create(validateCoachRecord(input, 'workspace')));
+  ipcMain.handle('coach:workspaces:update', (_event, input) => coachDatabase.workspaces.update(validateCoachRecord(input, 'workspace')));
+  ipcMain.handle('coach:workspaces:delete', (_event, id) => coachDatabase.workspaces.delete(validateCoachDeleteId(id, 'workspace')));
   ipcMain.handle('coach:projects:create', (_event, input) => coachDatabase.projects.create(validateCoachRecord(input, 'project')));
   ipcMain.handle('coach:projects:update', (_event, input) => coachDatabase.projects.update(validateCoachRecord(input, 'project')));
   ipcMain.handle('coach:projects:delete', (_event, id) => coachDatabase.projects.delete(validateCoachDeleteId(id, 'project')));
