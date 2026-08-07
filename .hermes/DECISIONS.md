@@ -25,7 +25,7 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 ## D004 — No credentials in the app
 
-**Status:** Active
+**Status:** Inactive
 **Decision:** Do not request, store, expose, or add credentials, cookies, passwords, authorization headers, or secrets.
 **Reason:** This is a non-negotiable privacy and security boundary.
 **Consequence:** Any provider integration requiring credentials must stop for an explicit architecture/security decision.
@@ -44,10 +44,10 @@ Record decisions that future sessions should not casually reopen. If a decision 
 **Reason:** Provider-wide usage cannot be claimed without a verified source.
 **Consequence:** Every usage view must identify its source, scope, and limitations; no fake values.
 
-## D007 — ADHD-aware, not clinical
+## D007 — ADHD-aware
 
 **Status:** Active
-**Decision:** Use practical executive-function support patterns such as concrete next actions, reduced overload, focus limits, and visible blockers, without diagnosis or medical claims.
+**Decision:** Use practical executive-function support patterns such as concrete next actions, reduced overload, focus limits, and visible blockers.
 **Reason:** The product should be helpful and safe.
 **Consequence:** UX copy and coach prompts must avoid clinical promises.
 

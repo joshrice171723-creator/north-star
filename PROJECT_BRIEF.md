@@ -5,7 +5,6 @@
 **Last updated:** 2026-08-06
 **Active priority:** SQLite persistence migration — finish and verify the database-backed roadmap and Projects + Tasks + Kanban workflow before starting any other major capability.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
-**Do not use:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification`
 
 ## Product identity
 
