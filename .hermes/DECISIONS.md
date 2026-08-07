@@ -67,7 +67,21 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 ## D010 — Phase 1 shell boundary
 
+**Status:** Superseded by D011
+**Decision:** Phase 1 established only the Executive Coach Command Center product shell and information architecture around the existing Learning & Development module.
+**Reason:** The broader product direction needed a truthful identity and navigation foundation before new workflow systems were introduced.
+**Consequence:** The shell may show existing learning-derived state and clearly labeled planned areas, but must not fabricate projects, tasks, coaching, metrics, integrations, or provider data.
+
+## D011 — Kanban board is the top implementation priority
+
 **Status:** Active
-**Decision:** Phase 1 establishes only the Executive Coach Command Center product shell and information architecture around the existing Learning & Development module.
-**Reason:** The broader product direction needs a truthful identity and navigation foundation before new workflow systems are introduced.
-**Consequence:** The shell may show existing learning-derived state and clearly labeled planned areas, but must not fabricate projects, tasks, coaching, metrics, integrations, or provider data. Phase 1 stops after build/runtime gates and user acceptance.
+**Decision:** The local Projects + Tasks + Kanban workflow is the highest-priority implementation area. Complete runtime acceptance and board-related fixes before beginning Today/Focus, coach intelligence, integrations, usage tracking, or unrelated redesign.
+**Reason:** A reliable visual board is the first concrete operating workflow in the command center and provides the foundation for later prioritization and coaching.
+**Consequence:** New sessions should read `PHASE-02-projects-tasks-kanban.md` as the active boundary, focus on board quality and verification, preserve the Learning & Development and Academy compatibility boundaries, and stop after Kanban acceptance passes.
+
+## D012 — Board state is designed for a future Hermes/OR document layer
+
+**Status:** Active future-facing constraint
+**Decision:** Keep Projects + Tasks + Kanban records structured, stable-ID based, local-first, and attributable so a future Hermes AI layer can read the board together with OR documents and produce explainable recommendations without hidden mutation.
+**Reason:** The user wants Hermes to eventually work from the board in conjunction with OR documents. The board should therefore be a trustworthy source of structured work state, not a presentation-only mockup.
+**Consequence:** Do not add AI automation, document ingestion, cloud sync, credentials, or autonomous writes in the current Kanban phase. Future integrations must use explicit document provenance, read-only context by default, user approval for mutations, and reversible changes.

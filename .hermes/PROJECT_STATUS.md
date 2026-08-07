@@ -1,13 +1,15 @@
 # Project Status
 
 **Last updated:** 2026-08-06
+
+**Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 2.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
-**Branch observed:** `feat/learning-command-center`
-**Current phase:** Phase 2 — local Projects, Tasks, and basic Kanban (implemented; build and syntax verified)
+**Branch observed:** `main`
+**Current phase:** SQLite persistence migration — database foundation exists; renderer hookup and Electron runtime verification remain.
 
 ## Night handoff — 2026-08-06
 
-Phase 2 was implemented and pushed to the active feature branch. The renderer now includes a bounded local-first Projects workspace with project creation/selection, task creation/edit/delete, four fixed Kanban statuses, truthful empty states, isolated local persistence, and empty-project-only deletion protection.
+Phase 2 was implemented and pushed to the active feature branch. The renderer now includes a bounded local-first Projects workspace with project creation/selection/rename/delete, task creation/edit/delete, four fixed Kanban statuses, truthful empty states, isolated local persistence, and confirmation-based cascading project deletion.
 
 Protected boundaries were preserved: the existing Learning & Development localStorage key/schema, Academy IPC/preload contracts, native Academy BrowserView, and resizable three-pane layout were not intentionally changed. No authentication, cloud sync, credentials, provider integration, AI coaching, analytics, fake data, or destructive migration was added.
 
@@ -19,7 +21,7 @@ Verification completed:
 - `git diff --check` passed.
 - Build emitted only the existing Vite `configLoader: 'native'` CommonJS/ESM warning.
 
-Runtime interaction acceptance was not completed tonight. Next session should launch the production Electron app and manually verify project/task CRUD, status movement, reload persistence, learning-state preservation, Academy navigation/native pane, and splitter resizing. Do not expand scope until that verification is complete.
+Runtime interaction acceptance was completed by the user. The user confirmed project creation/selection, task creation, visible inline editing and save, movement through all four Kanban columns, reload persistence, task deletion, project deletion, empty state recovery, Learning & Development navigation, Academy pane visibility, splitter resizing, Academy close/open behavior, and board operation after returning from Learning. Do not expand scope until the user explicitly approves the next phase.
 
 ## Verified repository baseline
 
@@ -36,10 +38,12 @@ Runtime interaction acceptance was not completed tonight. Next session should la
 - The left navigation is organized into Command Center and Learning & Development sections.
 - The landing view explicitly labels future executive workflows as planned rather than simulated.
 - Existing learning curriculum, local state, Academy IPC, native BrowserView, and splitter code remain in place.
-- No project/task database, Kanban board, coach engine, usage integration, authentication, or cloud behavior was added.
+- The local Projects + Tasks + Kanban workflow is implemented and is the active priority for runtime acceptance and board-focused fixes.
+- No coach engine, usage integration, authentication, or cloud behavior was added.
 - The long-term vision is documented in `.hermes/PRODUCT_VISION.md`.
 - Cross-session decisions are documented in `.hermes/DECISIONS.md`.
-- Phase 1 scope and gates are documented in `.hermes/plans/PHASE-01-command-center-foundation.md`.
+- The active implementation boundary is documented in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`.
+- Phase 1 remains historical context only; its acceptance note is not the current stop condition.
 
 ## Completed in this phase
 
@@ -55,31 +59,29 @@ Runtime interaction acceptance was not completed tonight. Next session should la
 
 ## Current next task
 
-User acceptance of the Phase 1 shell. If accepted, separately plan the smallest useful local Projects + Tasks + Kanban workflow; do not begin it in this phase.
+Complete the SQLite migration end-to-end: wire `src/main.jsx` to `coachBootstrap` and CRUD IPC, display the canonical roadmap from `C:/Users/joshr/OneDrive/Desktop/canonical-ai-executive-coach-roadmap.csv`, preserve Learning & Development/Academy behavior, resolve or document Electron `better-sqlite3` compatibility, and verify persistence through a real Electron restart.
 
 ## Not started
 
-- Projects data model
-- Kanban board
 - Today/focus workflow
 - Coach context layer
 - Coach guidance or approval workflow
 - App-originated API/token/cache usage ledger
 - Provider-wide usage integrations
 
-## Phase 1 verification
+## Historical Phase 1 verification
 
 - `npm run build` passed on 2026-08-06; Vite emitted only the pre-existing CommonJS/ESM configuration warning.
 - `node --check electron/main.cjs` passed.
 - `node --check electron/preload.cjs` passed.
 - `git diff --check` passed.
 - Production desktop launch was started with `npm run desktop:prod`; Electron processes were observed running.
-- Native Academy visual interaction was not independently exercised in this session; preserve the existing recorded BrowserView behavior as prior evidence, not new verification.
-- Phase 1 acceptance remains pending user review.
+- Native Academy visual interaction was not independently exercised in that session; preserve the recorded BrowserView behavior as prior evidence, not current Kanban verification.
+- Phase 1 acceptance is historical context; the active verification target is Phase 2 Kanban runtime acceptance.
 
-## Phase 1 stop condition
+## Active database-migration stop condition
 
-Stop here until the user accepts the shell. Do not implement projects, tasks, Kanban, Today/focus, coach intelligence, usage integrations, authentication, cloud sync, or provider connections as part of Phase 1.
+Do not begin Today/Focus, coach intelligence, integrations, usage tracking, authentication, cloud sync, provider connections, or unrelated redesign. Stop only after the database-backed roadmap is visible, project/task CRUD works through secure IPC, persistence survives a complete Electron restart, protected Learning & Development/Academy behavior is checked, and exact verification evidence is recorded. If a native build prerequisite blocks `better-sqlite3`, keep working through verified alternatives and report the precise external dependency only after exhausting them.
 
 ## Scope note
 

@@ -1,6 +1,8 @@
 # Phase 1 — Command Center Foundation
 
-> **For Hermes:** Implement only this phase after the user explicitly approves the implementation scope. Read `PROJECT_BRIEF.md`, `.hermes/PRODUCT_VISION.md`, `.hermes/PROJECT_STATUS.md`, and `.hermes/DECISIONS.md` first.
+> **Historical:** Completed and superseded as the active phase by `.hermes/plans/PHASE-02-projects-tasks-kanban.md`. Preserve this document for scope history; do not use its old stop condition to block the active Kanban priority.
+
+
 
 **Goal:** Introduce a safe executive-coach command-center shell and information architecture while preserving the existing learning experience, native Academy pane, data, and desktop behavior.
 

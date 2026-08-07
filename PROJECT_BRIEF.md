@@ -3,6 +3,7 @@
 > **Read this file first in every new session.** It is the compact, project-wide source of truth. Keep it concise. Detailed vision, decisions, status, and phase scope live in the linked `.hermes/` documents.
 
 **Last updated:** 2026-08-06
+**Active priority:** SQLite persistence migration — finish and verify the database-backed roadmap and Projects + Tasks + Kanban workflow before starting any other major capability.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 **Do not use:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification`
 
@@ -41,15 +42,15 @@ Read `.hermes/PRODUCT_VISION.md` for the long-term model and principles.
 
 ## Current phase
 
-**Phase 0 — Product foundation and cross-session control documents.**
+**SQLite persistence migration — database foundation is present; renderer hookup and Electron runtime verification are the bounded objective.**
 
-The immediate goal is to establish a stable information architecture and documentation system before expanding features. The first implementation phase must be approved and documented before code changes begin.
+The local Projects + Tasks + Kanban workflow must now be backed by SQLite in the Electron main process. Finish the renderer bootstrap/CRUD hookup, canonical roadmap display, native-module compatibility, and runtime acceptance. Do not begin Today/Focus, coach intelligence, integrations, usage tracking, or unrelated redesign work first.
 
 Read:
 
-- `.hermes/PROJECT_STATUS.md` — current verified state and next task
+- `.hermes/PROJECT_STATUS.md` — current verified state and next board task
 - `.hermes/DECISIONS.md` — durable decisions that should not be reopened casually
-- `.hermes/plans/PHASE-01-command-center-foundation.md` — active implementation boundary
+- `.hermes/plans/PHASE-02-projects-tasks-kanban.md` — active implementation boundary
 - `.hermes/handoffs/SESSION_HANDOFF_TEMPLATE.md` — how to start future sessions
 
 ## Must preserve
@@ -79,9 +80,10 @@ Read:
 3. Work on one bounded objective only.
 4. State the smallest safe approach before editing.
 5. Make focused changes and verify them with real execution.
-6. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` when durable state changes.
-7. Update this brief only when the product direction, active phase, constraints, or stable current state changes.
-8. Stop when the approved objective is complete. Do not silently begin the next phase.
+7. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` when durable state changes.
+8. Update this brief only when the product direction, active phase, constraints, or stable current state changes.
+9. While the SQLite migration is the active priority, stop after database-backed board acceptance and do not silently begin Today/Focus, coaching, integrations, usage tracking, or unrelated redesign.
+10. Stop when the approved objective is complete. Do not silently begin the next phase.
 
 ## Standard verification
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
+import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
 import './styles.css';
 
 const examFacts = [
@@ -58,18 +58,80 @@ const curriculum = [
 
 const prompts = ['Explain this lesson simply', 'Quiz me on what I studied', 'Give me an architecture scenario'];
 const STORAGE_KEY = 'claude-architect-study-workspace-v1';
-const COMMAND_CENTER_STORAGE_KEY = 'executive-command-center-workspace-v1';
-const PROJECT_STATUSES = [
-  ['backlog', 'Backlog'], ['todo', 'To do'], ['in-progress', 'In progress'], ['done', 'Done']
-];
-const readCommandCenterState = () => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(COMMAND_CENTER_STORAGE_KEY) || 'null');
-    if (parsed?.schemaVersion !== 1 || !Array.isArray(parsed.projects) || !Array.isArray(parsed.tasks)) return { projects: [], tasks: [] };
-    const projectIds = new Set(parsed.projects.map((project) => project.id));
-    return { projects: parsed.projects, tasks: parsed.tasks.filter((task) => projectIds.has(task.projectId) && PROJECT_STATUSES.some(([status]) => status === task.status)) };
-  } catch { return { projects: [], tasks: [] }; }
+const PROJECT_STATUSES = [['backlog','Backlog'],['todo','To do'],['in-progress','In progress'],['blocked','Blocked'],['done','Done']];
+const TASK_PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['urgent', 'Urgent']];
+const priorityLabel = (priority) => TASK_PRIORITIES.find(([value]) => value === priority)?.[1] || 'Medium';
+const isTaskOverdue = (task) => Boolean(task.dueDate && task.status !== 'done' && task.dueDate < new Date().toISOString().slice(0, 10));
+const emptyRoadmap = () => ({ schemaVersion: 2, workspace: { id: 'default', kind: 'workspace', type: 'workspace', title: 'Executive roadmap', archived: false }, projects: [], releases: [], phases: [], tasks: [], subtasks: [] });
+const normalizeRoadmap = (parsed) => {
+  if (parsed?.schemaVersion === 2 && parsed.workspace && ['projects','releases','phases','tasks','subtasks'].every((key) => Array.isArray(parsed[key]))) {
+    const normalize = (entry, fallbackKind) => ({ ...entry, kind: entry.kind || fallbackKind, type: entry.type || entry.kind || fallbackKind, title: entry.title || entry.name || 'Untitled', archived: Boolean(entry.archived) });
+    return { ...emptyRoadmap(), ...parsed, workspace: { ...emptyRoadmap().workspace, ...parsed.workspace, kind: parsed.workspace.kind || 'workspace', type: parsed.workspace.type || 'workspace' }, projects: parsed.projects.map((entry) => normalize(entry, 'project')), releases: parsed.releases.map((entry) => normalize(entry, 'release')), phases: parsed.phases.map((entry) => normalize(entry, 'phase')), tasks: parsed.tasks.map((entry) => normalize(entry, 'task')), subtasks: parsed.subtasks.map((entry) => normalize(entry, 'subtask')) };
+  }
+  if (parsed?.schemaVersion === 1 && Array.isArray(parsed.projects) && Array.isArray(parsed.tasks)) {
+    const projects = parsed.projects.map((p) => ({ ...p, title: p.title || p.name || 'Untitled project', description: p.description || '', type: 'project', archived: Boolean(p.archived) }));
+    const projectIds = new Set(projects.map((p) => p.id));
+    return { ...emptyRoadmap(), projects, tasks: parsed.tasks.filter((t) => projectIds.has(t.projectId)).map((t) => ({ ...t, type: 'task', parentId: null })) };
+  }
+  return emptyRoadmap();
 };
+
+const ROADMAP_STATUS_OPTIONS = [['backlog', 'Backlog'], ['todo', 'To do'], ['in-progress', 'In progress'], ['blocked', 'Blocked'], ['done', 'Done']];
+const ROADMAP_PRIORITY_OPTIONS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['urgent', 'Urgent']];
+const dbRecordId = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+const roadmapCollections = (roadmap) => [...roadmap.projects, ...roadmap.releases, ...roadmap.phases, ...roadmap.tasks, ...roadmap.subtasks];
+
+function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, setSelectedProjectId }) {
+  const [mode, setMode] = useState('roadmap');
+  const [draft, setDraft] = useState('');
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [detail, setDetail] = useState(null);
+  const [expanded, setExpanded] = useState({ 'AICC-WS-001': true });
+  const [showArchived, setShowArchived] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const nodes = roadmapCollections(roadmap);
+  const projectNodes = roadmap.projects;
+  const children = (parentId) => nodes.filter((entry) => entry.parentId === parentId && (showArchived || !entry.archived)).sort((a, b) => (a.orderIndex ?? a.order ?? 0) - (b.orderIndex ?? b.order ?? 0));
+  const allRoadmapTasks = [...roadmap.tasks, ...roadmap.subtasks].filter((task) => !task.archived);
+  const assignedTaskCount = (entry) => {
+    if (entry.kind === 'workspace') return allRoadmapTasks.length;
+    if (entry.kind === 'project') return allRoadmapTasks.filter((task) => task.projectId === entry.id).length;
+    if (entry.kind === 'release') return allRoadmapTasks.filter((task) => task.releaseId === entry.id).length;
+    if (entry.kind === 'phase') return allRoadmapTasks.filter((task) => task.phaseId === entry.id).length;
+    return allRoadmapTasks.filter((task) => task.parentTaskId === entry.id).length;
+  };
+  const visibleTasks = [...roadmap.tasks, ...roadmap.subtasks].filter((task) => !task.archived && (!selectedProjectId || task.projectId === selectedProjectId) && (!query.trim() || JSON.stringify(task).toLowerCase().includes(query.trim().toLowerCase())) && (statusFilter === 'all' || task.status === statusFilter) && (priorityFilter === 'all' || task.priority === priorityFilter)).sort((a, b) => (a.orderIndex ?? a.order ?? 0) - (b.orderIndex ?? b.order ?? 0));
+  const run = async (operation) => { setBusy(true); setError(''); try { await operation(); await refreshRoadmap(); } catch (cause) { setError(cause?.message || 'Database operation failed.'); } finally { setBusy(false); } };
+  const makeProject = async () => { const title = draft.trim(); if (!title) return; let createdId = null; await run(async () => { const created = await window.desktopShell.createProject({ id: dbRecordId('project'), parentId: roadmap.workspace?.id || null, kind: 'project', title, status: 'backlog', priority: 'medium', orderIndex: projectNodes.filter((entry) => entry.kind === 'project').length }); createdId = created?.id || null; }); if (createdId) setSelectedProjectId(createdId); setDraft(''); }
+  const makeTask = async (parent) => { const title = draft.trim(); if (!title || !selectedProjectId) return; const phase = parent?.type === 'phase' ? parent : roadmap.phases.find((entry) => entry.id === parent?.id) || null; const selectedProject = roadmap.projects.find((entry) => entry.id === selectedProjectId); const projectId = selectedProject?.id || null; if (!projectId) return; await run(() => window.desktopShell.createTask({ id: dbRecordId('task'), projectId, parentTaskId: null, phaseId: phase?.id || null, releaseId: phase?.parentId || null, title, status: 'todo', priority: 'medium', orderIndex: visibleTasks.filter((entry) => entry.status === 'todo').length })); setDraft(''); };
+  const saveDetail = async () => { if (!detail?.title?.trim()) return; if (detail.status === 'blocked' && !detail.blockedReason?.trim()) { setError('Add a reason before saving a blocked item.'); return; } const payload = { ...detail, title: detail.title.trim(), orderIndex: detail.orderIndex ?? detail.order ?? 0 }; await run(() => detail.type === 'task' || detail.type === 'subtask' ? window.desktopShell.updateTask(payload) : window.desktopShell.updateProject(payload)); setDetail(null); };
+  const deleteRecord = async (record) => { if (!record || !window.confirm(`Delete “${record.title}”?`)) return; await run(() => record.type === 'task' || record.type === 'subtask' ? window.desktopShell.deleteTask(record.id) : window.desktopShell.deleteProject(record.id)); setDetail(null); };
+  const deleteDetail = () => deleteRecord(detail);
+  const archiveProject = (project) => run(() => window.desktopShell.updateProject({ ...project, title: project.title || project.name, archived: !project.archived, deletedAt: null }));
+  const updateTaskStatus = (task, status) => { if (status === 'blocked' && !task.blockedReason?.trim()) { setDetail({ ...task, status }); return; } return run(() => window.desktopShell.updateTask({ ...task, title: task.title, status, orderIndex: visibleTasks.filter((entry) => entry.status === status && entry.id !== task.id).length })); };
+  const updateTaskOrder = (task, status, targetId = null) => { const destination = visibleTasks.filter((entry) => entry.projectId === task.projectId && entry.status === status && entry.id !== task.id); const foundIndex = targetId ? destination.findIndex((entry) => entry.id === targetId) : destination.length; const index = foundIndex < 0 ? destination.length : foundIndex; destination.splice(index, 0, { ...task, status }); run(async () => { for (const [orderIndex, entry] of destination.entries()) await window.desktopShell.updateTask({ ...entry, status, orderIndex }); }); };
+  const openRoadmapRecord = (task) => {
+    const nodeById = new Map(nodes.map((entry) => [entry.id, entry]));
+    const pathIds = [];
+    let parentId = task.parentId || task.parentTaskId || task.phaseId || task.releaseId || task.projectId;
+    while (parentId) {
+      pathIds.push(parentId);
+      parentId = nodeById.get(parentId)?.parentId || null;
+    }
+    if (roadmap.workspace?.id) pathIds.push(roadmap.workspace.id);
+    setSelectedProjectId(task.projectId);
+    setExpanded(Object.fromEntries([...new Set(pathIds)].map((id) => [id, true])));
+    setDetail(null);
+    setMode('roadmap');
+  };
+  const tree = (entry, depth = 0) => <div key={entry.id}><div className={`roadmap-row ${detail?.id === entry.id ? 'selected' : ''}`} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => { setDetail(entry); if (entry.kind === 'project' || entry.kind === 'workspace') setSelectedProjectId(entry.id); }}><button aria-label={`Toggle ${entry.title}`} onClick={(event) => { event.stopPropagation(); setExpanded((current) => ({ ...current, [entry.id]: !current[entry.id] })); }}>{children(entry.id).length ? (expanded[entry.id] ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span style={{ width: 13 }} />}</button><span className={`type-pill ${entry.type || entry.kind}`}>{entry.type || entry.kind}</span><b>{entry.title}</b><span className="roadmap-task-count">{assignedTaskCount(entry)} {assignedTaskCount(entry) === 1 ? 'task' : 'tasks'}</span><span className={`status-chip ${entry.status}`}>{entry.status}</span></div>{expanded[entry.id] && children(entry.id).map((child) => tree(child, depth + 1))}</div>;
+  return <section className="projects-workspace"><div className="section-head compact"><div><span className="eyebrow">SQLITE-BACKED ROADMAP</span><h2>Projects, releases, phases, and tasks</h2><p>{busy ? 'Saving database changes…' : 'Canonical hierarchy and local work state.'}</p></div><div className="roadmap-tabs"><button className={mode === 'roadmap' ? 'active' : ''} onClick={() => setMode('roadmap')}>Roadmap</button><button className={mode === 'kanban' ? 'active' : ''} onClick={() => setMode('kanban')}>Kanban</button></div></div>{error && <div className="database-error" role="alert">{error}</div>}<div className="roadmap-toolbar"><button className={showArchived ? 'secondary active' : 'secondary'} onClick={() => setShowArchived((value) => !value)}>{showArchived ? 'Hide archived' : 'Show archived'}</button><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedProjectId ? 'New task or project title' : 'New project title'} onKeyDown={(event) => { if (event.key === 'Enter') selectedProjectId ? makeTask() : makeProject(); }} />{selectedProjectId ? <><button className="primary" disabled={busy} onClick={() => makeTask()}><Plus size={14} /> Add task</button><button className="secondary" disabled={busy} onClick={() => makeProject()}><Plus size={14} /> Add project</button></> : <button className="primary" disabled={busy} onClick={makeProject}><Plus size={14} /> Add project</button>}<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks…" /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{ROADMAP_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}><option value="all">All priorities</option>{ROADMAP_PRIORITY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>{mode === 'roadmap' ? <div className="roadmap-layout"><aside className="projects-list"><div className="project-list-heading"><b>Workspace hierarchy</b><small>{projectNodes.length} database records</small></div>{projectNodes.filter((entry) => (entry.kind === 'workspace' || entry.kind === 'project') && (showArchived || !entry.archived)).map((entry) => <div className={`project-row ${selectedProjectId === entry.id ? 'selected' : ''} ${entry.archived ? 'archived' : ''}`} key={entry.id}><button onClick={() => { setSelectedProjectId(entry.id); setExpanded((current) => ({ ...current, [entry.id]: true })); }}><b>{entry.title}</b><small>{assignedTaskCount(entry)} {assignedTaskCount(entry) === 1 ? 'Kanban task' : 'Kanban tasks'}</small></button>{entry.kind === 'project' && <button className="archive-button" aria-label={`${entry.archived ? 'Restore' : 'Archive'} ${entry.title}`} onClick={() => archiveProject(entry)}>{entry.archived ? 'Restore' : 'Archive'}</button>}</div>)}</aside><div className="roadmap-tree">{projectNodes.filter((entry) => (entry.kind === 'workspace' || entry.kind === 'project') && (showArchived || !entry.archived)).map(tree)}</div></div> : <div className="kanban-board roadmap-kanban">{ROADMAP_STATUS_OPTIONS.map(([status, label]) => <div className="kanban-column" key={status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData('text/plain'); const task = visibleTasks.find((entry) => entry.id === id); if (task) updateTaskOrder(task, status); }}><div className="column-heading"><b>{label}</b><span>{visibleTasks.filter((entry) => entry.status === status).length}</span></div>{visibleTasks.filter((entry) => entry.status === status).map((task) => <div className="task-card" draggable key={task.id} onDragStart={(event) => event.dataTransfer.setData('text/plain', task.id)} onDoubleClick={() => setDetail(task)}><div className="task-card-top"><b>{task.title}</b><span className="priority-badge">{task.priority}</span></div>{task.status === 'blocked' && <div className="blocked-summary"><b>Why blocked</b><span>{task.blockedReason || 'Reason required — open this item to add one.'}</span></div>}<div className="task-card-actions"><button className="roadmap-link" onClick={() => openRoadmapRecord(task)}>Roadmap</button><select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => updateTaskStatus(task, event.target.value)}>{ROADMAP_STATUS_OPTIONS.map(([value, optionLabel]) => <option key={value} value={value}>{optionLabel}</option>)}</select><button aria-label={`Edit ${task.title}`} onClick={() => setDetail(task)}><Pencil size={13} /></button><button aria-label={`Delete ${task.title}`} onClick={() => deleteRecord(task)}><Trash2 size={13} /></button></div></div>)}</div>)}</div>}{detail && <div className="modal" onClick={() => setDetail(null)}><div className="notes roadmap-detail" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setDetail(null)}><X size={18} /></button><span className="eyebrow">DATABASE RECORD</span><h2>Edit {detail.type || detail.kind}</h2><input className="edit-field" value={detail.title} onChange={(event) => setDetail({ ...detail, title: event.target.value })} /><textarea value={detail.description || ''} onChange={(event) => setDetail({ ...detail, description: event.target.value })} placeholder="Description" />{detail.status === 'blocked' && <div className="blocked-reason-section"><h3>Why it’s blocked</h3><p>Explain what is preventing this item from moving forward.</p><textarea aria-label="Why it is blocked" value={detail.blockedReason || ''} onChange={(event) => setDetail({ ...detail, blockedReason: event.target.value })} placeholder="Example: Waiting for approval, information, access, or another task…" required /></div>}<div className="detail-grid"><label>Status<select value={detail.status || 'backlog'} onChange={(event) => setDetail({ ...detail, status: event.target.value })}>{ROADMAP_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Priority<select value={detail.priority || 'medium'} onChange={(event) => setDetail({ ...detail, priority: event.target.value })}>{ROADMAP_PRIORITY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Order<input type="number" min="0" value={detail.orderIndex ?? detail.order ?? 0} onChange={(event) => setDetail({ ...detail, orderIndex: Number(event.target.value) })} /></label><label>Due date<input type="date" value={detail.dueDate || ''} onChange={(event) => setDetail({ ...detail, dueDate: event.target.value || null })} /></label></div><div className="modal-actions"><button className="secondary" onClick={deleteDetail}>Delete</button>{(detail.kind === 'project') && <button className="secondary" onClick={() => archiveProject(detail)}>Archive</button>}<button className="primary" onClick={saveDetail}>Save</button></div></div></div>}</section>;
+}
+
+
 const makeLocalId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const defaultExpanded = { recommended: true, 'professional-prep': true, supplemental: false, practice: false };
 const practiceDrills = [
@@ -109,19 +171,10 @@ const getCommandCenterSnapshot = ({ current, completed, total, progress, readine
 
 function App() {
   const savedState = useMemo(readSavedState, []);
-  const savedCommandCenter = useMemo(readCommandCenterState, []);
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
-  const [projects, setProjects] = useState(() => savedCommandCenter.projects);
-  const [tasks, setTasks] = useState(() => savedCommandCenter.tasks);
-  const [selectedProjectId, setSelectedProjectId] = useState(() => savedCommandCenter.projects[0]?.id || null);
-  const [projectDraft, setProjectDraft] = useState('');
-  const [taskDraft, setTaskDraft] = useState('');
-  const [editingProjectId, setEditingProjectId] = useState(null);
-  const [editingProjectName, setEditingProjectName] = useState('');
-  const [editingTaskId, setEditingTaskId] = useState(null);
-  const [editingTaskTitle, setEditingTaskTitle] = useState('');
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
-  const selectedTasks = tasks.filter((task) => task.projectId === selectedProject?.id);
+  const [roadmap, setRoadmap] = useState(() => emptyRoadmap());
+  const [roadmapStatus, setRoadmapStatus] = useState({ state: 'loading', message: 'Loading the local roadmap…' });
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
   const [view, setView] = useState(() => ['overview', 'curriculum', 'practice', 'command-center', 'projects'].includes(savedState?.view) ? savedState.view : 'command-center');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
@@ -171,57 +224,36 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen })); } catch { /* local persistence is best-effort */ }
   }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen]);
+  const refreshRoadmap = useCallback(async () => {
+    const bootstrap = await window.desktopShell?.coachBootstrap?.();
+    if (!bootstrap?.roadmap) throw new Error('The local roadmap database returned no roadmap.');
+    const normalized = normalizeRoadmap(bootstrap.roadmap);
+    setRoadmap(normalized);
+    setSelectedProjectId((currentId) => normalized.projects.some((project) => project.id === currentId && !project.archived)
+      ? currentId
+      : normalized.workspace?.id || normalized.projects.find((project) => !project.archived)?.id || null);
+    setRoadmapStatus({ state: 'ready', message: '' });
+    return normalized;
+  }, []);
   useEffect(() => {
-    try { localStorage.setItem(COMMAND_CENTER_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, projects, tasks })); } catch { /* local persistence is best-effort */ }
-  }, [projects, tasks]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const bootstrap = await window.desktopShell?.coachBootstrap?.();
+        if (!bootstrap?.roadmap) throw new Error('The local roadmap database is unavailable.');
+        if (cancelled) return;
+        const normalized = normalizeRoadmap(bootstrap.roadmap);
+        setRoadmap(normalized);
+        setSelectedProjectId(normalized.workspace?.id || normalized.projects.find((project) => !project.archived)?.id || null);
+        setRoadmapStatus({ state: 'ready', message: '' });
+      } catch (cause) {
+        if (!cancelled) setRoadmapStatus({ state: 'error', message: cause?.message || 'Could not load the local roadmap database.' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  const addProject = () => {
-    const name = projectDraft.trim();
-    if (!name) return;
-    const now = new Date().toISOString();
-    const project = { id: makeLocalId('project'), name, createdAt: now, updatedAt: now };
-    setProjects((items) => [...items, project]);
-    setSelectedProjectId(project.id);
-    setProjectDraft('');
-  };
-  const saveProjectName = (id) => {
-    const name = editingProjectName.trim();
-    if (!name) return;
-    setProjects((items) => items.map((project) => project.id === id ? { ...project, name, updatedAt: new Date().toISOString() } : project));
-    setEditingProjectId(null);
-  };
-  const deleteProject = (id) => {
-      if (tasks.some((task) => task.projectId === id)) return;
-      setProjects((items) => {
-        const remaining = items.filter((project) => project.id !== id);
-        if (selectedProjectId === id) setSelectedProjectId(remaining[0]?.id || null);
-        return remaining;
-      });
-    };
-  const addTask = () => {
-    const title = taskDraft.trim();
-    if (!title || !selectedProject) return;
-    const now = new Date().toISOString();
-    const order = selectedTasks.filter((task) => task.status === 'todo').length;
-    setTasks((items) => [...items, { id: makeLocalId('task'), projectId: selectedProject.id, title, status: 'todo', order, createdAt: now, updatedAt: now }]);
-    setTaskDraft('');
-  };
-  const moveTask = (id, status) => {
-    setTasks((items) => items.map((task) => task.id === id ? { ...task, status, order: items.filter((candidate) => candidate.projectId === task.projectId && candidate.status === status).length, updatedAt: new Date().toISOString() } : task));
-  };
-  const saveTaskTitle = (id) => {
-    const title = editingTaskTitle.trim();
-    if (!title) return;
-    setTasks((items) => items.map((task) => task.id === id ? { ...task, title, updatedAt: new Date().toISOString() } : task));
-    setEditingTaskId(null);
-  };
-  const deleteTask = (id) => setTasks((items) => items.filter((task) => task.id !== id));
-  const editTaskTitle = (id) => {
-    const title = window.prompt('Edit task title', tasks.find((task) => task.id === id)?.title || '')?.trim();
-    if (title) setTasks((items) => items.map((task) => task.id === id ? { ...task, title, updatedAt: new Date().toISOString() } : task));
-  };
 
-  const updateStatus = (id, status) => setModules((items) => items.map((m) => ({ ...m, lessons: updateEntries(m.lessons, id, status) })));
   const openReviewItem = (lesson) => {
     const module = modules.find((entry) => flattenItems(entry.lessons).some((item) => item.id === lesson.id));
     setActiveLesson(lesson.id);
@@ -313,7 +345,8 @@ function App() {
       <div className="nav-label">COMMAND CENTER</div>
       <nav>
         <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => setView('command-center')}><ListChecks size={17}/> Command center</button>
-        <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => setView('projects')}><Target size={17}/> Projects <em>{projects.length}</em></button>
+        <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><Target size={17}/> Projects <em>{roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length}</em></button>
+        <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><FileText size={17}/> Archive <em>{roadmap.projects.filter((project) => project.kind === 'project' && project.archived).length}</em></button>
         <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Readiness</button>
       </nav>
       <div className="nav-label nav-label-spaced">LEARNING &amp; DEVELOPMENT</div>
@@ -330,8 +363,12 @@ function App() {
       <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'command-center' ? 'Command center' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
       <div className="main-scroll">
         <section className="hero"><div><span className="eyebrow">AI EXECUTIVE COACH COMMAND CENTER</span><h1>See what matters. Choose what moves. <span>✦</span></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
-        <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>No projects, tasks, coach, or external integrations are connected yet</small></div></section>
-        {view === 'projects' && <section className="projects-workspace"><div className="section-head compact"><div><span className="eyebrow">LOCAL PROJECT CONTROL</span><h2>Projects and tasks</h2><p>Real local work only. Nothing is synced, generated, or shared.</p></div></div><div className="projects-layout"><aside className="projects-list"><div className="project-create"><input value={projectDraft} onChange={(event) => setProjectDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addProject()} placeholder="New project name" aria-label="New project name"/><button className="primary" onClick={addProject}><Plus size={15}/> Add</button></div>{projects.length ? projects.map((project) => <div className={project.id === selectedProject?.id ? 'project-row selected' : 'project-row'} key={project.id}><button onClick={() => setSelectedProjectId(project.id)}><b>{project.name}</b><small>{tasks.filter((task) => task.projectId === project.id).length} tasks</small></button><div className="row-actions"><button disabled={tasks.some((task) => task.projectId === project.id)} onClick={() => deleteProject(project.id)} aria-label={`Delete ${project.name}`}><Trash2 size={14}/></button></div></div>) : <div className="projects-empty"><Target size={18}/><b>No projects yet</b><span>Create a real project to start a board.</span></div>}</aside><div className="kanban-area">{selectedProject ? <><div className="kanban-toolbar"><div><h3>{selectedProject.name}</h3><span>{selectedTasks.length} tasks · stored locally</span></div><div className="task-create"><input value={taskDraft} onChange={(event) => setTaskDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addTask()} placeholder="Add a task" aria-label="New task title"/><button className="primary" onClick={addTask}><Plus size={15}/> Task</button></div></div><div className="kanban-board">{PROJECT_STATUSES.map(([status, label]) => <section className="kanban-column" key={status}><div className="column-heading"><b>{label}</b><span>{selectedTasks.filter((task) => task.status === status).length}</span></div>{selectedTasks.filter((task) => task.status === status).sort((a, b) => a.order - b.order).map((task) => <article className="task-card" key={task.id}><b>{task.title}</b><div className="task-card-actions"><button onClick={() => editTaskTitle(task.id)} aria-label={`Edit ${task.title}`}><FileText size={13}/></button><button onClick={() => deleteTask(task.id)} aria-label={`Delete ${task.title}`}><Trash2 size={13}/></button><select value={task.status} onChange={(event) => moveTask(task.id, event.target.value)} aria-label={`Move ${task.title}`}>{PROJECT_STATUSES.map(([option, optionLabel]) => <option value={option} key={option}>{optionLabel}</option>)}</select></div></article>)}{!selectedTasks.some((task) => task.status === status) && <div className="column-empty">No tasks here</div>}</section>)}</div></> : <div className="projects-empty large"><Target size={22}/><h3>Select or create a project</h3><p>Your local Kanban board will appear here.</p></div>}</div></div></section>}
+        <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate · not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'} · ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmap…'}</small></div></section>
+        {view === 'projects' && (roadmapStatus.state === 'loading'
+          ? <section className="projects-workspace database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmap…</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
+          : roadmapStatus.state === 'error'
+            ? <section className="projects-workspace database-state database-error" role="alert"><h2>Roadmap database unavailable</h2><p>{roadmapStatus.message}</p><button className="primary" onClick={() => refreshRoadmap().catch((cause) => setRoadmapStatus({ state: 'error', message: cause?.message || 'Could not load the local roadmap database.' }))}>Retry</button></section>
+            : <DatabaseRoadmapWorkspace roadmap={roadmap} refreshRoadmap={refreshRoadmap} selectedProjectId={selectedProjectId} setSelectedProjectId={setSelectedProjectId} />)}
         {view === 'command-center' && <section className="command-center"><div className="command-intro"><div><span className="eyebrow">EXECUTIVE OPERATING PICTURE</span><h2>Know what matters next.</h2><p>This foundation brings existing learning and study state into a broader command-center shell without inventing projects, tasks, metrics, or coaching.</p></div><button className="primary" onClick={() => openReviewItem(commandCenter.nextActions[0]?.item || current)}><Play size={15}/> Continue learning</button></div><div className="command-grid"><button className="command-card" onClick={() => setView('curriculum')}><BookOpen size={20}/><label>LEARNING MODULE</label><b>{progress}%</b><small>{completed}/{officialLessons.length} items complete or skipped</small></button><button className="command-card" onClick={() => setView('overview')}><Target size={20}/><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}</b><small>App-derived estimate, not a passing prediction</small></button><button className="command-card" onClick={() => setView('practice')}><Brain size={20}/><label>PRACTICE BACKLOG</label><b>{commandCenter.counts.practice}</b><small>App-created drills remaining</small></button><button className="command-card" onClick={() => setNotesOpen(true)}><FileText size={20}/><label>PERSONAL NOTES</label><b>{notes.trim() ? 'Active' : 'Ready'}</b><small>{notes.trim() ? `${notes.trim().length} characters saved locally` : 'Capture your next insight'}</small></button></div><section className="command-panel"><div className="section-head compact"><div><h2>Next actions</h2><p>Prioritized from existing state; opening this list never changes progress.</p></div><span className="queue-count">{commandCenter.nextActions.length} shown</span></div>{commandCenter.nextActions.length ? <div className="command-actions">{commandCenter.nextActions.map((action) => <button className="command-action" key={action.id} onClick={() => action.kind === 'lesson' ? openReviewItem(action.item) : action.kind === 'practice' ? (setActiveDrillId(action.item.id), setView('practice')) : setNotesOpen(true)}><span className="review-icon">{action.kind === 'lesson' ? <BookOpen size={14}/> : action.kind === 'practice' ? <Brain size={14}/> : <FileText size={14}/>}</span><span><b>{action.label}</b><small>{action.detail}</small></span><ChevronRight size={15}/></button>)}</div> : <div className="review-empty"><Check size={18}/> No queued actions from the preserved learning state.</div>}<div className="command-foot"><span><b>{commandCenter.counts.captures}</b> Academy captures</span><span><b>{commandCenter.counts.materials}</b> generated materials</span><span><b>{commandCenter.counts.unreviewed}</b> unreviewed cards</span></div></section><section className="future-panel"><div><span className="eyebrow">NEXT SAFE CAPABILITY</span><h2>Projects, tasks, and Kanban</h2><p>Manage real local work without cloud sync, integrations, credentials, or AI coaching.</p></div><button className="link" onClick={() => setView('projects')}>Open Projects <ChevronRight size={15}/></button></section></section>}
         {view === 'overview' && <><section className="practice-card"><Target size={22}/><h2>CCAR-P exam overview</h2><p><b>Claude Certified Architect – Professional</b> · Passing score 720 on a 100–1,000 scaled score · $175 USD · Online proctored or Pearson VUE test center · Credential valid for 12 months.</p><div className="exam-facts">{examFacts.map(([label, value]) => <div key={label}><label>{label}</label><b>{value}</b></div>)}</div><p><b>No mandatory prerequisites or required courses.</b> Recommended preparation helps build context; readiness is not represented by course completion alone.</p></section><section className="readiness-card"><div className="readiness-heading"><div><span className="eyebrow">ESTIMATED APP READINESS</span><h2>Exam-domain readiness</h2><p>Transparent evidence from official curriculum statuses. This is an estimate, not an official passing prediction.</p></div><div className="readiness-total">{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}<small>weighted evidence</small></div></div><div className="readiness-list">{readiness.map((domain) => <div className="readiness-row" key={domain.id}><div className="readiness-label"><b>{domain.label}</b><span>{domain.weight}% exam weight · {domain.mapped.length} mapped official item{domain.mapped.length === 1 ? '' : 's'}</span></div><strong>{domain.evidence === null ? 'Not assessed' : `${domain.evidence}%`}</strong><div className="readiness-bar"><i style={{ width: `${domain.evidence || 0}%` }}/></div></div>)}</div><div className="readiness-method"><b>How the estimate is formed</b><span>Complete = 100% evidence · In progress = 50% · Not started = 0% · Skipped items are excluded. Course completion changes evidence only; it never marks a domain mastered.</span></div></section></>}
         {view !== 'command-center' && view !== 'projects' && <>
@@ -346,6 +383,7 @@ function App() {
     </main>
     {view === 'curriculum' && academyOpen && <div className={dragging ? 'academy-splitter dragging' : 'academy-splitter'} ref={splitterRef} role="separator" aria-label="Resize Academy panel" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); setDragging(true); }}><span/></div>}
     {view === 'curriculum' && academyOpen && <div className="academy-slot" aria-label="Anthropic Academy native browser panel" />}
+
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
   </div>;
 }

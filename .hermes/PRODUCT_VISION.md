@@ -18,6 +18,10 @@ When the user opens the app, it should help answer:
 6. What should be reviewed before planning more work?
 7. How is AI resource usage being spent?
 
+## Current implementation priority
+
+The first concrete workflow to make reliable is the local Projects + Tasks + Kanban board. This is the active priority before Today/Focus, coach intelligence, integrations, usage tracking, or unrelated redesign. The priority is an implementation sequence, not a reduction of the long-term vision.
+
 ## Product pillars
 
 ### 1. Executive clarity

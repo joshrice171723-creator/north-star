@@ -47,7 +47,7 @@ npm run desktop:prod
 
 ## Status
 
-Early development. See `PROJECT_BRIEF.md` for the current implementation state and planned phases.
+The local Projects + Tasks + Kanban workflow is the top implementation priority. The baseline is implemented; next work is runtime acceptance and board-focused fixes only. See `PROJECT_BRIEF.md` and `.hermes/plans/PHASE-02-projects-tasks-kanban.md` for the current boundary and verification requirements.
 
 ## License
 

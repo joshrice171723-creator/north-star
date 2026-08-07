@@ -3,6 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { createDatabase } = require('./database.cjs');
 
 app.setPath('userData', path.join(app.getPath('appData'), 'ClaudeArchitectStudyCoachNative'));
 const academyUrl = 'https://anthropic.skilljar.com/';
@@ -11,6 +12,13 @@ let mainWindow;
 let academyView;
 let academyVisible = true;
 let academyLayout = null;
+let coachDatabase;
+const roadmapSeedCandidates = [
+  path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
+  path.resolve(__dirname, '../../canonical-ai-executive-coach-roadmap.csv'),
+  path.resolve(process.cwd(), 'canonical-ai-executive-coach-roadmap.csv')
+];
+const roadmapSeedPath = roadmapSeedCandidates.find((candidate) => fs.existsSync(candidate)) || roadmapSeedCandidates[0];
 const ACADEMY_CAPTURE_SCHEMA_VERSION = 1;
 const ACADEMY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const ACADEMY_STUDY_MATERIAL_SCHEMA_VERSION = 1;
@@ -20,6 +28,44 @@ const ACADEMY_STUDY_REVIEW_MAX_BYTES = 256 * 1024;
 const academyCapturePath = () => path.join(app.getPath('userData'), 'academy-capture.json');
 const academyStudyMaterialPath = () => path.join(app.getPath('userData'), 'academy-study-material.json');
 const academyStudyReviewPath = () => path.join(app.getPath('userData'), 'academy-study-review.json');
+
+const COACH_STATUSES = new Set(['backlog', 'todo', 'in-progress', 'blocked', 'done']);
+const COACH_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent', 'P0', 'P1', 'P2', 'P3', 'P4']);
+const COACH_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const validateCoachId = (value, label = 'record id') => {
+  if (typeof value !== 'string' || !COACH_ID_PATTERN.test(value)) throw new Error(`Invalid ${label}.`);
+  return value;
+};
+const validateCoachRecord = (input, kind) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(`Invalid ${kind}.`);
+  validateCoachId(input.id, `${kind} id`);
+  if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) throw new Error(`Invalid ${kind}: title is required.`);
+  if (input.status !== undefined && (!COACH_STATUSES.has(input.status) && !['Active', 'Completed'].includes(input.status))) throw new Error(`Invalid ${kind}: status.`);
+  if (input.priority !== undefined && !COACH_PRIORITIES.has(input.priority)) throw new Error(`Invalid ${kind}: priority.`);
+  if (input.parentId !== undefined && input.parentId !== null) validateCoachId(input.parentId, `${kind} parent id`);
+  if (input.dueDate !== undefined && input.dueDate !== null && (typeof input.dueDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate))) throw new Error(`Invalid ${kind}: due date.`);
+  if (kind === 'task') {
+    validateCoachId(input.projectId, 'task project id');
+    if (input.parentTaskId !== undefined && input.parentTaskId !== null) validateCoachId(input.parentTaskId, 'task parent id');
+    if (input.releaseId !== undefined && input.releaseId !== null) validateCoachId(input.releaseId, 'task release id');
+    if (input.phaseId !== undefined && input.phaseId !== null) validateCoachId(input.phaseId, 'task phase id');
+  }
+  for (const field of ['description', 'nextAction', 'definitionOfDone', 'blockedReason', 'dependencies', 'acceptanceCriteria', 'securityPrivacyNotes', 'sourceContext', 'confidence']) {
+    if (input[field] !== undefined && typeof input[field] !== 'string') throw new Error(`Invalid ${kind}: ${field}.`);
+  }
+  if (input.orderIndex !== undefined && (!Number.isInteger(input.orderIndex) || input.orderIndex < 0)) throw new Error(`Invalid ${kind}: order.`);
+  if (input.archived !== undefined && typeof input.archived !== 'boolean') throw new Error(`Invalid ${kind}: archived.`);
+  return input;
+};
+const validateCoachDeleteId = (value, label) => validateCoachId(value, `${label} id`);
+const validateRoadmapPayload = (payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid roadmap payload.');
+  const collections = ['projects', 'releases', 'phases', 'tasks', 'subtasks'];
+  if (collections.some((key) => !Array.isArray(payload[key]) || payload[key].length > 10000)) throw new Error('Invalid roadmap collections.');
+  for (const entry of [...payload.projects, ...payload.releases, ...payload.phases]) validateCoachRecord(entry, 'project');
+  for (const entry of [...payload.tasks, ...payload.subtasks]) validateCoachRecord(entry, 'task');
+  return payload;
+};
 
 // The Academy login flow can redirect through Skilljar's authentication host
 // (and occasionally an OAuth provider). Keep HTTPS navigation inside the
@@ -317,7 +363,25 @@ function createWindow() {
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
 }
 
+function registerDatabaseIpc() {
+  ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
+  ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
+  ipcMain.handle('coach:import-roadmap', (_event, payload) => coachDatabase.importRoadmap(validateRoadmapPayload(payload)));
+  ipcMain.handle('coach:save-note', (_event, content, title) => coachDatabase.saveNote(content, title));
+  ipcMain.handle('coach:backup', () => coachDatabase.backup());
+  ipcMain.handle('coach:projects:list', () => coachDatabase.projects.list());
+  ipcMain.handle('coach:projects:create', (_event, input) => coachDatabase.projects.create(validateCoachRecord(input, 'project')));
+  ipcMain.handle('coach:projects:update', (_event, input) => coachDatabase.projects.update(validateCoachRecord(input, 'project')));
+  ipcMain.handle('coach:projects:delete', (_event, id) => coachDatabase.projects.delete(validateCoachDeleteId(id, 'project')));
+  ipcMain.handle('coach:tasks:list', () => coachDatabase.tasks.list());
+  ipcMain.handle('coach:tasks:create', (_event, input) => coachDatabase.tasks.create(validateCoachRecord(input, 'task')));
+  ipcMain.handle('coach:tasks:update', (_event, input) => coachDatabase.tasks.update(validateCoachRecord(input, 'task')));
+  ipcMain.handle('coach:tasks:delete', (_event, id) => coachDatabase.tasks.delete(validateCoachDeleteId(id, 'task')));
+}
+
 app.whenReady().then(() => {
+  coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), seedPath: roadmapSeedPath });
+  registerDatabaseIpc();
   ipcMain.handle('academy:navigate', (_event, url) => navigateAcademy(url));
   ipcMain.handle('academy:capture-page', () => captureAcademyPage());
   ipcMain.handle('academy:get-captures', () => getAcademyCaptures());
@@ -343,5 +407,6 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('will-quit', () => { try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };

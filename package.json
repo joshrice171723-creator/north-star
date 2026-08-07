@@ -11,15 +11,18 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "vite": "latest"
   },
   "devDependencies": {
-    "electron": "latest",
+    "@electron/rebuild": "^4.2.0",
     "concurrently": "latest",
-    "wait-on": "latest",
-    "cross-env": "latest"
+    "cross-env": "latest",
+    "electron": "latest",
+    "wait-on": "latest"
   }
 }

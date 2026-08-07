@@ -10,5 +10,18 @@ contextBridge.exposeInMainWorld('desktopShell', {
   getAcademyStudyReviews: () => ipcRenderer.invoke('academy:get-study-reviews'),
   setAcademyStudyReview: (id, status) => ipcRenderer.invoke('academy:set-study-review', id, status),
   setAcademyVisible: (visible) => ipcRenderer.invoke('academy:set-visible', Boolean(visible)),
-  setAcademyBounds: (bounds) => ipcRenderer.invoke('academy:set-bounds', bounds)
+  setAcademyBounds: (bounds) => ipcRenderer.invoke('academy:set-bounds', bounds),
+  coachBootstrap: () => ipcRenderer.invoke('coach:bootstrap'),
+  syncRoadmap: (payload) => ipcRenderer.invoke('coach:sync-roadmap', payload),
+  importRoadmap: (payload) => ipcRenderer.invoke('coach:import-roadmap', payload),
+  saveNote: (content, title) => ipcRenderer.invoke('coach:save-note', content, title),
+  backupDatabase: () => ipcRenderer.invoke('coach:backup'),
+  listProjects: () => ipcRenderer.invoke('coach:projects:list'),
+  createProject: (input) => ipcRenderer.invoke('coach:projects:create', input),
+  updateProject: (input) => ipcRenderer.invoke('coach:projects:update', input),
+  deleteProject: (id) => ipcRenderer.invoke('coach:projects:delete', id),
+  listTasks: () => ipcRenderer.invoke('coach:tasks:list'),
+  createTask: (input) => ipcRenderer.invoke('coach:tasks:create', input),
+  updateTask: (input) => ipcRenderer.invoke('coach:tasks:update', input),
+  deleteTask: (id) => ipcRenderer.invoke('coach:tasks:delete', id)
 });

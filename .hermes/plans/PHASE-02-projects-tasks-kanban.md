@@ -1,8 +1,10 @@
 # Phase 2 — Local Projects, Tasks, and Basic Kanban
 
-**Status:** Implemented after explicit user approval.
+**Status:** Active board improvement phase — baseline runtime acceptance passed; priority, due-date, search, and filtering improvements implemented and awaiting user runtime acceptance.
 
-**Goal:** Add the smallest useful local-first Projects + Tasks + Kanban workflow without changing Learning & Development or Academy contracts.
+**Goal:** Finish and verify the smallest useful local-first Projects + Tasks + Kanban workflow without changing Learning & Development or Academy contracts.
+
+**Priority rule:** No Today/Focus, coach intelligence, integrations, usage tracking, advanced task metadata, or unrelated redesign work starts until this phase's runtime acceptance passes.
 
 ## Delivered scope
 
@@ -48,9 +50,31 @@ Passed:
 
 Build emitted only the pre-existing Vite CommonJS/ESM configuration warning.
 
-## Remaining runtime verification
+## Board-focused improvement completed
 
-The production Electron interaction workflow should be exercised manually before phase closure: create project, create/move/edit/delete task, reload persistence, verify learning state, Academy pane, and splitter.
+Task editing now uses the visible in-board edit state rather than a browser `prompt()`. Editing is keyboard-friendly, offers Cancel/Save, preserves stable task IDs and the same local persistence envelope, and keeps the board ready for a future Hermes/OR document context layer without adding AI or document integration in this phase.
+
+## Runtime acceptance — passed by user
+
+The user manually verified the production Electron workflow:
+
+- Projects opened.
+- Project created and selected.
+- Task created.
+- Inline task editor appeared.
+- Task renamed and saved.
+- Task moved through all four columns.
+- Data persisted after reload.
+- Task deleted.
+- Empty project deleted.
+- Empty state returned.
+- Learning path opened.
+- Academy pane appeared.
+- Splitter resized the Academy pane.
+- Academy close/open worked.
+- Board still worked after returning from Learning.
+
+This is user-provided interactive verification evidence. Build and syntax checks remain separately recorded. Phase 2 runtime acceptance passes; stop here until the user explicitly approves the next phase.
 
 ## Stop condition
 

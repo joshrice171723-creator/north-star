@@ -21,8 +21,11 @@ Before making changes:
 6. Inspect git status, recent commits, and the actual source files relevant to this task.
 7. Confirm that the requested work belongs to the active phase.
 
+Current priority:
+Kanban board quality and runtime acceptance. Unless the user explicitly changes priority, do not begin another major capability until the active Phase 2 board acceptance passes.
+
 Current objective:
-[ONE bounded objective. State exactly what should be delivered and what is out of scope.]
+[ONE bounded Kanban objective. State exactly what should be delivered and what is out of scope.]
 
 Rules:
 
