@@ -5,7 +5,7 @@
 **Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 2.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 **Branch observed:** `main`
-**Current phase:** SQLite persistence migration — database foundation exists; renderer hookup and Electron runtime verification remain.
+**Current phase:** Phase 2 SQLite-backed Projects + Tasks + Kanban implementation is complete; automated verification passed and interactive Electron acceptance is a manual handoff.
 
 ## Night handoff — 2026-08-06
 
@@ -59,7 +59,7 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 
 ## Current next task
 
-Complete the SQLite migration end-to-end: wire `src/main.jsx` to `coachBootstrap` and CRUD IPC, display the canonical roadmap from `C:/Users/joshr/OneDrive/Desktop/canonical-ai-executive-coach-roadmap.csv`, preserve Learning & Development/Academy behavior, resolve or document Electron `better-sqlite3` compatibility, and verify persistence through a real Electron restart.
+Complete the manual SQLite-backed Electron acceptance checklist in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`. Do not begin Phase 3 until the user verifies the checklist in the production app.
 
 ## Not started
 
@@ -79,9 +79,9 @@ Complete the SQLite migration end-to-end: wire `src/main.jsx` to `coachBootstrap
 - Native Academy visual interaction was not independently exercised in that session; preserve the recorded BrowserView behavior as prior evidence, not current Kanban verification.
 - Phase 1 acceptance is historical context; the active verification target is Phase 2 Kanban runtime acceptance.
 
-## Active database-migration stop condition
+## Active Phase 2 stop condition
 
-Do not begin Today/Focus, coach intelligence, integrations, usage tracking, authentication, cloud sync, provider connections, or unrelated redesign. Stop only after the database-backed roadmap is visible, project/task CRUD works through secure IPC, persistence survives a complete Electron restart, protected Learning & Development/Academy behavior is checked, and exact verification evidence is recorded. If a native build prerequisite blocks `better-sqlite3`, keep working through verified alternatives and report the precise external dependency only after exhausting them.
+Do not begin Today/Focus, coach intelligence, integrations, usage tracking, authentication, cloud sync, provider connections, or unrelated redesign. Automated gates, canonical seed import, SQLite CRUD/persistence smoke tests, native module loading, and production launch are verified. Final completion remains blocked only on the manual Electron interaction checklist recorded in the Phase 2 plan.
 
 ## Scope note
 
