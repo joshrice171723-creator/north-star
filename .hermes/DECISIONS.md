@@ -85,3 +85,10 @@ Record decisions that future sessions should not casually reopen. If a decision 
 **Decision:** Keep Projects + Tasks + Kanban records structured, stable-ID based, local-first, and attributable so a future Hermes AI layer can read the board together with OR documents and produce explainable recommendations without hidden mutation.
 **Reason:** The user wants Hermes to eventually work from the board in conjunction with OR documents. The board should therefore be a trustworthy source of structured work state, not a presentation-only mockup.
 **Consequence:** Do not add AI automation, document ingestion, cloud sync, credentials, or autonomous writes in the current Kanban phase. Future integrations must use explicit document provenance, read-only context by default, user approval for mutations, and reversible changes.
+
+## D013 — Today View is a derived, read-only window over roadmap records
+
+**Status:** Active (Phase 3 — Release 1, phase `AICC-PHA-001`)
+**Decision:** The Today View is always *derived* from the persisted roadmap; it never stores a second copy of task state and it never mutates tasks. It surfaces actionable roadmap records (status, priority, due date, blocked reason, next action, release, phase, project) with stable IDs and an explainable ordering: blocked first, then in-progress, to-do, and backlog, weighted by priority. Completed and archived records are excluded.
+**Reason:** This satisfies the canonical `AICC-TSK-002` (define Today view contract) and `AICC-TSK-003` (assemble grounded next actions) while keeping the roadmap database the single source of work truth and avoiding any risk of fabricated or duplicated data.
+**Consequence:** The Today View is local-first and reversible by construction (changing a roadmap record changes the view). It must not add autonomous writes, deadlines that mutate state, fake metrics, or a separate task store.

@@ -2,10 +2,10 @@
 
 **Last updated:** 2026-08-07
 
-**Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 2.
+**Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 3.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 **Branch observed:** `main`
-**Current phase:** Phase 2 SQLite-backed Projects + Tasks + Kanban implementation is complete; automated verification passed and interactive Electron acceptance is a manual handoff.
+**Current phase:** Phase 3 Release 1 — Today View. The grounded, derived Today View is implemented; automated verification passed and interactive Electron acceptance is a manual handoff.
 
 ## Night handoff — 2026-08-06
 
@@ -59,11 +59,25 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 
 ## Current next task
 
-Verify the corrected workspace/project hierarchy in the production app. The seed-only database was reset and reloaded from the canonical CSV; no Phase 3 work is authorized.
+Advance the Release 1 → Today View tasks (`AICC-REL-001` / phase `AICC-PHA-001`):
+
+- `AICC-TSK-001` — Preserve roadmap foundation — **done** (verified against the live SQLite roadmap; no feature work, the local roadmap contract is retained).
+- `AICC-TSK-002` — Define Today view contract — **todo** (documented in `.hermes/plans/PHASE-03-release-01-today-view.md` and decision `D013`).
+- `AICC-TSK-003` — Assemble grounded next actions — **backlog → implemented** (derived view queries the roadmap and surfaces prioritized actions; see `src/todayView.mjs`).
+
+## Phase 3 — Release 1 Today View verification
+
+The Today View implementation passed:
+
+- `npm run build` passed (renderer compiled with no errors).
+- `node --test` passed: 14 tests total, including new Today-view derivation tests (exclusions, blocked-first ordering, priority weighting, overdue flags, stable IDs, subtasks, empty-state).
+- `node --check electron/main.cjs` and `node --check electron/preload.cjs` passed.
+- `git diff --check` passed.
+
+Interactive Electron acceptance (open Today in the running app, confirm derived list matches the SQLite roadmap, confirm Projects/Learning/Academy remain intact) is a manual handoff.
 
 ## Not started
 
-- Today/focus workflow
 - Coach context layer
 - Coach guidance or approval workflow
 - App-originated API/token/cache usage ledger

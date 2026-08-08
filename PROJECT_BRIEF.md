@@ -2,8 +2,7 @@
 
 > **Read this file first in every new session.** It is the compact, project-wide source of truth. Keep it concise. Detailed vision, decisions, status, and phase scope live in the linked `.hermes/` documents.
 
-**Last updated:** 2026-08-06
-**Active priority:** SQLite persistence migration — finish and verify the database-backed roadmap and Projects + Tasks + Kanban workflow before starting any other major capability.
+**Last updated:** 2026-08-07
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 
 ## Product identity
@@ -41,15 +40,15 @@ Read `.hermes/PRODUCT_VISION.md` for the long-term model and principles.
 
 ## Current phase
 
-**SQLite persistence migration — database foundation is present; renderer hookup and Electron runtime verification are the bounded objective.**
+**Release 1 — Personal Execution Foundation → Today View. The roadmap database foundation is complete; the Today View is the bounded objective.**
 
-The local Projects + Tasks + Kanban workflow must now be backed by SQLite in the Electron main process. Finish the renderer bootstrap/CRUD hookup, canonical roadmap display, native-module compatibility, and runtime acceptance. Do not begin Today/Focus, coach intelligence, integrations, usage tracking, or unrelated redesign work first.
+The local Projects + Tasks + Kanban workflow is complete and backed by SQLite in the Electron main process. Phase 3 implements the grounded Today View, which derives prioritized next actions from the persisted roadmap without inventing tasks, duplicating task state, or mutating the roadmap. Advance only the three Today View tasks in phase `AICC-PHA-001`; do not begin coach intelligence, integrations, usage tracking, or unrelated redesign work first.
 
 Read:
 
 - `.hermes/PROJECT_STATUS.md` — current verified state and next board task
 - `.hermes/DECISIONS.md` — durable decisions that should not be reopened casually
-- `.hermes/plans/PHASE-02-projects-tasks-kanban.md` — active implementation boundary
+- `.hermes/plans/PHASE-03-release-01-today-view.md` — active implementation boundary
 - `.hermes/handoffs/SESSION_HANDOFF_TEMPLATE.md` — how to start future sessions
 
 ## Must preserve
