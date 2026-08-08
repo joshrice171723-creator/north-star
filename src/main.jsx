@@ -2,9 +2,12 @@
 import { createRoot } from 'react-dom/client';
 import { BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
 import './styles.css';
+import './theme.css';
 import { buildRoadmapHierarchy, workspaceProjects, kanbanTasksForScope } from './roadmapHierarchy.mjs';
 import { buildTodayView } from './todayView.mjs';
 import { buildFollowThroughView } from './followThroughView.mjs';
+import { buildCoachContext, buildDeterministicCoachGuidance } from './coachContext.mjs';
+import { buildCoachCardModel } from './coachPresentation.mjs';
 
 const examFacts = [
   ['Exam code', 'CCAR-P'], ['Questions', '63 questions'], ['Duration', '120 minutes'],
@@ -28,7 +31,7 @@ const getProgress = (entry) => entry.children?.length ? Math.round(entry.childre
 const updateEntries = (items, id, status) => items.map((entry) => entry.id === id ? { ...entry, status } : { ...entry, children: updateEntries(entry.children || [], id, status) });
 
 const curriculum = [
-  { id: 'recommended', title: 'Official recommended preparation', accent: '#f08b68', type: 'official-recommended', note: 'Recommended preparation only. Anthropic does not make course order or completion mandatory.', lessons: [
+  { id: 'recommended', title: 'Official recommended preparation', accent: '#6d8cff', type: 'official-recommended', note: 'Recommended preparation only. Anthropic does not make course order or completion mandatory.', lessons: [
     item('claude-101', 'Claude 101', 'course', { duration: 'Course', academyUrl: 'https://anthropic.skilljar.com/claude-101', domainIds: ['domain-6'] }),
     item('ai-fluency', 'AI Fluency: Framework & Foundations', 'course', { duration: 'Course', academyUrl: 'https://anthropic.skilljar.com/ai-fluency-framework-foundations', domainIds: ['domain-5', 'domain-6'] }),
     item('ai-capabilities', 'AI Capabilities and Limitations', 'course', { duration: 'Course', academyUrl: 'https://anthropic.skilljar.com/ai-capabilities-and-limitations', domainIds: ['domain-4', 'domain-6'] }),
@@ -258,6 +261,25 @@ function DeferModal({ item, nextAction, dueDate, error, saving, onNextActionChan
   </div>;
 }
 
+const THEMES = {
+  graphite: { name: 'Graphite', description: 'Neutral, focused, and understated.', colors: ['#101114', '#22252c', '#b8c0cc'] },
+  ember: { name: 'Ember', description: 'Warm contrast with a restrained copper accent.', colors: ['#17110f', '#33201d', '#e47b58'] },
+  arctic: { name: 'Arctic', description: 'Clean blue surfaces with crisp cyan highlights.', colors: ['#0b1520', '#1a3044', '#65c7e8'] },
+  moss: { name: 'Moss', description: 'Quiet green tones for a grounded study space.', colors: ['#101814', '#203127', '#8fcb9b'] },
+  orchid: { name: 'Orchid', description: 'Deep violet surfaces with a creative lift.', colors: ['#15111e', '#2d2140', '#b893ff'] },
+  paper: { name: 'Paper', description: 'A bright, warm reading-room alternative.', colors: ['#f3f0ea', '#e9e4da', '#6d56c7'] }
+};
+
+function ThemeModal({ theme, onChange, onClose }) {
+  return <div className="modal" role="dialog" aria-modal="true" aria-labelledby="theme-title" onClick={onClose}>
+    <section className="theme-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="theme-modal-head"><div><span className="eyebrow">WORKSPACE SETTINGS</span><h2 id="theme-title">Choose an appearance</h2><p>Change the application colors without changing your study data or layout.</p></div><button className="close" type="button" onClick={onClose} aria-label="Close appearance settings"><X size={18}/></button></div>
+      <div className="theme-options" role="radiogroup" aria-label="Color themes">{Object.entries(THEMES).map(([id, option]) => <button key={id} type="button" role="radio" aria-checked={theme === id} className={`theme-option${theme === id ? ' selected' : ''}`} onClick={() => onChange(id)}><span className="theme-swatches">{option.colors.map((color) => <i key={color} style={{ backgroundColor: color }}/>)}</span><span className="theme-option-copy"><b>{option.name}</b><small>{option.description}</small></span>{theme === id && <Check size={16}/>}</button>)}</div>
+      <div className="theme-modal-foot"><span>Current theme: <b>{THEMES[theme]?.name || THEMES.graphite.name}</b></span><button className="primary" type="button" onClick={onClose}>Done <Check size={14}/></button></div>
+    </section>
+  </div>;
+}
+
 function App() {
   const savedState = useMemo(readSavedState, []);
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
@@ -289,6 +311,8 @@ function App() {
   const [deferDueDate, setDeferDueDate] = useState('');
   const [deferError, setDeferError] = useState('');
   const [deferSaving, setDeferSaving] = useState(false);
+  const [theme, setTheme] = useState(() => THEMES[savedState?.theme] ? savedState.theme : 'graphite');
+  const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [followThroughNotice, setFollowThroughNotice] = useState(null);
   const appRef = useRef(null);
   const splitterRef = useRef(null);
@@ -320,8 +344,9 @@ function App() {
   }, [captures, captureQuery]);
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen })); } catch { /* local persistence is best-effort */ }
-  }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme })); } catch { /* local persistence is best-effort */ }
+  }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   const refreshRoadmap = useCallback(async () => {
     const bootstrap = await window.desktopShell?.coachBootstrap?.();
     if (!bootstrap?.roadmap) throw new Error('The local roadmap database returned no roadmap.');
@@ -415,6 +440,23 @@ function App() {
   const commandCenter = useMemo(() => getCommandCenterSnapshot({ current, completed, total: officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews }), [current, completed, officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews]);
   const todayView = useMemo(() => buildTodayView(roadmap), [roadmap]);
   const followThroughView = useMemo(() => buildFollowThroughView(roadmap), [roadmap]);
+  const coachContext = useMemo(() => buildCoachContext(roadmap, todayView.date, { focusView: todayView, followThroughView }), [roadmap, todayView, followThroughView]);
+  const coachGuidance = useMemo(() => buildDeterministicCoachGuidance(coachContext), [coachContext]);
+  const coachCard = useMemo(() => buildCoachCardModel(coachGuidance), [coachGuidance]);
+  const [coachRefreshState, setCoachRefreshState] = useState('idle');
+  const refreshCoachGuidance = async () => {
+    setCoachRefreshState('refreshing');
+    try { await refreshRoadmap(); setCoachRefreshState('idle'); }
+    catch { setCoachRefreshState('error'); }
+  };
+  const reviewCoachTask = () => {
+    if (!coachCard.taskId) return;
+    const record = roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === coachCard.taskId);
+    if (!record) return;
+    setSelectedProjectId(record.projectId || null);
+    setFocusTaskId(record.id);
+    setView('projects');
+  };
   const acknowledgeFollowThrough = (id) => setAcknowledgedFollowThrough((currentIds) => new Set(currentIds).add(id));
   const updateFollowThrough = (item) => {
     setSelectedProjectId(roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === item.id)?.projectId || null);
@@ -485,7 +527,7 @@ function App() {
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); document.body.classList.remove('is-resizing'); };
   }, [dragging, syncAcademyBounds]);
 
-  return <div className="app" ref={appRef}>
+  return <div className="app" ref={appRef} data-theme={theme}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-icon">âœ¦</div><div><b>Executive Coach</b><small>Command center</small></div></div>
       <div className="nav-label">COMMAND CENTER</div>
@@ -504,7 +546,7 @@ function App() {
         <button className={view === 'practice' ? 'nav active' : 'nav'} onClick={() => setView('practice')}><Brain size={17}/> Practice</button>
       </nav>
       <div className="path-card"><div className="path-symbol"><Target size={16}/></div><div><b>CCAR-P</b><small>Claude Certified Architect</small></div><ChevronRight size={15}/></div>
-      <div className="sidebar-footer"><div className="local-badge"><span className="local-dot"/> Local-first workspace</div><div className="profile"><div className="avatar">J</div><div><b>Josh</b><small>Executive workspace</small></div></div></div>
+      <div className="sidebar-footer"><div className="local-badge"><span className="local-dot"/> Local-first workspace</div><div className="profile"><div className="avatar">J</div><div className="profile-copy"><b>Josh</b><small>Executive workspace</small></div><button className="profile-settings" type="button" onClick={() => setShowThemeSettings(true)} aria-label="Open appearance settings" title="Appearance settings"><Settings size={16}/></button></div></div>
     </aside>
 
     <main className="main">
@@ -533,6 +575,17 @@ function App() {
                 <div className="today-stat"><label>WAITING</label><b>{todayView.counts.waiting}</b><small>Blocked or dependency-locked work</small></div>
                 <div className="today-stat"><label>OVERDUE</label><b>{todayView.counts.overdue}</b><small>Ready work past its stored due date</small></div>
               </div>
+              <section className={`coach-card coach-${coachCard.tone}`} aria-label="Local coach guidance">
+                <div className="coach-card-head">
+                  <div><span className="eyebrow">{coachCard.eyebrow}</span><h2>{coachCard.heading}</h2></div>
+                  <button className="coach-refresh" type="button" onClick={refreshCoachGuidance} disabled={coachRefreshState === 'refreshing'}>{coachRefreshState === 'refreshing' ? 'Refreshing…' : 'Refresh guidance'} <Brain size={14}/></button>
+                </div>
+                <p className="coach-guidance">{coachCard.guidance}</p>
+                {coachCard.title && <div className="coach-source"><span><b>Source task</b> {coachCard.title}</span><code>{coachCard.taskId}</code></div>}
+                <p className="coach-reason"><b>Why:</b> {coachCard.reason}</p>
+                <div className="coach-card-foot"><small>Computed locally from Today’s Focus and Waiting. No provider request or task change.</small>{coachCard.actionLabel && <button className="secondary" type="button" onClick={reviewCoachTask}>{coachCard.actionLabel} <ChevronRight size={14}/></button>}</div>
+                {coachRefreshState === 'error' && <div className="coach-error" role="alert">Local guidance could not refresh. The previous recommendation remains unchanged.</div>}
+              </section>
               <div className="today-panel">
                 <div className="section-head compact">
                   <div>
@@ -607,6 +660,7 @@ function App() {
 
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
     {deferItem && <DeferModal item={deferItem} nextAction={deferNextAction} dueDate={deferDueDate} error={deferError} saving={deferSaving} onNextActionChange={setDeferNextAction} onDueDateChange={setDeferDueDate} onCancel={cancelDefer} onSubmit={submitDefer} />}
+    {showThemeSettings && <ThemeModal theme={theme} onChange={setTheme} onClose={() => setShowThemeSettings(false)} />}
   </div>;
 }
 createRoot(document.getElementById('root')).render(<App />);
