@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   deleteAcademyStudyMaterial: (id) => ipcRenderer.invoke('academy:delete-study-material', id),
   getAcademyStudyReviews: () => ipcRenderer.invoke('academy:get-study-reviews'),
   setAcademyStudyReview: (id, status) => ipcRenderer.invoke('academy:set-study-review', id, status),
+  openRouterChat: (messages, options) => ipcRenderer.invoke('openrouter:chat', messages, options),
   setAcademyVisible: (visible) => ipcRenderer.invoke('academy:set-visible', Boolean(visible)),
   setAcademyBounds: (bounds) => ipcRenderer.invoke('academy:set-bounds', bounds),
   coachBootstrap: () => ipcRenderer.invoke('coach:bootstrap'),

@@ -29,6 +29,42 @@ const academyCapturePath = () => path.join(app.getPath('userData'), 'academy-cap
 const academyStudyMaterialPath = () => path.join(app.getPath('userData'), 'academy-study-material.json');
 const academyStudyReviewPath = () => path.join(app.getPath('userData'), 'academy-study-review.json');
 
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-4o-mini';
+const OPENROUTER_MAX_MESSAGES = 100;
+const OPENROUTER_MAX_MESSAGE_BYTES = 256 * 1024;
+
+function validateOpenRouterMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length || messages.length > OPENROUTER_MAX_MESSAGES) {
+    throw new Error('OpenRouter requires between 1 and 100 messages.');
+  }
+  const serialized = JSON.stringify(messages);
+  if (Buffer.byteLength(serialized, 'utf8') > OPENROUTER_MAX_MESSAGE_BYTES) throw new Error('OpenRouter messages exceed the 256 KB limit.');
+  if (messages.some((message) => !message || !['system', 'user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || !message.content.trim())) {
+    throw new Error('OpenRouter messages must contain a valid role and non-empty text content.');
+  }
+  return messages.map(({ role, content }) => ({ role, content }));
+}
+
+async function openRouterChat(messages, options = {}) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return { ok: false, error: 'OPENROUTER_API_KEY is not configured for the Electron process.' };
+  const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : (process.env.OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL);
+  const response = await fetch(OPENROUTER_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://anthropic.skilljar.com/',
+      'X-Title': 'Claude Architect Study Coach'
+    },
+    body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3 })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };
+  return { ok: true, model, message: body.choices?.[0]?.message || null, usage: body.usage || null };
+}
+
 const COACH_STATUSES = new Set(['backlog', 'todo', 'in-progress', 'blocked', 'done']);
 const COACH_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent', 'P0', 'P1', 'P2', 'P3', 'P4']);
 const COACH_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -296,6 +332,39 @@ function academyBounds() {
   academyView.setBounds(academyVisible ? next : { x: 0, y: 0, width: 1, height: 1 });
 }
 
+function showRendererContextMenu(params) {
+  const renderer = mainWindow?.webContents;
+  if (!renderer) return;
+  const x = Math.max(0, Math.round(params.x || 0));
+  const y = Math.max(0, Math.round(params.y || 0));
+  const referenceScript = `(function () {
+    const el = document.elementFromPoint(${x}, ${y});
+    if (!el) return 'No element found at this location';
+    const esc = (value) => { try { return CSS.escape(value); } catch { return value.replace(/[^a-zA-Z0-9_-]/g, '_'); } };
+    const path = [];
+    let node = el;
+    while (node && node.nodeType === 1 && path.length < 6) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) part += '#' + esc(node.id);
+      else if (node.classList.length) part += '.' + Array.from(node.classList).slice(0, 3).map(esc).join('.');
+      path.unshift(part);
+      node = node.parentElement;
+    }
+    const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+    return (el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().replace(/\\s+/g, '.') : '') + (text ? ' — "' + text + '"' : '') + ' — ' + path.join(' > ')).slice(0, 500);
+  })()`;
+  const copyReference = async () => {
+    try { const reference = await renderer.executeJavaScript(referenceScript, true); clipboard.writeText(reference); } catch (error) { clipboard.writeText('UI reference unavailable: ' + error.message); }
+  };
+  const menu = Menu.buildFromTemplate([
+    { label: 'Copy UI reference', click: copyReference },
+    { label: 'Inspect element', click: () => renderer.inspectElement(x, y) },
+    { type: 'separator' },
+    { label: 'Copy', role: 'copy', enabled: Boolean(params.selectionText?.trim()) }
+  ]);
+  menu.popup({ window: mainWindow });
+}
+
 function showAcademyContextMenu(params) {
   const hasLink = Boolean(params.linkURL);
   const academyLink = hasLink && isAllowedAcademyUrl(params.linkURL) ? params.linkURL : null;
@@ -348,6 +417,7 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  mainWindow.webContents.on('context-menu', (_event, params) => showRendererContextMenu(params));
   academyView.webContents.on('context-menu', (_event, params) => showAcademyContextMenu(params));
   const keepNavigationInApp = (event, url) => {
     if (!isAllowedAcademyUrl(url)) event.preventDefault();
@@ -381,6 +451,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:tasks:create', (_event, input) => coachDatabase.tasks.create(validateCoachRecord(input, 'task')));
   ipcMain.handle('coach:tasks:update', (_event, input) => coachDatabase.tasks.update(validateCoachRecord(input, 'task')));
   ipcMain.handle('coach:tasks:delete', (_event, id) => coachDatabase.tasks.delete(validateCoachDeleteId(id, 'task')));
+  ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
 }
 
 app.whenReady().then(() => {

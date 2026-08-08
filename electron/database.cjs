@@ -138,16 +138,16 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   function projectRecord(input, kind = 'project') {
     const timestamp = now();
     const recordKind = input.kind || input.type || kind;
-    return { id: bounded(nonEmpty(input.id, id(recordKind)), 160), parentId: recordKind === 'workspace' ? null : (input.parentId || null), kind: recordKind, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
+    return { id: bounded(nonEmpty(input.id, id(recordKind)), 160), parentId: input.parentId || null, kind: recordKind, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
   }
-  function validateProjectHierarchy(record) {
+  function validateProjectHierarchy(record, source = db) {
     if (!['workspace', 'project', 'release', 'phase'].includes(record.kind)) throw new Error(`Invalid project kind: ${record.kind}.`);
     if (record.kind === 'workspace') {
       if (record.parentId) throw new Error('A workspace cannot have a parent.');
       return;
     }
     if (!record.parentId) throw new Error(`${record.kind} must belong to its parent.`);
-    const parent = db.select().from(projects).where(eq(projects.id, record.parentId)).get();
+    const parent = source.select().from(projects).where(eq(projects.id, record.parentId)).get();
     if (!parent) throw new Error(`${record.kind} parent does not exist.`);
     const expectedParent = { project: 'workspace', release: 'project', phase: 'release' }[record.kind];
     if (parent.kind !== expectedParent) throw new Error(`${record.kind} must belong to a ${expectedParent}.`);
@@ -174,6 +174,19 @@ function createDatabase({ userDataPath, seedPath } = {}) {
       if (!parent || parent.parentTaskId || parent.projectId !== record.projectId) throw new Error('Subtask parent must be a top-level task in the same project.');
       if ((parent.releaseId || null) !== (record.releaseId || null) || (parent.phaseId || null) !== (record.phaseId || null)) throw new Error('Subtask must share its parent task context.');
     }
+  }
+
+  function repairWorkspaceHierarchy() {
+    const markerKey = 'workspace_hierarchy_repair_v1';
+    const marker = db.select().from(userSettings).where(eq(userSettings.key, markerKey)).get();
+    if (marker) return { repaired: [], marker: JSON.parse(marker.value) };
+    const invalid = db.select({ id: projects.id, title: projects.title, parentId: projects.parentId }).from(projects).where(and(eq(projects.kind, 'workspace'), isNull(projects.deletedAt))).all().filter((entry) => entry.parentId);
+    const repairedAt = now();
+    db.transaction((tx) => {
+      for (const entry of invalid) tx.update(projects).set({ parentId: null, updatedAt: repairedAt }).where(eq(projects.id, entry.id)).run();
+      tx.insert(userSettings).values({ key: markerKey, value: JSON.stringify({ version: 1, repairedAt, repaired: invalid }), updatedAt: repairedAt }).run();
+    });
+    return { repaired: invalid, marker: { version: 1, repairedAt, repaired: invalid } };
   }
 
   function seedDefaults() {
@@ -242,13 +255,15 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const collections = ['projects', 'releases', 'phases', 'tasks', 'subtasks'];
     if (collections.some((key) => !Array.isArray(payload[key]))) throw new Error('Invalid roadmap collections.');
     db.transaction((tx) => {
-      const projectRows = [...payload.projects.map((entry) => projectRecord(entry, entry.kind || entry.type || 'project')), ...payload.releases.map((entry) => projectRecord(entry, 'release')), ...payload.phases.map((entry) => projectRecord(entry, 'phase'))];
+      const workspaceRows = (Array.isArray(payload.workspaces) ? payload.workspaces : []).map((entry) => projectRecord(entry, 'workspace'));
+      const projectRows = [...workspaceRows, ...payload.projects.map((entry) => projectRecord(entry, entry.kind || entry.type || 'project')), ...payload.releases.map((entry) => projectRecord(entry, 'release')), ...payload.phases.map((entry) => projectRecord(entry, 'phase'))];
       const taskRows = [...payload.tasks.map((entry) => taskRecord(entry, 'task')), ...payload.subtasks.map((entry) => taskRecord(entry, 'subtask'))];
-      for (const record of projectRows) tx.insert(projects).values(record).onConflictDoUpdate({ target: projects.id, set: { ...record, id: undefined } }).run();
+      const projectOrder = { workspace: 0, project: 1, release: 2, phase: 3 };
+      for (const record of projectRows.sort((a, b) => projectOrder[a.kind] - projectOrder[b.kind])) { validateProjectHierarchy(record, tx); tx.insert(projects).values(record).onConflictDoUpdate({ target: projects.id, set: { ...record, id: undefined } }).run(); }
       for (const record of taskRows) tx.insert(tasks).values(record).onConflictDoUpdate({ target: tasks.id, set: { ...record, id: undefined } }).run();
       const projectIds = new Set(projectRows.map((entry) => entry.id));
       const taskIds = new Set(taskRows.map((entry) => entry.id));
-      for (const row of tx.select({ id: projects.id }).from(projects).where(isNull(projects.deletedAt)).all()) if (!projectIds.has(row.id) && row.id !== 'AICC-WS-001') tx.update(projects).set({ deletedAt: now(), archived: true, updatedAt: now() }).where(eq(projects.id, row.id)).run();
+      for (const row of tx.select({ id: projects.id, kind: projects.kind }).from(projects).where(isNull(projects.deletedAt)).all()) if (!projectIds.has(row.id) && row.kind !== 'workspace') tx.update(projects).set({ deletedAt: now(), archived: true, updatedAt: now() }).where(eq(projects.id, row.id)).run();
       for (const row of tx.select({ id: tasks.id }).from(tasks).where(isNull(tasks.deletedAt)).all()) if (!taskIds.has(row.id)) tx.update(tasks).set({ deletedAt: now(), archived: true, updatedAt: now() }).where(eq(tasks.id, row.id)).run();
     });
     return bootstrap();
@@ -274,9 +289,10 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
 
   seedDefaults();
+  const hierarchyRepairResult = repairWorkspaceHierarchy();
   const seedResult = seedRoadmap();
   return {
-    databasePath, seedResult, db, sqlite, tables: tableMap,
+    databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
