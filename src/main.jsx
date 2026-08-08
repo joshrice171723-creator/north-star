@@ -8,6 +8,7 @@ import { buildTodayView } from './todayView.mjs';
 import { buildFollowThroughView } from './followThroughView.mjs';
 import { buildCoachContext, buildDeterministicCoachGuidance } from './coachContext.mjs';
 import { buildCoachCardModel } from './coachPresentation.mjs';
+import { buildCoachProviderMessages, normalizeCoachProviderResponse, OPENROUTER_COACH_MODEL } from './coachProvider.mjs';
 
 const examFacts = [
   ['Exam code', 'CCAR-P'], ['Questions', '63 questions'], ['Duration', '120 minutes'],
@@ -444,10 +445,21 @@ function App() {
   const coachGuidance = useMemo(() => buildDeterministicCoachGuidance(coachContext), [coachContext]);
   const coachCard = useMemo(() => buildCoachCardModel(coachGuidance), [coachGuidance]);
   const [coachRefreshState, setCoachRefreshState] = useState('idle');
+  const [aiCoachState, setAiCoachState] = useState({ status: 'idle', text: '', model: OPENROUTER_COACH_MODEL, error: '' });
   const refreshCoachGuidance = async () => {
     setCoachRefreshState('refreshing');
     try { await refreshRoadmap(); setCoachRefreshState('idle'); }
     catch { setCoachRefreshState('error'); }
+  };
+  const askAiCoach = async () => {
+    setAiCoachState({ status: 'loading', text: '', model: OPENROUTER_COACH_MODEL, error: '' });
+    try {
+      const result = await window.desktopShell?.openRouterChat?.(buildCoachProviderMessages(coachContext), { model: OPENROUTER_COACH_MODEL });
+      const normalized = normalizeCoachProviderResponse(result);
+      setAiCoachState({ status: normalized.ok ? 'success' : 'error', text: normalized.text, model: normalized.model, error: normalized.error || '' });
+    } catch (error) {
+      setAiCoachState({ status: 'error', text: '', model: OPENROUTER_COACH_MODEL, error: error?.message || 'AI coaching request failed safely.' });
+    }
   };
   const reviewCoachTask = () => {
     if (!coachCard.taskId) return;
@@ -578,13 +590,15 @@ function App() {
               <section className={`coach-card coach-${coachCard.tone}`} aria-label="Local coach guidance">
                 <div className="coach-card-head">
                   <div><span className="eyebrow">{coachCard.eyebrow}</span><h2>{coachCard.heading}</h2></div>
-                  <button className="coach-refresh" type="button" onClick={refreshCoachGuidance} disabled={coachRefreshState === 'refreshing'}>{coachRefreshState === 'refreshing' ? 'Refreshing…' : 'Refresh guidance'} <Brain size={14}/></button>
+                  <div className="coach-card-actions"><button className="coach-refresh" type="button" onClick={refreshCoachGuidance} disabled={coachRefreshState === 'refreshing' || aiCoachState.status === 'loading'}>{coachRefreshState === 'refreshing' ? 'Refreshing…' : 'Refresh guidance'} <Brain size={14}/></button><button className="coach-ask" type="button" onClick={askAiCoach} disabled={aiCoachState.status === 'loading'}>{aiCoachState.status === 'loading' ? 'Asking AI…' : 'Ask AI coach'} <Brain size={14}/></button></div>
                 </div>
                 <p className="coach-guidance">{coachCard.guidance}</p>
                 {coachCard.title && <div className="coach-source"><span><b>Source task</b> {coachCard.title}</span><code>{coachCard.taskId}</code></div>}
                 <p className="coach-reason"><b>Why:</b> {coachCard.reason}</p>
-                <div className="coach-card-foot"><small>Computed locally from Today’s Focus and Waiting. No provider request or task change.</small>{coachCard.actionLabel && <button className="secondary" type="button" onClick={reviewCoachTask}>{coachCard.actionLabel} <ChevronRight size={14}/></button>}</div>
+                <div className="coach-card-foot"><small>Local guidance is computed from Today’s Focus and Waiting. AI is user-triggered, sends bounded context, and never changes tasks.</small>{coachCard.actionLabel && <button className="secondary" type="button" onClick={reviewCoachTask}>{coachCard.actionLabel} <ChevronRight size={14}/></button>}</div>
                 {coachRefreshState === 'error' && <div className="coach-error" role="alert">Local guidance could not refresh. The previous recommendation remains unchanged.</div>}
+                {aiCoachState.status === 'success' && <div className="coach-ai-response"><div><span className="eyebrow">AI COACH · {aiCoachState.model}</span><p>{aiCoachState.text}</p></div><small>Provider response is display-only; no roadmap changes were made.</small></div>}
+                {aiCoachState.status === 'error' && <div className="coach-error" role="alert">AI coaching unavailable: {aiCoachState.error}</div>}
               </section>
               <div className="today-panel">
                 <div className="section-head compact">

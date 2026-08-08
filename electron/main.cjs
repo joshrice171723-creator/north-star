@@ -30,9 +30,11 @@ const academyStudyMaterialPath = () => path.join(app.getPath('userData'), 'acade
 const academyStudyReviewPath = () => path.join(app.getPath('userData'), 'academy-study-review.json');
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-4o-mini';
+const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-5.6-luna-pro';
 const OPENROUTER_MAX_MESSAGES = 100;
 const OPENROUTER_MAX_MESSAGE_BYTES = 256 * 1024;
+const OPENROUTER_MAX_OUTPUT_TOKENS = 700;
+const OPENROUTER_TIMEOUT_MS = 45_000;
 
 function validateOpenRouterMessages(messages) {
   if (!Array.isArray(messages) || !messages.length || messages.length > OPENROUTER_MAX_MESSAGES) {
@@ -50,19 +52,28 @@ async function openRouterChat(messages, options = {}) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return { ok: false, error: 'OPENROUTER_API_KEY is not configured for the Electron process.' };
   const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : (process.env.OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL);
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://anthropic.skilljar.com/',
-      'X-Title': 'Claude Architect Study Coach'
-    },
-    body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3 })
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };
-  return { ok: true, model, message: body.choices?.[0]?.message || null, usage: body.usage || null };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
+  try {
+    const response = await fetch(OPENROUTER_ENDPOINT, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://anthropic.skilljar.com/',
+        'X-Title': 'Claude Architect Study Coach'
+      },
+      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: OPENROUTER_MAX_OUTPUT_TOKENS })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };
+    return { ok: true, model, message: body.choices?.[0]?.message || null, usage: body.usage || null };
+  } catch (error) {
+    return { ok: false, error: error?.name === 'AbortError' ? 'OpenRouter request timed out.' : (error?.message || 'OpenRouter request failed.') };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 const COACH_STATUSES = new Set(['backlog', 'todo', 'in-progress', 'blocked', 'done']);
