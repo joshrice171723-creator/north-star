@@ -1,11 +1,11 @@
 # Project Status
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-08
 
-**Future-facing constraint:** The Kanban data model is intentionally structured for a later Hermes AI layer to read board state alongside OR documents. No AI, document ingestion, cloud sync, credentials, or autonomous writes are added in Phase 3.
+**Current feature constraint:** The Today’s Focus phase (`AICC-PHA-023`) includes a bounded grounded AI Executive ADHD Coach. The deterministic roadmap derivation remains authoritative; provider recommendations must be validated, explainable, privacy-bounded, and user-approved before mutation. Broader Hermes/OR document ingestion, cloud sync, and autonomous behavior remain outside this feature.
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 **Branch observed:** `main`
-**Current phase:** Phase 3 Release 1 — Today View. The grounded, derived Today View is implemented; automated verification passed and interactive Electron acceptance is a manual handoff.
+**Current phase:** Release 1 phase `AICC-PHA-023` — Today’s Focus and Dependency-Aware Coaching. Planning is expanded to include the grounded coach implementation, and execution begins at `AICC-TSK-067`; prior Follow-through work remains implemented with automated verification passed and interactive Electron acceptance as a manual handoff.
 
 ## Night handoff — 2026-08-06
 
@@ -21,7 +21,7 @@ Verification completed:
 - `git diff --check` passed.
 - Build emitted only the existing Vite `configLoader: 'native'` CommonJS/ESM warning.
 
-Runtime interaction acceptance was completed by the user. The user confirmed project creation/selection, task creation, visible inline editing and save, movement through all four Kanban columns, reload persistence, task deletion, project deletion, empty state recovery, Learning & Development navigation, Academy pane visibility, splitter resizing, Academy close/open behavior, and board operation after returning from Learning. Do not expand scope until the user explicitly approves the next phase.
+Runtime interaction acceptance was completed by the user. The user confirmed project creation/selection, task creation, visible inline editing and save, movement through all four Kanban columns, reload persistence, task deletion, project deletion, empty state recovery, Learning & Development navigation, Academy pane visibility, splitter resizing, Academy close/open behavior, and board operation after returning from Learning. This historical handoff predates the user-approved `AICC-PHA-023` scope expansion.
 
 ## Verified repository baseline
 
@@ -39,7 +39,9 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 - The landing view explicitly labels future executive workflows as planned rather than simulated.
 - Existing learning curriculum, local state, Academy IPC, native BrowserView, and splitter code remain in place.
 - The local Projects + Tasks + Kanban workflow is implemented and is the active priority for runtime acceptance and board-focused fixes.
-- No coach engine, usage integration, authentication, or cloud behavior was added.
+- Follow-through is now a derived review queue over the same SQLite-backed tasks/subtasks. It surfaces blocked, overdue, stale, and neglected work with project/release/phase context, next action, and definition of done.
+- Follow-through acknowledgement is explicitly session-only because the existing database has no review-record table. Defer is an explicit user action through the existing `updateTask` API; opening, acknowledging, and updating never marks work done.
+- No Today’s Focus coach engine, recommendation records, usage ledger, authentication, or cloud behavior has been implemented yet; those are now required tasks in the active Today’s Focus phase rather than future compatibility work.
 - The long-term vision is documented in `.hermes/PRODUCT_VISION.md`.
 - Cross-session decisions are documented in `.hermes/DECISIONS.md`.
 - The active implementation boundary is documented in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`.
@@ -57,9 +59,31 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 - Preserved Learning & Development as a distinct module.
 - Added truthful planned-state messaging for future executive workflows.
 
-## Current next task
+## Phase 4 — Follow-through and Accountability
 
-Advance the Release 1 → Today View tasks (`AICC-REL-001` / phase `AICC-PHA-001`):
+- Contract and implementation order: `AICC-SUB-002 → AICC-TSK-004 → AICC-TSK-005 → AICC-TSK-006`.
+- `AICC-SUB-002` — Define contract and acceptance cases — **done / contract drafted** in `.hermes/plans/PHASE-04-follow-through-accountability.md`.
+- `AICC-TSK-004` — Model commitment lifecycle — **pure derivation complete** in `src/commitmentLifecycle.mjs`; active tasks/subtasks are classified without mutation or invented completion.
+- `AICC-TSK-005` — Surface stale and blocked work — **pure queue derivation complete** in `src/followThroughView.mjs`; deterministic ordering and hierarchy context are covered by tests.
+- `AICC-TSK-006` — Add follow-up review — **UI/review behavior implemented, manual acceptance pending**. The renderer adds Follow-through navigation, a memoized roadmap-derived queue, session-only acknowledgement, existing task-editor Update flow, and explicit Defer through `updateTask`.
+
+## Verification completed for Phase 4 additions
+
+- `node --test test/commitment-lifecycle.test.cjs test/follow-through-view.test.cjs` passed: **22 tests, 22 passed, 0 failed**.
+- `node --test` passed: **36 tests, 36 passed, 0 failed** across the repository.
+- `node --check src/commitmentLifecycle.mjs` passed.
+- `node --check src/followThroughView.mjs` passed.
+- `node --check electron/main.cjs` passed.
+- `node --check electron/preload.cjs` passed.
+- `node --check electron/database.cjs` passed.
+- `npm run build` produced the renderer bundle successfully; Vite emitted only the existing `configLoader: 'native'` warning.
+- `git diff --check` passed; only normal LF-to-CRLF working-tree warnings were reported by Git.
+
+Interactive Electron acceptance remains pending. Manually verify Follow-through queue contents, acknowledge/defer/update behavior, persistence of a deferred task after restart, and that Today View, Projects/Kanban, Learning & Development, Academy BrowserView, and three-pane resizing remain intact.
+
+## Historical Release 1 / Today View tasks
+
+The earlier Release 1 → Today View tasks (`AICC-REL-001` / phase `AICC-PHA-001`) remain complete:
 
 - `AICC-TSK-001` — Preserve roadmap foundation — **done** (verified against the live SQLite roadmap; no feature work, the local roadmap contract is retained).
 - `AICC-TSK-002` — Define Today view contract — **done** (documented in `.hermes/plans/PHASE-03-release-01-today-view.md` and decision `D013`).
@@ -75,6 +99,13 @@ The Today View implementation passed:
 - `git diff --check` passed.
 
 Interactive Electron acceptance (open Today in the running app, confirm derived list matches the SQLite roadmap, confirm Projects/Learning/Academy remain intact) is a manual handoff.
+
+## Active next phase — Today’s Focus and Dependency-Aware Coaching
+
+- Feature roadmap: `C:/Users/joshr/OneDrive/Desktop/TODAYS-FOCUS-FEATURE-ROADMAP.md`.
+- Phase: `AICC-PHA-023` under Release 1.
+- Execution begins with `AICC-TSK-067` and proceeds through dependency-aware Focus/Waiting derivation, grounded coach context, structured recommendation validation, deterministic fallback, approval controls, privacy/usage boundaries, tests, and Electron acceptance.
+- The coach is part of this feature. Do not close the phase after only the deterministic Focus UI, and do not describe AI recommendation as merely future compatibility.
 
 ## Not started
 
@@ -93,9 +124,9 @@ Interactive Electron acceptance (open Today in the running app, confirm derived 
 - Native Academy visual interaction was not independently exercised in that session; preserve the recorded BrowserView behavior as prior evidence, not current Kanban verification.
 - Phase 1 acceptance is historical context; the active verification target is Phase 2 Kanban runtime acceptance.
 
-## Active Phase 2 stop condition
+## Historical Phase 2 stop condition
 
-Do not begin Today/Focus, coach intelligence, integrations, usage tracking, authentication, cloud sync, provider connections, or unrelated redesign. Automated gates, canonical seed import, SQLite CRUD/persistence smoke tests, native module loading, and production launch are verified. Final completion remains blocked only on the manual Electron interaction checklist recorded in the Phase 2 plan.
+The Phase 2 stop condition prohibited beginning Today/Focus, coach intelligence, integrations, usage tracking, authentication, cloud sync, provider connections, or unrelated redesign until that phase was approved and its manual handoff was complete. That condition is historical and is superseded for current execution by the user-approved `AICC-PHA-023` roadmap. Automated gates, canonical seed import, SQLite CRUD/persistence smoke tests, native module loading, and production launch remain historical verification facts.
 
 ## Scope note
 

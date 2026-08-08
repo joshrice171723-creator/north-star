@@ -1,9 +1,10 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
+import { BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
 import './styles.css';
 import { buildRoadmapHierarchy, workspaceProjects, kanbanTasksForScope } from './roadmapHierarchy.mjs';
 import { buildTodayView } from './todayView.mjs';
+import { buildFollowThroughView } from './followThroughView.mjs';
 
 const examFacts = [
   ['Exam code', 'CCAR-P'], ['Questions', '63 questions'], ['Duration', '120 minutes'],
@@ -84,7 +85,7 @@ const ROADMAP_PRIORITY_OPTIONS = [['low', 'Low'], ['medium', 'Medium'], ['high',
 const dbRecordId = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
 const roadmapCollections = (roadmap) => [...roadmap.projects, ...roadmap.releases, ...roadmap.phases, ...roadmap.tasks, ...roadmap.subtasks];
 
-function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, setSelectedProjectId }) {
+function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, setSelectedProjectId, focusTaskId, onFocusTaskHandled }) {
   const [mode, setMode] = useState('roadmap');
   const [draft, setDraft] = useState('');
   const [workspaceComposerOpen, setWorkspaceComposerOpen] = useState(false);
@@ -119,6 +120,14 @@ function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, 
   const visibleTasks = (kanbanScope ? kanbanTasksForScope(roadmap, kanbanScope, topLevelTasks) : topLevelTasks.filter((task) => !selectedProjectId || task.projectId === selectedProjectId)).filter((task) => (!query.trim() || JSON.stringify(task).toLowerCase().includes(query.trim().toLowerCase())) && (statusFilter === 'all' || task.status === statusFilter) && (priorityFilter === 'all' || task.priority === priorityFilter)).sort((a, b) => (a.orderIndex ?? a.order ?? 0) - (b.orderIndex ?? b.order ?? 0));
   const unscheduledTasks = visibleTasks.filter((task) => !task.releaseId && !task.phaseId);
   const subtasksFor = (taskId) => roadmap.subtasks.filter((subtask) => !subtask.archived && subtask.parentTaskId === taskId).sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
+  useEffect(() => {
+    if (!focusTaskId) return;
+    const record = allRoadmapTasks.find((task) => task.id === focusTaskId);
+    if (record) {
+      setDetail(record);
+      onFocusTaskHandled?.();
+    }
+  }, [focusTaskId, roadmap.tasks, roadmap.subtasks]);
   const run = async (operation) => { setBusy(true); setError(''); try { await operation(); await refreshRoadmap(); } catch (cause) { setError(cause?.message || 'Database operation failed.'); } finally { setBusy(false); } };
   const makeWorkspace = async () => { const title = draft.trim(); if (!title) return; let createdId = null; await run(async () => { const created = await window.desktopShell.createWorkspace({ id: dbRecordId('workspace'), kind: 'workspace', type: 'workspace', title, status: 'backlog', priority: 'medium', orderIndex: workspaceNodes.length }); createdId = created?.id || null; }); if (createdId) { setActiveWorkspaceId(createdId); setSelectedProjectId(null); setWorkspaceComposerOpen(false); setDraft(''); } };
   const makeProject = async () => { const title = draft.trim(); if (!title || !selectedWorkspaceId) return; let createdId = null; await run(async () => { const created = await window.desktopShell.createProject({ id: dbRecordId('project'), parentId: selectedWorkspaceId, kind: 'project', title, status: 'backlog', priority: 'medium', orderIndex: projectNodes.filter((entry) => entry.parentId === selectedWorkspaceId).length }); createdId = created?.id || null; }); if (createdId) setSelectedProjectId(createdId); setDraft(''); };
@@ -189,6 +198,66 @@ const getCommandCenterSnapshot = ({ current, completed, total, progress, readine
   };
 };
 
+function FollowThroughView({ queue, acknowledgedIds, onAcknowledge, onUpdate, onDefer, actionState, notice }) {
+  return <section className="follow-through-view">
+    <div className="follow-through-intro">
+      <div>
+        <span className="eyebrow">AICC-PHA-002 · FOLLOW-THROUGH</span>
+        <h2>Review what needs your attention.</h2>
+        <p>This queue is derived from active tasks and subtasks in the local roadmap. Opening or acknowledging an item never marks it complete.</p>
+      </div>
+      <div className="follow-through-total"><strong>{queue.counts.review}</strong><small>item{queue.counts.review === 1 ? '' : 's'} to review</small></div>
+    </div>
+    <div className="follow-through-grid">
+      <div className="follow-through-stat"><label>BLOCKED</label><b>{queue.counts.blocked}</b><small>Needs an unblocking decision</small></div>
+      <div className="follow-through-stat"><label>OVERDUE</label><b>{queue.counts.overdue}</b><small>Past the stored due date</small></div>
+      <div className="follow-through-stat"><label>STALE</label><b>{queue.counts.stale}</b><small>No update for at least seven days</small></div>
+      <div className="follow-through-stat"><label>NEGLECTED</label><b>{queue.counts.neglected}</b><small>Stale work without a next action</small></div>
+    </div>
+    <div className="follow-through-panel">
+      {notice && <div className={`follow-through-notice ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.message}</div>}
+      <div className="section-head compact">
+        <div><h2>Review queue</h2><p>Sorted by blocked, overdue, stale, and neglected signals. Counts are derived from stored roadmap records.</p></div>
+        <span className="queue-count">{queue.counts.review} shown</span>
+      </div>
+      {queue.items.length ? <div className="follow-through-list">{queue.items.map((item) => {
+        const acknowledged = acknowledgedIds.has(item.id);
+        return <article className={`follow-through-item${acknowledged ? ' acknowledged' : ''}`} key={item.id}>
+          <div className="follow-through-item-head">
+            <div><span className="follow-through-reasons">{item.reasonKinds.map((kind) => <span className={`follow-through-reason ${kind}`} key={kind}>{kind}</span>)}</span><h3>{item.title}</h3></div>
+            <span className={`priority-badge priority-${String(item.priority || 'medium').toLowerCase()}`}>{item.priority}</span>
+          </div>
+          <div className="follow-through-context">{[item.project, item.release, item.phase].filter(Boolean).join(' · ') || 'Roadmap context unavailable'} · {item.statusLabel}{item.dueDate ? ` · due ${item.dueDate}` : ''}</div>
+          <div className="follow-through-details">
+            <div><label>Why review</label><p>{item.reasons.join(' · ')}</p></div>
+            <div><label>Next action</label><p>{item.nextAction || 'No next action recorded.'}</p></div>
+            <div><label>Definition of done</label><p>{item.definitionOfDone || 'No definition of done recorded.'}</p></div>
+          </div>
+          <div className="follow-through-actions">
+            <button className="secondary" disabled={acknowledged} onClick={() => onAcknowledge(item.id)}><Check size={13}/>{acknowledged ? 'Acknowledged this session' : 'Acknowledge'}</button>
+            <button className="secondary" disabled={actionState === item.id} onClick={() => onUpdate(item)}><Pencil size={13}/> Update</button>
+            <button className="secondary" disabled={actionState === item.id} onClick={() => onDefer(item)}><CalendarClock size={13}/> Defer</button>
+          </div>
+        </article>;
+      })}</div> : <div className="review-empty"><Check size={18}/> No blocked, overdue, stale, or neglected active work was found. The queue is empty based on the current roadmap.</div>}
+      <p className="follow-through-note">Acknowledgements are session-only because the existing database has no review-record table. Defer uses the existing task update API and never changes a task to Done.</p>
+    </div>
+  </section>;
+}
+
+function DeferModal({ item, nextAction, dueDate, error, saving, onNextActionChange, onDueDateChange, onCancel, onSubmit }) {
+  return <div className="modal" role="dialog" aria-modal="true" aria-labelledby="defer-title" onClick={onCancel}>
+    <form className="defer-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <div className="defer-modal-head"><div><span className="eyebrow">FOLLOW-THROUGH · DEFER</span><h2 id="defer-title">Move this commitment forward</h2><p>{item.title}</p></div><button className="close" type="button" onClick={onCancel} aria-label="Cancel defer"><X size={18}/></button></div>
+      <label className="defer-field">Next action<input autoFocus value={nextAction} onChange={(event) => onNextActionChange(event.target.value)} placeholder="What is the next concrete step?" /></label>
+      <label className="defer-field">Due date <span>(optional)</span><input type="date" value={dueDate} onChange={(event) => onDueDateChange(event.target.value)} aria-label="Deferred due date" /></label>
+      {error && <div className="defer-error" role="alert">{error}</div>}
+      <p className="defer-help">Defer updates only the next action and due date. It never marks this task complete. If it remains blocked, it will stay in the review queue.</p>
+      <div className="defer-actions"><button className="secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save defer'} <Check size={14}/></button></div>
+    </form>
+  </div>;
+}
+
 function App() {
   const savedState = useMemo(readSavedState, []);
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
@@ -196,7 +265,7 @@ function App() {
   const [roadmapStatus, setRoadmapStatus] = useState({ state: 'loading', message: 'Loading the local roadmapâ€¦' });
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
-  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects'].includes(savedState?.view) ? savedState.view : 'today');
+  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects', 'follow-through'].includes(savedState?.view) ? savedState.view : 'today');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
   const [notes, setNotes] = useState(() => savedState?.notes || '');
   const [practiceResults, setPracticeResults] = useState(() => savedState?.practiceResults || {});
@@ -212,6 +281,15 @@ function App() {
   const [selectedCaptureIds, setSelectedCaptureIds] = useState([]);
   const [studyMaterials, setStudyMaterials] = useState([]);
   const [studyReviews, setStudyReviews] = useState({});
+  const [acknowledgedFollowThrough, setAcknowledgedFollowThrough] = useState(() => new Set());
+  const [focusTaskId, setFocusTaskId] = useState(null);
+  const [followThroughAction, setFollowThroughAction] = useState(null);
+  const [deferItem, setDeferItem] = useState(null);
+  const [deferNextAction, setDeferNextAction] = useState('');
+  const [deferDueDate, setDeferDueDate] = useState('');
+  const [deferError, setDeferError] = useState('');
+  const [deferSaving, setDeferSaving] = useState(false);
+  const [followThroughNotice, setFollowThroughNotice] = useState(null);
   const appRef = useRef(null);
   const splitterRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -336,6 +414,50 @@ function App() {
   const practiceQueue = practiceDrills.filter((drill) => !practiceResults[drill.id]);
   const commandCenter = useMemo(() => getCommandCenterSnapshot({ current, completed, total: officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews }), [current, completed, officialLessons.length, progress, readinessOverall, reviewQueue, practiceQueue, captures, studyMaterials, studyReviews]);
   const todayView = useMemo(() => buildTodayView(roadmap), [roadmap]);
+  const followThroughView = useMemo(() => buildFollowThroughView(roadmap), [roadmap]);
+  const acknowledgeFollowThrough = (id) => setAcknowledgedFollowThrough((currentIds) => new Set(currentIds).add(id));
+  const updateFollowThrough = (item) => {
+    setSelectedProjectId(roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === item.id)?.projectId || null);
+    setFocusTaskId(item.id);
+    setView('projects');
+  };
+  const deferFollowThrough = async (item) => {
+    const record = roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === item.id);
+    if (!record) return;
+    setDeferItem(item);
+    setDeferNextAction(item.nextAction || '');
+    setDeferDueDate(record.dueDate || '');
+    setDeferError('');
+    setFollowThroughNotice(null);
+  };
+  const cancelDefer = () => {
+    if (deferSaving) return;
+    setDeferItem(null);
+    setDeferError('');
+  };
+  const submitDefer = async () => {
+    if (!deferItem) return;
+    const record = roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === deferItem.id);
+    if (!record) { setDeferError('This task is no longer available in the local roadmap.'); return; }
+    const nextAction = deferNextAction.trim();
+    const dueDate = deferDueDate.trim();
+    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) { setDeferError('Use a due date in YYYY-MM-DD format.'); return; }
+    setDeferSaving(true);
+    setFollowThroughAction(deferItem.id);
+    try {
+      const result = await window.desktopShell?.updateTask?.({ ...record, nextAction, dueDate: dueDate || null });
+      if (!result || result.ok === false) throw new Error(result?.error || 'The local roadmap did not confirm the update.');
+      await refreshRoadmap();
+      setDeferItem(null);
+      setDeferError('');
+      setFollowThroughNotice({ type: 'success', message: `Defer saved for “${record.title}”. The task remains active and was not marked Done.` });
+    } catch (cause) {
+      setDeferError(cause?.message || 'The commitment could not be deferred.');
+    } finally {
+      setFollowThroughAction(null);
+      setDeferSaving(false);
+    }
+  };
   const submitDrill = () => {
     if (selectedAnswer === null) return;
     setPracticeResults((results) => ({ ...results, [activeDrill.id]: { answer: selectedAnswer, correct: selectedAnswer === activeDrill.answer, completedAt: new Date().toISOString() } }));
@@ -368,8 +490,9 @@ function App() {
       <div className="brand"><div className="brand-icon">âœ¦</div><div><b>Executive Coach</b><small>Command center</small></div></div>
       <div className="nav-label">COMMAND CENTER</div>
       <nav>
-        <button className={view === 'today' ? 'nav active' : 'nav'} onClick={() => setView('today')}><Flame size={17}/> Today</button>
+        <button className={view === 'today' ? 'nav active' : 'nav'} onClick={() => setView('today')}><Flame size={17}/> Today’s Focus</button>
         <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => setView('command-center')}><ListChecks size={17}/> Command center</button>
+        <button className={view === 'follow-through' ? 'nav active' : 'nav'} onClick={() => setView('follow-through')}><Check size={17}/> Follow-through <em>{followThroughView.counts.review}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><Target size={17}/> Projects <em>{roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><FileText size={17}/> Archive <em>{roadmap.projects.filter((project) => project.kind === 'project' && project.archived).length}</em></button>
         <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Readiness</button>
@@ -385,7 +508,7 @@ function App() {
     </aside>
 
     <main className="main">
-      <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'today' ? 'Today' : view === 'command-center' ? 'Command center' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
+      <header><div className="crumb">EXECUTIVE COACH <ChevronRight size={14}/> <b>{view === 'today' ? 'Today’s Focus' : view === 'command-center' ? 'Command center' : view === 'follow-through' ? 'Follow-through' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
       <div className="main-scroll">
         <section className="hero"><div><span className="eyebrow">AI EXECUTIVE COACH COMMAND CENTER</span><h1>See what matters. Choose what moves. <span>âœ¦</span></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
         <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate Â· not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'} Â· ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmapâ€¦'}</small></div></section>
@@ -396,64 +519,80 @@ function App() {
             : <section className="today-view">
               <div className="today-intro">
                 <div>
-                  <span className="eyebrow">RELEASE 1 Â· TODAY VIEW</span>
-                  <h2>{todayView.date}</h2>
-                  <p>Grounded next actions derived from your local roadmap. Opening this view never changes task state or progress.</p>
+                  <span className="eyebrow">RELEASE 1 Â· PERSONAL EXECUTION FOUNDATION</span>
+                  <h2>Today’s Focus</h2>
+                  <p>A small, coach-selected list of tasks you can work on now. Work waiting on dependencies, approvals, or other people appears separately.</p>
                 </div>
                 <div className="today-date">
-                  <strong>{todayView.counts.actionable}</strong>
-                  <small>actionable task{todayView.counts.actionable === 1 ? '' : 's'} today</small>
+                  <strong>{todayView.counts.focus}</strong>
+                  <small>focus item{todayView.counts.focus === 1 ? '' : 's'} today</small>
                 </div>
               </div>
               <div className="today-grid">
-                <div className="today-stat"><label>TO DO / IN PROGRESS</label><b>{todayView.counts.focus}</b><small>Open work to move forward</small></div>
-                <div className="today-stat"><label>BLOCKED</label><b>{todayView.counts.blocked}</b><small>Needs an unblocking decision</small></div>
-                <div className="today-stat"><label>OVERDUE</label><b>{todayView.counts.overdue}</b><small>Past scheduled date</small></div>
+                <div className="today-stat"><label>READY NOW</label><b>{todayView.counts.ready}</b><small>Validated work with completed dependencies</small></div>
+                <div className="today-stat"><label>WAITING</label><b>{todayView.counts.waiting}</b><small>Blocked or dependency-locked work</small></div>
+                <div className="today-stat"><label>OVERDUE</label><b>{todayView.counts.overdue}</b><small>Ready work past its stored due date</small></div>
               </div>
               <div className="today-panel">
                 <div className="section-head compact">
                   <div>
-                    <h2>Next actions</h2>
-                    <p>Ordered by status and priority: blocked first, then in-progress, to-do, and backlog. Context shows where the grounded task lives.</p>
+                    <h2>Focus queue</h2>
+                    <p>Up to three ready tasks, ordered by in-progress status, to-do status, backlog, priority, due date, title, and ID.</p>
                   </div>
-                  <span className="queue-count">{todayView.counts.actionable} shown</span>
+                  <span className="queue-count">{todayView.counts.focus} of {todayView.counts.ready} shown</span>
                 </div>
-                {todayView.items.length ? (
+                {todayView.focus.length ? (
                   <div className="today-list">
                     {todayView.items.map((item) => (
                       <div className="today-item" key={item.id}>
-                        <span className={'priority-badge priority-' + String(item.priority || 'medium').toLowerCase()}>{item.priorityLabel}</span>
+                        <span className={'priority-badge priority-' + String(item.priority || 'medium').toLowerCase()}>{item.focusRole}</span>
                         <div className="today-item-body">
                           <div className="today-item-top">
                             <b>{item.title}</b>
-                            {item.blocked && <span className="overdue-label">Blocked</span>}
-                            {!item.blocked && item.overdue && <span className="overdue-label">Overdue</span>}
+                            {item.overdue && <span className="overdue-label">Overdue</span>}
                           </div>
                           {item.nextAction && <small>{item.nextAction}</small>}
                           <span className="today-context">
                             {item.statusLabel}{item.release ? ' Â· ' + item.release : item.project ? ' Â· ' + item.project : ''}
                             {item.dueDate ? ' Â· due ' + item.dueDate + (item.overdue ? ' (overdue)' : '') : ''}
                           </span>
-                          {item.blocked && item.blockedReason && (
-                            <div className="blocked-summary"><b>Blocked reason</b><span>{item.blockedReason}</span></div>
-                          )}
+                          <div className="blocked-summary"><b>Why this is here</b><span>{item.selectionReasons.join(' ')}</span></div>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="review-empty"><Check size={18}/> No open roadmap tasks right now. Add or schedule work, then Today will surface it here.</div>
+                  <div className="review-empty"><Check size={18}/> No validated ready work is available. Open Waiting below for the current blockers.</div>
                 )}
+                <details className="today-waiting">
+                  <summary><span>Waiting</span><span>{todayView.counts.waiting} item{todayView.counts.waiting === 1 ? '' : 's'} not ready to start</span></summary>
+                  {todayView.waiting.length ? <div className="today-list">
+                    {todayView.waiting.map((item) => <div className="today-item waiting-item" key={item.id}>
+                      <span className="priority-badge priority-medium">Waiting</span>
+                      <div className="today-item-body">
+                        <div className="today-item-top"><b>{item.title}</b><span className="overdue-label">{item.statusLabel}</span></div>
+                        <span className="today-context">{item.statusLabel}{item.release ? ' Â· ' + item.release : item.project ? ' Â· ' + item.project : ''}</span>
+                        <div className="blocked-summary"><b>Why it is waiting</b><span>{item.waitingReasons.join(' ')}</span></div>
+                      </div>
+                    </div>)}
+                  </div> : <div className="review-empty"><Check size={18}/> Nothing is waiting in the active roadmap.</div>}
+                </details>
+                <p className="today-kanban-note">Focus is intentionally limited. The full work inventory remains available in <button type="button" onClick={() => setView('projects')}>Projects / Kanban <ExternalLink size={12}/></button>.</p>
               </div>
             </section>)}
         {view === 'projects' && (roadmapStatus.state === 'loading'
           ? <section className="projects-workspace database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmapâ€¦</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'
             ? <section className="projects-workspace database-state database-error" role="alert"><h2>Roadmap database unavailable</h2><p>{roadmapStatus.message}</p><button className="primary" onClick={() => refreshRoadmap().catch((cause) => setRoadmapStatus({ state: 'error', message: cause?.message || 'Could not load the local roadmap database.' }))}>Retry</button></section>
-            : <DatabaseRoadmapWorkspace roadmap={roadmap} refreshRoadmap={refreshRoadmap} selectedProjectId={selectedProjectId} setSelectedProjectId={setSelectedProjectId} />)}
+            : <DatabaseRoadmapWorkspace roadmap={roadmap} refreshRoadmap={refreshRoadmap} selectedProjectId={selectedProjectId} setSelectedProjectId={setSelectedProjectId} focusTaskId={focusTaskId} onFocusTaskHandled={() => setFocusTaskId(null)} />)}
+        {view === 'follow-through' && (roadmapStatus.state === 'loading'
+          ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmap…</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
+          : roadmapStatus.state === 'error'
+            ? <section className="database-state database-error" role="alert"><h2>Roadmap database unavailable</h2><p>{roadmapStatus.message}</p><button className="primary" onClick={() => refreshRoadmap().catch((cause) => setRoadmapStatus({ state: 'error', message: cause?.message || 'Could not load the local roadmap database.' }))}>Retry</button></section>
+            : <FollowThroughView queue={followThroughView} acknowledgedIds={acknowledgedFollowThrough} onAcknowledge={acknowledgeFollowThrough} onUpdate={updateFollowThrough} onDefer={deferFollowThrough} actionState={followThroughAction} notice={followThroughNotice} />)}
         {view === 'command-center' && <section className="command-center"><div className="command-intro"><div><span className="eyebrow">EXECUTIVE OPERATING PICTURE</span><h2>Know what matters next.</h2><p>This foundation brings existing learning and study state into a broader command-center shell without inventing projects, tasks, metrics, or coaching.</p></div><button className="primary" onClick={() => openReviewItem(commandCenter.nextActions[0]?.item || current)}><Play size={15}/> Continue learning</button></div><div className="command-grid"><button className="command-card" onClick={() => setView('curriculum')}><BookOpen size={20}/><label>LEARNING MODULE</label><b>{progress}%</b><small>{completed}/{officialLessons.length} items complete or skipped</small></button><button className="command-card" onClick={() => setView('overview')}><Target size={20}/><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}</b><small>App-derived estimate, not a passing prediction</small></button><button className="command-card" onClick={() => setView('practice')}><Brain size={20}/><label>PRACTICE BACKLOG</label><b>{commandCenter.counts.practice}</b><small>App-created drills remaining</small></button><button className="command-card" onClick={() => setNotesOpen(true)}><FileText size={20}/><label>PERSONAL NOTES</label><b>{notes.trim() ? 'Active' : 'Ready'}</b><small>{notes.trim() ? `${notes.trim().length} characters saved locally` : 'Capture your next insight'}</small></button></div><section className="command-panel"><div className="section-head compact"><div><h2>Next actions</h2><p>Prioritized from existing state; opening this list never changes progress.</p></div><span className="queue-count">{commandCenter.nextActions.length} shown</span></div>{commandCenter.nextActions.length ? <div className="command-actions">{commandCenter.nextActions.map((action) => <button className="command-action" key={action.id} onClick={() => action.kind === 'lesson' ? openReviewItem(action.item) : action.kind === 'practice' ? (setActiveDrillId(action.item.id), setView('practice')) : setNotesOpen(true)}><span className="review-icon">{action.kind === 'lesson' ? <BookOpen size={14}/> : action.kind === 'practice' ? <Brain size={14}/> : <FileText size={14}/>}</span><span><b>{action.label}</b><small>{action.detail}</small></span><ChevronRight size={15}/></button>)}</div> : <div className="review-empty"><Check size={18}/> No queued actions from the preserved learning state.</div>}<div className="command-foot"><span><b>{commandCenter.counts.captures}</b> Academy captures</span><span><b>{commandCenter.counts.materials}</b> generated materials</span><span><b>{commandCenter.counts.unreviewed}</b> unreviewed cards</span></div></section><section className="future-panel"><div><span className="eyebrow">NEXT SAFE CAPABILITY</span><h2>Projects, tasks, and Kanban</h2><p>Manage real local work without cloud sync, integrations, credentials, or AI coaching.</p></div><button className="link" onClick={() => setView('projects')}>Open Projects <ChevronRight size={15}/></button></section></section>}
         {view === 'overview' && <><section className="practice-card"><Target size={22}/><h2>CCAR-P exam overview</h2><p><b>Claude Certified Architect â€“ Professional</b> Â· Passing score 720 on a 100â€“1,000 scaled score Â· $175 USD Â· Online proctored or Pearson VUE test center Â· Credential valid for 12 months.</p><div className="exam-facts">{examFacts.map(([label, value]) => <div key={label}><label>{label}</label><b>{value}</b></div>)}</div><p><b>No mandatory prerequisites or required courses.</b> Recommended preparation helps build context; readiness is not represented by course completion alone.</p></section><section className="readiness-card"><div className="readiness-heading"><div><span className="eyebrow">ESTIMATED APP READINESS</span><h2>Exam-domain readiness</h2><p>Transparent evidence from official curriculum statuses. This is an estimate, not an official passing prediction.</p></div><div className="readiness-total">{readinessOverall === null ? 'Not assessed' : `${readinessOverall}%`}<small>weighted evidence</small></div></div><div className="readiness-list">{readiness.map((domain) => <div className="readiness-row" key={domain.id}><div className="readiness-label"><b>{domain.label}</b><span>{domain.weight}% exam weight Â· {domain.mapped.length} mapped official item{domain.mapped.length === 1 ? '' : 's'}</span></div><strong>{domain.evidence === null ? 'Not assessed' : `${domain.evidence}%`}</strong><div className="readiness-bar"><i style={{ width: `${domain.evidence || 0}%` }}/></div></div>)}</div><div className="readiness-method"><b>How the estimate is formed</b><span>Complete = 100% evidence Â· In progress = 50% Â· Not started = 0% Â· Skipped items are excluded. Course completion changes evidence only; it never marks a domain mastered.</span></div></section></>}
-        {view !== 'command-center' && view !== 'projects' && view !== 'today' && <>
+        {view !== 'command-center' && view !== 'projects' && view !== 'today' && view !== 'follow-through' && <>
           <div className="section-head"><div><h2>{view === 'curriculum' ? 'Official curriculum & practice' : 'Continue learning'}</h2><p>Use this focused workspace to move through the certification path, track progress, and study alongside Anthropic Academy.</p></div>{view !== 'curriculum' && <button className="link" onClick={() => setView('curriculum')}>View full curriculum <ChevronRight size={15}/></button>}</div>
           <section className="lesson-card"><div className="lesson-art"><BookOpen size={27}/><span>01</span></div><div className="lesson-copy"><label>{current.type === 'practice' ? 'APP-CREATED PRACTICE' : current.title.toUpperCase()}</label><h3>{current.title}</h3><p>{current.note || 'Official course or module metadata is shown without inventing lecture titles.'}</p><small><Play size={13}/> {current.duration} &nbsp; Â· &nbsp; {current.type === 'practice' ? 'App practice' : 'Anthropic preparation'}</small></div>{current.academyUrl ? <button className="academy-hint academy-launch" onClick={() => openAcademyCourse(current)} title={`Open ${current.title} in Anthropic Academy`}><Play size={15}/> Open in Academy</button> : <span className="academy-hint"><ExternalLink size={15}/> Academy is live on the right</span>}</section>
           {view !== 'curriculum' && <section className="review-next"><div className="section-head compact"><div><h2>Review next</h2><p>Official items needing attention, with in-progress work first. App-created practice is kept separate.</p></div><span className="queue-count">{reviewQueue.length} remaining</span></div>{reviewQueue.length ? <div className="review-list">{reviewQueue.slice(0, 8).map((lesson) => <button className="review-item" key={lesson.id} onClick={() => openReviewItem(lesson)}><span className="review-icon"><Play size={13}/></span><span><b>{lesson.title}</b><small>{getStatus(lesson)} Â· {lesson.type === 'practice' ? 'App-created practice' : lesson.duration}</small></span><span className="review-link">Review next</span><ChevronRight size={16}/></button>)}</div> : <div className="review-empty"><Check size={18}/> All official curriculum items are complete or skipped.</div>}</section>}
@@ -467,6 +606,7 @@ function App() {
     {view === 'curriculum' && academyOpen && <div className="academy-slot" aria-label="Anthropic Academy native browser panel" />}
 
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
+    {deferItem && <DeferModal item={deferItem} nextAction={deferNextAction} dueDate={deferDueDate} error={deferError} saving={deferSaving} onNextActionChange={setDeferNextAction} onDueDateChange={setDeferDueDate} onCancel={cancelDefer} onSubmit={submitDefer} />}
   </div>;
 }
 createRoot(document.getElementById('root')).render(<App />);

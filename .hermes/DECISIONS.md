@@ -74,10 +74,10 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 ## D011 — Kanban board is the top implementation priority
 
-**Status:** Active
-**Decision:** The local Projects + Tasks + Kanban workflow is the highest-priority implementation area. Complete runtime acceptance and board-related fixes before beginning Today/Focus, coach intelligence, integrations, usage tracking, or unrelated redesign.
+**Status:** Historical sequencing constraint; superseded for current execution by D014
+**Decision:** The local Projects + Tasks + Kanban workflow was the highest-priority implementation area before Today’s Focus. Its runtime acceptance established the structured roadmap foundation required by the current phase.
 **Reason:** A reliable visual board is the first concrete operating workflow in the command center and provides the foundation for later prioritization and coaching.
-**Consequence:** New sessions should read `PHASE-02-projects-tasks-kanban.md` as the active boundary, focus on board quality and verification, preserve the Learning & Development and Academy compatibility boundaries, and stop after Kanban acceptance passes.
+**Consequence:** The board remains the complete work inventory and its compatibility boundaries remain protected. The active execution boundary is now `AICC-PHA-023` and its feature roadmap; do not use this historical decision to defer Today’s Focus or grounded coach implementation.
 
 ## D012 — Board state is designed for a future Hermes/OR document layer
 
@@ -88,7 +88,14 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 ## D013 — Today View is a derived, read-only window over roadmap records
 
-**Status:** Active (Phase 3 — Release 1, phase `AICC-PHA-001`)
-**Decision:** The Today View is always *derived* from the persisted roadmap; it never stores a second copy of task state and it never mutates tasks. It surfaces actionable roadmap records (status, priority, due date, blocked reason, next action, release, phase, project) with stable IDs and an explainable ordering: blocked first, then in-progress, to-do, and backlog, weighted by priority. Completed and archived records are excluded.
-**Reason:** This satisfies the canonical `AICC-TSK-002` (define Today view contract) and `AICC-TSK-003` (assemble grounded next actions) while keeping the roadmap database the single source of work truth and avoiding any risk of fabricated or duplicated data.
-**Consequence:** The Today View is local-first and reversible by construction (changing a roadmap record changes the view). It must not add autonomous writes, deadlines that mutate state, fake metrics, or a separate task store.
+**Status:** Superseded by D014 for phase `AICC-PHA-023`
+**Decision:** The historical Today View was always *derived* from the persisted roadmap; it never stored a second copy of task state and it never mutated tasks. Its original blocked-first ordering is retained here as historical context only.
+**Reason:** The earlier contract predated dependency-aware Focus and incorrectly treated blocked work as a primary action. It remains useful as the compatibility history for `AICC-TSK-001`–`003`, but must not govern Today’s Focus.
+**Consequence:** Implementations must use D014 for the current Focus/Waiting behavior. Do not restore blocked-first behavior.
+
+## D014 — Today’s Focus includes grounded coaching within a validated boundary
+
+**Status:** Active (Release 1, phase `AICC-PHA-023`)
+**Decision:** Today’s Focus is a derived, dependency-aware action surface over the canonical local roadmap. It shows no more than three ready tasks, keeps blocked and dependency-waiting work separate, and treats a dependency as complete only when its referenced task is `done`. The grounded AI Executive ADHD Coach is a required part of this feature, not future compatibility work. It may recommend one realistic next action only from the validated Focus/Waiting snapshot, must explain its reason and uncertainty, must support deterministic fallback, and must receive explicit user approval before any supported mutation.
+**Reason:** A deterministic queue without grounded coaching does not deliver the intended ADHD-oriented reduction from overwhelm to one actionable next step. Keeping the deterministic derivation authoritative prevents the provider from deciding what is possible or inventing work.
+**Consequence:** Provider responses require schema and current-roadmap validation. Unknown, stale, blocked, dependency-locked, completed, archived, or out-of-context recommendations are rejected. The coach may not create, delete, complete, reprioritize, or rewire work autonomously; approved changes use the existing validated update path. Credentials remain outside renderer state, roadmap data, and recommendation records. App-originated usage and compact recommendation metadata may be recorded locally with explicit privacy controls; provider-wide usage must not be implied.

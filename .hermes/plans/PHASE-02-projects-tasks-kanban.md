@@ -98,4 +98,4 @@ The current session could not click or inspect the Electron desktop window with 
 
 ## Stop condition
 
-Do not begin Today/Focus, coach intelligence, integrations, usage tracking, advanced task metadata, or additional workflow modules without a separately approved phase. Do not claim final interactive completion until the manual handoff above is checked.
+For the completed Phase 2 boundary, do not begin Today/Focus, coach intelligence, integrations, usage tracking, advanced task metadata, or additional workflow modules without a separately approved phase. The user has now separately approved `AICC-PHA-023`, which owns Today’s Focus and its bounded grounded coach. Do not claim Phase 2 final interactive completion until the manual handoff above is checked.

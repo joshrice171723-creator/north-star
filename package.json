@@ -20,9 +20,11 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@playwright/test": "^1.62.1",
     "concurrently": "latest",
     "cross-env": "latest",
     "electron": "latest",
+    "playwright": "^1.62.1",
     "wait-on": "latest"
   }
 }
