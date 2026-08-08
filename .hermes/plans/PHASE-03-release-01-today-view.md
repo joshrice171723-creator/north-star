@@ -9,8 +9,8 @@
 ## The three tasks
 
 1. **`AICC-TSK-001` — Preserve roadmap foundation** (`done`): Retain the current local roadmap contract and database as the single source of truth. No feature work.
-2. **`AICC-TSK-002` — Define Today view contract** (`todo`): Record the derived-view contract (see decision `D013`): read-only derivation over roadmap records; stable IDs; exclude completed/archived; ordering = blocked → in-progress → to-do → backlog, weighted by priority (P0/P1/P2/P3/P4 and urgent/high/medium/low), due date, then title; surface blocked reason and next action.
-3. **`AICC-TSK-003` — Assemble grounded next actions** (`backlog → implemented`): Prototype the derived view from roadmap records.
+2. **`AICC-TSK-002` — Define Today view contract** (`done`): Record the derived-view contract (see decision `D013`): read-only derivation over roadmap records; stable IDs; exclude completed/archived; ordering = blocked → in-progress → to-do → backlog, weighted by priority (P0/P1/P2/P3/P4 and urgent/high/medium/low), due date, then title; surface blocked reason and next action.
+3. **`AICC-TSK-003` — Assemble grounded next actions** (`done`): Prototype the derived view from roadmap records.
 
 ## Delivered scope
 

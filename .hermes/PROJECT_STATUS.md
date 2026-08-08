@@ -62,8 +62,8 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 Advance the Release 1 → Today View tasks (`AICC-REL-001` / phase `AICC-PHA-001`):
 
 - `AICC-TSK-001` — Preserve roadmap foundation — **done** (verified against the live SQLite roadmap; no feature work, the local roadmap contract is retained).
-- `AICC-TSK-002` — Define Today view contract — **todo** (documented in `.hermes/plans/PHASE-03-release-01-today-view.md` and decision `D013`).
-- `AICC-TSK-003` — Assemble grounded next actions — **backlog → implemented** (derived view queries the roadmap and surfaces prioritized actions; see `src/todayView.mjs`).
+- `AICC-TSK-002` — Define Today view contract — **done** (documented in `.hermes/plans/PHASE-03-release-01-today-view.md` and decision `D013`).
+- `AICC-TSK-003` — Assemble grounded next actions — **done** (derived view queries the roadmap and surfaces prioritized actions; see `src/todayView.mjs`).
 
 ## Phase 3 — Release 1 Today View verification
 
