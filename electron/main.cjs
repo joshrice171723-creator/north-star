@@ -5,6 +5,17 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { createDatabase } = require('./database.cjs');
 
+// Load local development secrets without bundling them into the renderer or source.
+// The project .env file is gitignored; existing process environment variables win.
+const projectEnvPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(projectEnvPath)) {
+  for (const line of fs.readFileSync(projectEnvPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || process.env[match[1]]) continue;
+    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
+
 app.setPath('userData', path.join(app.getPath('appData'), 'ClaudeArchitectStudyCoachNative'));
 const academyUrl = 'https://anthropic.skilljar.com/';
 const academyOrigin = new URL(academyUrl).origin;

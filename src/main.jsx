@@ -445,20 +445,20 @@ function App() {
   const coachGuidance = useMemo(() => buildDeterministicCoachGuidance(coachContext), [coachContext]);
   const coachCard = useMemo(() => buildCoachCardModel(coachGuidance), [coachGuidance]);
   const [coachRefreshState, setCoachRefreshState] = useState('idle');
-  const [aiCoachState, setAiCoachState] = useState({ status: 'idle', text: '', model: OPENROUTER_COACH_MODEL, error: '' });
+  const [aiCoachState, setAiCoachState] = useState({ status: 'idle', recommendation: null, model: OPENROUTER_COACH_MODEL, error: '' });
   const refreshCoachGuidance = async () => {
     setCoachRefreshState('refreshing');
     try { await refreshRoadmap(); setCoachRefreshState('idle'); }
     catch { setCoachRefreshState('error'); }
   };
   const askAiCoach = async () => {
-    setAiCoachState({ status: 'loading', text: '', model: OPENROUTER_COACH_MODEL, error: '' });
+    setAiCoachState({ status: 'loading', recommendation: null, model: OPENROUTER_COACH_MODEL, error: '' });
     try {
       const result = await window.desktopShell?.openRouterChat?.(buildCoachProviderMessages(coachContext), { model: OPENROUTER_COACH_MODEL });
-      const normalized = normalizeCoachProviderResponse(result);
-      setAiCoachState({ status: normalized.ok ? 'success' : 'error', text: normalized.text, model: normalized.model, error: normalized.error || '' });
+      const normalized = normalizeCoachProviderResponse(result, coachContext);
+      setAiCoachState({ status: normalized.ok ? 'success' : 'error', recommendation: normalized.recommendation, model: normalized.model, error: normalized.error || '' });
     } catch (error) {
-      setAiCoachState({ status: 'error', text: '', model: OPENROUTER_COACH_MODEL, error: error?.message || 'AI coaching request failed safely.' });
+      setAiCoachState({ status: 'error', recommendation: null, model: OPENROUTER_COACH_MODEL, error: error?.message || 'AI coaching request failed safely.' });
     }
   };
   const reviewCoachTask = () => {
@@ -597,7 +597,7 @@ function App() {
                 <p className="coach-reason"><b>Why:</b> {coachCard.reason}</p>
                 <div className="coach-card-foot"><small>Local guidance is computed from Today’s Focus and Waiting. AI is user-triggered, sends bounded context, and never changes tasks.</small>{coachCard.actionLabel && <button className="secondary" type="button" onClick={reviewCoachTask}>{coachCard.actionLabel} <ChevronRight size={14}/></button>}</div>
                 {coachRefreshState === 'error' && <div className="coach-error" role="alert">Local guidance could not refresh. The previous recommendation remains unchanged.</div>}
-                {aiCoachState.status === 'success' && <div className="coach-ai-response"><div><span className="eyebrow">AI COACH · {aiCoachState.model}</span><p>{aiCoachState.text}</p></div><small>Provider response is display-only; no roadmap changes were made.</small></div>}
+                {aiCoachState.status === 'success' && aiCoachState.recommendation && <div className="coach-ai-response"><div><span className="eyebrow">AI COACH · {aiCoachState.model}</span><p><b>{aiCoachState.recommendation.title || 'Roadmap status'}</b>{aiCoachState.recommendation.nextStep && <>: {aiCoachState.recommendation.nextStep}</>} </p><small>{aiCoachState.recommendation.explanation} · Uncertainty: {aiCoachState.recommendation.uncertainty}</small></div><small>Validated against the current Focus list. Provider response is display-only; no roadmap changes were made.</small></div>}
                 {aiCoachState.status === 'error' && <div className="coach-error" role="alert">AI coaching unavailable: {aiCoachState.error}</div>}
               </section>
               <div className="today-panel">

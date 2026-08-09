@@ -41,7 +41,9 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 - The local Projects + Tasks + Kanban workflow is implemented and is the active priority for runtime acceptance and board-focused fixes.
 - Follow-through is now a derived review queue over the same SQLite-backed tasks/subtasks. It surfaces blocked, overdue, stale, and neglected work with project/release/phase context, next action, and definition of done.
 - Follow-through acknowledgement is explicitly session-only because the existing database has no review-record table. Defer is an explicit user action through the existing `updateTask` API; opening, acknowledging, and updating never marks work done.
-- No Today’s Focus coach engine, recommendation records, usage ledger, authentication, or cloud behavior has been implemented yet; those are now required tasks in the active Today’s Focus phase rather than future compatibility work.
+- Today’s Focus and Waiting are implemented as a dependency-aware, read-only derivation over the canonical SQLite roadmap. The UI shows up to three Focus items, a collapsed Waiting section, explanations, and a handoff to the complete Kanban inventory.
+- The bounded coach context and deterministic local guidance are implemented. Ask AI Coach now requests structured JSON and validates recommendations against the current Focus snapshot, rejecting malformed, unknown, blocked, dependency-locked, completed, and out-of-context work. Provider responses remain display-only and cannot mutate roadmap data.
+- The active Today’s Focus phase is not complete: provider-error fallback presentation, provenance/freshness, privacy controls, app-originated usage ledger, approval preview/mutation audit, broader tests, and manual Electron acceptance remain outstanding.
 - The long-term vision is documented in `.hermes/PRODUCT_VISION.md`.
 - Cross-session decisions are documented in `.hermes/DECISIONS.md`.
 - The active implementation boundary is documented in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`.
@@ -107,12 +109,24 @@ Interactive Electron acceptance (open Today in the running app, confirm derived 
 - Execution begins with `AICC-TSK-067` and proceeds through dependency-aware Focus/Waiting derivation, grounded coach context, structured recommendation validation, deterministic fallback, approval controls, privacy/usage boundaries, tests, and Electron acceptance.
 - The coach is part of this feature. Do not close the phase after only the deterministic Focus UI, and do not describe AI recommendation as merely future compatibility.
 
-## Not started
+## Current Today’s Focus verification
 
-- Coach context layer
-- Coach guidance or approval workflow
-- App-originated API/token/cache usage ledger
-- Provider-wide usage integrations
+- `node --test` passed on 2026-08-08: **54 tests, 54 passed, 0 failed**.
+- `npm run build` passed; Vite emitted only the existing `configLoader: 'native'` CommonJS/ESM warning.
+- `node --check electron/main.cjs` passed.
+- `node --check electron/preload.cjs` passed.
+- `node --check electron/database.cjs` passed.
+- `git diff --check` passed.
+- Structured provider recommendation validation is covered by coach-provider tests.
+- Manual production Electron acceptance is still pending.
+
+## Outstanding Today’s Focus work
+
+- Provider-unavailable/error states must visibly use the deterministic fallback path.
+- Recommendation provenance, roadmap snapshot freshness, and stale invalidation are not yet complete.
+- Privacy controls and an attributable app-originated usage ledger are not yet complete.
+- Approval preview, explicit Apply/Cancel mutation flow, and mutation audit result are not yet complete.
+- Full privacy, freshness, approval-boundary, provider failure, and Electron acceptance tests remain.
 
 ## Historical Phase 1 verification
 

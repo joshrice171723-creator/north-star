@@ -14,8 +14,18 @@ test('provider payload contains only bounded context and stable coaching instruc
 });
 
 test('provider response is normalized without mutating or trusting missing content', () => {
-  const result = { ok: true, model: OPENROUTER_COACH_MODEL, message: { role: 'assistant', content: '  Start with the draft.  ' }, usage: { total_tokens: 12 } };
-  const normalized = normalizeCoachProviderResponse(result);
-  assert.deepEqual(normalized, { ok: true, model: OPENROUTER_COACH_MODEL, text: 'Start with the draft.', usage: { total_tokens: 12 }, error: null });
-  assert.equal(normalizeCoachProviderResponse({ ok: true }).ok, false);
+  const context = { focus: [{ id: 't1', title: 'Draft', status: 'todo', dependencyChain: [], blocked: false }] };
+  const result = { ok: true, model: OPENROUTER_COACH_MODEL, message: { role: 'assistant', content: JSON.stringify({ taskId: 't1', nextStep: 'Open the draft.', explanation: 'It is ready now.', uncertainty: 'low' }) }, usage: { total_tokens: 12 } };
+  const normalized = normalizeCoachProviderResponse(result, context);
+  assert.equal(normalized.ok, true);
+  assert.deepEqual(normalized.recommendation, { taskId: 't1', title: 'Draft', nextStep: 'Open the draft.', explanation: 'It is ready now.', uncertainty: 'low' });
+  assert.equal(normalizeCoachProviderResponse({ ok: true }, context).ok, false);
+});
+
+test('provider recommendations are rejected when they are plain text, unknown, blocked, or dependency-locked', () => {
+  const context = { focus: [{ id: 'ready', title: 'Ready', status: 'todo', dependencyChain: [], blocked: false }], waiting: [{ id: 'blocked', title: 'Blocked', status: 'blocked', dependencyChain: ['x'], blocked: true }] };
+  const base = { ok: true, model: OPENROUTER_COACH_MODEL, message: { role: 'assistant', content: '' } };
+  assert.equal(normalizeCoachProviderResponse({ ...base, message: { content: 'Start now.' } }, context).ok, false);
+  assert.equal(normalizeCoachProviderResponse({ ...base, message: { content: JSON.stringify({ taskId: 'missing', nextStep: 'Do it', explanation: 'Because', uncertainty: 'low' }) } }, context).ok, false);
+  assert.equal(normalizeCoachProviderResponse({ ...base, message: { content: JSON.stringify({ taskId: 'blocked', nextStep: 'Do it', explanation: 'Because', uncertainty: 'low' }) } }, { focus: context.waiting }).ok, false);
 });
