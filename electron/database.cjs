@@ -79,8 +79,11 @@ const integrationsMetadata = sqliteTable('integrations_metadata', {
 const calendarEvents = sqliteTable('calendar_events', {
   id: text('id').primaryKey(), provider: text('provider').notNull().default('local'), externalId: text('external_id'), title: text('title').notNull(), description: text('description').notNull().default(''), startsAt: text('starts_at').notNull(), endsAt: text('ends_at').notNull(), location: text('location').notNull().default(''), allDay: integer('all_day', { mode: 'boolean' }).notNull().default(false), metadataJson: text('metadata_json').notNull().default('{}'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at'),
 }, (table) => ({ timeIdx: index('calendar_events_time_idx').on(table.startsAt, table.endsAt), providerIdx: index('calendar_events_provider_idx').on(table.provider, table.externalId), activeIdx: index('calendar_events_active_idx').on(table.deletedAt) }));
+const jobOpportunities = sqliteTable('job_opportunities', {
+  id: text('id').primaryKey(), company: text('company').notNull(), roleTitle: text('role_title').notNull(), url: text('url').notNull().default(''), location: text('location').notNull().default(''), employmentType: text('employment_type').notNull().default(''), salaryRange: text('salary_range').notNull().default(''), source: text('source').notNull().default(''), stage: text('stage').notNull().default('target'), priority: text('priority').notNull().default('medium'), nextAction: text('next_action').notNull().default(''), followUpDate: text('follow_up_date'), contactName: text('contact_name').notNull().default(''), contactEmail: text('contact_email').notNull().default(''), notes: text('notes').notNull().default(''), appliedAt: text('applied_at'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), archived: integer('archived', { mode: 'boolean' }).notNull().default(false), deletedAt: text('deleted_at'),
+}, (table) => ({ stageIdx: index('jobs_stage_idx').on(table.stage), followUpIdx: index('jobs_follow_up_idx').on(table.followUpDate), activeIdx: index('jobs_active_idx').on(table.archived, table.deletedAt) }));
 
-const tableMap = { projects, tasks, goals, checkIns, notes, briefings, integrationsMetadata, calendarEvents };
+const tableMap = { projects, tasks, goals, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities };
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const nonEmpty = (value, fallback = '') => typeof value === 'string' && value.trim() ? value.trim() : fallback;
@@ -158,6 +161,33 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const parentTaskId = recordKind === 'subtask' ? (input.parentTaskId || input.parentId || null) : null;
     return { id: bounded(nonEmpty(input.id, id(recordKind)), 160), projectId: bounded(nonEmpty(input.projectId), 160), parentTaskId, releaseId: input.releaseId || null, phaseId: input.phaseId || null, title: bounded(nonEmpty(input.title, input.name), 500), description: bounded(input.description), status: bounded(nonEmpty(input.status, 'backlog'), 80), priority: bounded(nonEmpty(input.priority, 'P1'), 40), orderIndex: Number.isFinite(input.orderIndex ?? input.order) ? Number(input.orderIndex ?? input.order) : 0, dueDate: input.dueDate || null, nextAction: bounded(input.nextAction), definitionOfDone: bounded(input.definitionOfDone), blockedReason: bounded(input.blockedReason), dependencies: bounded(input.dependencies), acceptanceCriteria: bounded(input.acceptanceCriteria), securityPrivacyNotes: bounded(input.securityPrivacyNotes), sourceContext: bounded(input.sourceContext), confidence: bounded(input.confidence), archived: Boolean(input.archived), createdAt: input.createdAt || timestamp, updatedAt: timestamp, deletedAt: null };
   }
+  function jobRecord(input) {
+    const timestamp = now();
+    return {
+      id: bounded(nonEmpty(input.id, id('job')), 160), company: bounded(nonEmpty(input.company), 300), roleTitle: bounded(nonEmpty(input.roleTitle), 500),
+      url: bounded(input.url), location: bounded(input.location, 300), employmentType: bounded(input.employmentType, 120), salaryRange: bounded(input.salaryRange, 200), source: bounded(input.source, 200),
+      stage: bounded(nonEmpty(input.stage, 'target'), 40), priority: bounded(nonEmpty(input.priority, 'medium'), 40), nextAction: bounded(input.nextAction), followUpDate: input.followUpDate || null,
+      contactName: bounded(input.contactName, 300), contactEmail: bounded(input.contactEmail, 300), notes: bounded(input.notes, 10000), appliedAt: input.appliedAt || null,
+      createdAt: input.createdAt || timestamp, updatedAt: timestamp, archived: Boolean(input.archived), deletedAt: null
+    };
+  }
+  function validateJobRecord(record) {
+    if (!record.company || !record.roleTitle) throw new Error('A job requires a company and role title.');
+    if (!['target', 'researching', 'ready', 'applied', 'screen', 'interviewing', 'final', 'offer', 'accepted', 'rejected'].includes(record.stage)) throw new Error('Invalid job stage.');
+    if (!['low', 'medium', 'high'].includes(record.priority)) throw new Error('Invalid job priority.');
+    for (const field of ['url', 'location', 'employmentType', 'salaryRange', 'source', 'nextAction', 'contactName', 'contactEmail', 'notes']) if (typeof record[field] !== 'string') throw new Error(`Invalid job ${field}.`);
+    for (const field of ['followUpDate', 'appliedAt']) if (record[field] !== null && record[field] !== undefined && (typeof record[field] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(record[field]))) throw new Error(`Invalid job ${field}.`);
+    return record;
+  }
+  function jobToRenderer(row) { return { ...row, archived: Boolean(row.archived) }; }
+  function upsertJob(input) {
+    const record = validateJobRecord(jobRecord(input));
+    const existing = db.select().from(jobOpportunities).where(eq(jobOpportunities.id, record.id)).get();
+    if (existing) db.update(jobOpportunities).set({ ...record, id: undefined, createdAt: existing.createdAt }).where(eq(jobOpportunities.id, record.id)).run();
+    else db.insert(jobOpportunities).values(record).run();
+    return jobToRenderer(db.select().from(jobOpportunities).where(eq(jobOpportunities.id, record.id)).get());
+  }
+  function listJobs() { return db.select().from(jobOpportunities).where(and(isNull(jobOpportunities.deletedAt), eq(jobOpportunities.archived, false))).orderBy(asc(jobOpportunities.stage), desc(jobOpportunities.updatedAt)).all().map(jobToRenderer); }
   function validateTaskHierarchy(record) {
     const project = db.select().from(projects).where(eq(projects.id, record.projectId)).get();
     if (!project || project.kind !== 'project') throw new Error('Task must belong to a real project.');
@@ -297,8 +327,9 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
+    jobs: { list: listJobs, create: upsertJob, update: upsertJob, delete: (recordId) => softDelete(jobOpportunities, recordId) },
     close: () => sqlite.close(),
   };
 }
 
-module.exports = { createDatabase, tables: { projects, tasks, goals, userSettings, checkIns, notes, briefings, integrationsMetadata, calendarEvents }, parseCsv };
+module.exports = { createDatabase, tables: { projects, tasks, goals, userSettings, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities }, parseCsv };

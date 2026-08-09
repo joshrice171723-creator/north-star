@@ -116,6 +116,18 @@ const validateCoachRecord = (input, kind) => {
   return input;
 };
 const validateCoachDeleteId = (value, label) => validateCoachId(value, `${label} id`);
+const JOB_STAGES = new Set(['target', 'researching', 'ready', 'applied', 'screen', 'interviewing', 'final', 'offer', 'accepted', 'rejected']);
+const JOB_PRIORITIES = new Set(['low', 'medium', 'high']);
+const validateJobRecord = (input) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid job opportunity.');
+  if (typeof input.id !== 'string' || !COACH_ID_PATTERN.test(input.id)) throw new Error('Invalid job id.');
+  for (const field of ['company', 'roleTitle']) if (typeof input[field] !== 'string' || !input[field].trim() || input[field].length > 500) throw new Error(`Invalid job: ${field} is required.`);
+  if (!JOB_STAGES.has(input.stage || 'target')) throw new Error('Invalid job stage.');
+  if (!JOB_PRIORITIES.has(input.priority || 'medium')) throw new Error('Invalid job priority.');
+  for (const field of ['url', 'location', 'employmentType', 'salaryRange', 'source', 'nextAction', 'contactName', 'contactEmail', 'notes']) if (input[field] !== undefined && typeof input[field] !== 'string') throw new Error(`Invalid job: ${field}.`);
+  for (const field of ['followUpDate', 'appliedAt']) if (input[field] !== undefined && input[field] !== null && (typeof input[field] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input[field]))) throw new Error(`Invalid job: ${field}.`);
+  return input;
+};
 const validateRoadmapPayload = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid roadmap payload.');
   const collections = ['projects', 'releases', 'phases', 'tasks', 'subtasks'];
@@ -473,6 +485,10 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:tasks:create', (_event, input) => coachDatabase.tasks.create(validateCoachRecord(input, 'task')));
   ipcMain.handle('coach:tasks:update', (_event, input) => coachDatabase.tasks.update(validateCoachRecord(input, 'task')));
   ipcMain.handle('coach:tasks:delete', (_event, id) => coachDatabase.tasks.delete(validateCoachDeleteId(id, 'task')));
+  ipcMain.handle('coach:jobs:list', () => coachDatabase.jobs.list());
+  ipcMain.handle('coach:jobs:create', (_event, input) => coachDatabase.jobs.create(validateJobRecord(input)));
+  ipcMain.handle('coach:jobs:update', (_event, input) => coachDatabase.jobs.update(validateJobRecord(input)));
+  ipcMain.handle('coach:jobs:delete', (_event, id) => coachDatabase.jobs.delete(validateCoachDeleteId(id, 'job')));
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
 }
 

@@ -29,4 +29,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   createTask: (input) => ipcRenderer.invoke('coach:tasks:create', input),
   updateTask: (input) => ipcRenderer.invoke('coach:tasks:update', input),
   deleteTask: (id) => ipcRenderer.invoke('coach:tasks:delete', id)
+  ,listJobs: () => ipcRenderer.invoke('coach:jobs:list')
+  ,createJob: (input) => ipcRenderer.invoke('coach:jobs:create', input)
+  ,updateJob: (input) => ipcRenderer.invoke('coach:jobs:update', input)
+  ,deleteJob: (id) => ipcRenderer.invoke('coach:jobs:delete', id)
 });
