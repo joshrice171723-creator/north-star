@@ -43,7 +43,8 @@ Runtime interaction acceptance was completed by the user. The user confirmed pro
 - Follow-through acknowledgement is explicitly session-only because the existing database has no review-record table. Defer is an explicit user action through the existing `updateTask` API; opening, acknowledging, and updating never marks work done.
 - Today’s Focus and Waiting are implemented as a dependency-aware, read-only derivation over the canonical SQLite roadmap. The UI shows up to three Focus items, a collapsed Waiting section, explanations, and a handoff to the complete Kanban inventory.
 - The bounded coach context and deterministic local guidance are implemented. Ask AI Coach now requests structured JSON and validates recommendations against the current Focus snapshot, rejecting malformed, unknown, blocked, dependency-locked, completed, and out-of-context work. Provider responses remain display-only and cannot mutate roadmap data.
-- The active Today’s Focus phase is not complete: provider-error fallback presentation, provenance/freshness, privacy controls, app-originated usage ledger, approval preview/mutation audit, broader tests, and manual Electron acceptance remain outstanding.
+- The initial Today’s Focus AI happy path is implemented: the user-triggered Ask AI Coach flow sends bounded context through the Electron OpenRouter bridge, validates one structured recommendation against the current Focus list, displays the result, and opens the selected task in Projects. It requires `OPENROUTER_API_KEY` and network access.
+- Privacy controls, provider fallback, provenance/freshness, usage ledger, approval preview/mutation audit, broader edge-case tests, and full manual Electron acceptance are explicitly deferred post-MVP rather than current happy-path blockers.
 - The long-term vision is documented in `.hermes/PRODUCT_VISION.md`.
 - Cross-session decisions are documented in `.hermes/DECISIONS.md`.
 - The active implementation boundary is documented in `.hermes/plans/PHASE-02-projects-tasks-kanban.md`.
@@ -107,7 +108,7 @@ Interactive Electron acceptance (open Today in the running app, confirm derived 
 - Feature roadmap: `C:/Users/joshr/OneDrive/Desktop/TODAYS-FOCUS-FEATURE-ROADMAP.md`.
 - Phase: `AICC-PHA-023` under Release 1.
 - Execution begins with `AICC-TSK-067` and proceeds through dependency-aware Focus/Waiting derivation, grounded coach context, structured recommendation validation, deterministic fallback, approval controls, privacy/usage boundaries, tests, and Electron acceptance.
-- The coach is part of this feature. Do not close the phase after only the deterministic Focus UI, and do not describe AI recommendation as merely future compatibility.
+- The coach happy path is now part of the MVP. Do not describe the working AI recommendation flow as future compatibility; deferred hardening remains tracked separately.
 
 ## Current Today’s Focus verification
 
@@ -120,9 +121,9 @@ Interactive Electron acceptance (open Today in the running app, confirm derived 
 - Structured provider recommendation validation is covered by coach-provider tests.
 - Manual production Electron acceptance is still pending.
 
-## Outstanding Today’s Focus work
+## Deferred Today’s Focus hardening
 
-- Provider-unavailable/error states must visibly use the deterministic fallback path.
+- Provider-unavailable/error states surfaced through the deterministic fallback path.
 - Recommendation provenance, roadmap snapshot freshness, and stale invalidation are not yet complete.
 - Privacy controls and an attributable app-originated usage ledger are not yet complete.
 - Approval preview, explicit Apply/Cancel mutation flow, and mutation audit result are not yet complete.

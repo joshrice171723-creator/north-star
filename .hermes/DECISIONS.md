@@ -108,4 +108,14 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 **Reason:** This is the smallest safe implementation slice that makes provider output grounded without allowing the provider to decide readiness or write to the roadmap.
 
-**Consequence:** The Today’s Focus feature remains open until deterministic provider-error fallback, provenance/freshness, privacy controls, app-originated usage tracking, explicit approval and audit behavior, expanded tests, and manual Electron acceptance are complete. This decision does not authorize autonomous writes or imply provider-wide usage reporting.
+**Consequence:** This decision defines the grounded, display-only coach boundary for the MVP. Deferred fallback, provenance/freshness, privacy, usage, approval/audit, expanded testing, and manual acceptance work remain post-MVP scope. It does not authorize autonomous writes or imply provider-wide usage reporting.
+
+## D016 — Ship the AI coach happy path before deferred hardening
+
+**Status:** Active MVP scope (2026-08-08)
+
+**Decision:** The initial MVP is the user-triggered happy path: build bounded Focus context, call OpenRouter through the Electron main process, parse one structured recommendation, validate its task against the current Focus list, display the recommendation, and let the user open the task in Projects. Privacy controls, fallback behavior, freshness/provenance, usage tracking, approval mutations, audit records, and exhaustive Electron acceptance are deferred post-MVP.
+
+**Reason:** The immediate product goal is to demonstrate the core coaching loop without expanding the first delivery into a complete production-hardening program.
+
+**Consequence:** The MVP requires `OPENROUTER_API_KEY` and network access. Basic task grounding validation remains in place so the provider cannot recommend work outside the current Focus list. Deferred scope must not be represented as implemented or silently treated as production readiness.
