@@ -119,3 +119,13 @@ Record decisions that future sessions should not casually reopen. If a decision 
 **Reason:** The immediate product goal is to demonstrate the core coaching loop without expanding the first delivery into a complete production-hardening program.
 
 **Consequence:** The MVP requires `OPENROUTER_API_KEY` and network access. Basic task grounding validation remains in place so the provider cannot recommend work outside the current Focus list. Deferred scope must not be represented as implemented or silently treated as production readiness.
+
+## D017 — AI may propose only a user-approved next-action update
+
+**Status:** Active MVP scope (2026-08-08)
+
+**Decision:** A validated AI recommendation may offer one proposed `nextAction`. The user may open the task, dismiss the recommendation, or review a confirmation preview showing the current and proposed values. Only explicit Apply calls the existing validated task-update IPC path, and Apply rechecks that the task remains in the current Focus list. No completion, deletion, dependency, priority, or autonomous mutation is supported.
+
+**Reason:** The first useful action is to turn a recommendation into a concrete next action while preserving an explicit approval boundary.
+
+**Consequence:** Successful application refreshes Today’s Focus and reports the update. Failed or no-longer-current proposals are not applied and remain visible as errors for user review.

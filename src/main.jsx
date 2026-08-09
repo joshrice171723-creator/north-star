@@ -262,6 +262,18 @@ function DeferModal({ item, nextAction, dueDate, error, saving, onNextActionChan
   </div>;
 }
 
+function CoachApprovalModal({ task, nextAction, error, saving, onCancel, onApply }) {
+  return <div className="modal" role="dialog" aria-modal="true" aria-labelledby="coach-approval-title" onClick={onCancel}>
+    <section className="coach-approval-modal" onClick={(event) => event.stopPropagation()}>
+      <div className="defer-modal-head"><div><span className="eyebrow">AI COACH · APPROVAL</span><h2 id="coach-approval-title">Apply proposed next action?</h2><p>{task.title}</p></div><button className="close" type="button" onClick={onCancel} aria-label="Cancel coach approval"><X size={18}/></button></div>
+      <div className="coach-approval-change"><div><label>Current next action</label><p>{task.nextAction?.trim() || 'No next action recorded.'}</p></div><div className="coach-approval-arrow">↓</div><div><label>Proposed next action</label><p>{nextAction}</p></div></div>
+      {error && <div className="defer-error" role="alert">{error}</div>}
+      <p className="defer-help">Nothing changes until you apply this proposal. The update will use the existing task update path and will not mark the task complete.</p>
+      <div className="defer-actions"><button className="secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="primary" type="button" onClick={onApply} disabled={saving}>{saving ? 'Applying…' : 'Apply change'} <Check size={14}/></button></div>
+    </section>
+  </div>;
+}
+
 const THEMES = {
   graphite: { name: 'Graphite', description: 'Neutral, focused, and understated.', colors: ['#101114', '#22252c', '#b8c0cc'] },
   ember: { name: 'Ember', description: 'Warm contrast with a restrained copper accent.', colors: ['#17110f', '#33201d', '#e47b58'] },
@@ -446,6 +458,7 @@ function App() {
   const coachCard = useMemo(() => buildCoachCardModel(coachGuidance), [coachGuidance]);
   const [coachRefreshState, setCoachRefreshState] = useState('idle');
   const [aiCoachState, setAiCoachState] = useState({ status: 'idle', recommendation: null, model: OPENROUTER_COACH_MODEL, error: '' });
+  const [coachApproval, setCoachApproval] = useState(null);
   const refreshCoachGuidance = async () => {
     setCoachRefreshState('refreshing');
     try { await refreshRoadmap(); setCoachRefreshState('idle'); }
@@ -468,6 +481,29 @@ function App() {
     setSelectedProjectId(record.projectId || null);
     setFocusTaskId(record.id);
     setView('projects');
+  };
+  const dismissAiRecommendation = () => setAiCoachState((currentState) => ({ ...currentState, status: 'dismissed', recommendation: null, error: '' }));
+  const requestCoachApproval = () => {
+    const recommendation = aiCoachState.recommendation;
+    if (!recommendation?.taskId || !recommendation.nextStep?.trim()) return;
+    const task = roadmap.tasks.concat(roadmap.subtasks).find((candidate) => candidate.id === recommendation.taskId);
+    if (task) setCoachApproval({ task, nextAction: recommendation.nextStep.trim(), error: '', saving: false });
+  };
+  const applyCoachApproval = async () => {
+    if (!coachApproval) return;
+    const record = roadmap.tasks.concat(roadmap.subtasks).find((task) => task.id === coachApproval.task.id);
+    if (!record) { setCoachApproval((currentApproval) => ({ ...currentApproval, error: 'This task is no longer available in the local roadmap.' })); return; }
+    if (!coachContext.focus.some((item) => item.id === record.id)) { setCoachApproval((currentApproval) => ({ ...currentApproval, error: 'This recommendation is no longer current. Ask AI coach again.' })); return; }
+    setCoachApproval((currentApproval) => ({ ...currentApproval, saving: true, error: '' }));
+    try {
+      const result = await window.desktopShell?.updateTask?.({ ...record, nextAction: coachApproval.nextAction });
+      if (!result || result.ok === false) throw new Error(result?.error || 'The local roadmap did not confirm the update.');
+      await refreshRoadmap();
+      setCoachApproval(null);
+      setAiCoachState({ status: 'applied', recommendation: null, model: OPENROUTER_COACH_MODEL, error: '' });
+    } catch (error) {
+      setCoachApproval((currentApproval) => ({ ...currentApproval, saving: false, error: error?.message || 'The coach proposal could not be applied.' }));
+    }
   };
   const acknowledgeFollowThrough = (id) => setAcknowledgedFollowThrough((currentIds) => new Set(currentIds).add(id));
   const updateFollowThrough = (item) => {
@@ -597,7 +633,8 @@ function App() {
                 <p className="coach-reason"><b>Why:</b> {coachCard.reason}</p>
                 <div className="coach-card-foot"><small>Local guidance is computed from Today’s Focus and Waiting. AI is user-triggered, sends bounded context, and never changes tasks.</small>{coachCard.actionLabel && <button className="secondary" type="button" onClick={reviewCoachTask}>{coachCard.actionLabel} <ChevronRight size={14}/></button>}</div>
                 {coachRefreshState === 'error' && <div className="coach-error" role="alert">Local guidance could not refresh. The previous recommendation remains unchanged.</div>}
-                {aiCoachState.status === 'success' && aiCoachState.recommendation && <div className="coach-ai-response"><div><span className="eyebrow">AI COACH · {aiCoachState.model}</span><p><b>{aiCoachState.recommendation.title || 'Roadmap status'}</b>{aiCoachState.recommendation.nextStep && <>: {aiCoachState.recommendation.nextStep}</>} </p><small>{aiCoachState.recommendation.explanation} · Uncertainty: {aiCoachState.recommendation.uncertainty}</small></div><small>Validated against the current Focus list. Provider response is display-only; no roadmap changes were made.</small></div>}
+                {aiCoachState.status === 'success' && aiCoachState.recommendation && <div className="coach-ai-response"><div><span className="eyebrow">AI COACH · {aiCoachState.model}</span><p><b>{aiCoachState.recommendation.title || 'Roadmap status'}</b>{aiCoachState.recommendation.nextStep && <>: {aiCoachState.recommendation.nextStep}</>} </p><small>{aiCoachState.recommendation.explanation} · Uncertainty: {aiCoachState.recommendation.uncertainty}</small></div><div className="coach-ai-actions"><button className="secondary" type="button" onClick={() => { const task = roadmap.tasks.concat(roadmap.subtasks).find((candidate) => candidate.id === aiCoachState.recommendation.taskId); if (task) { setSelectedProjectId(task.projectId || null); setFocusTaskId(task.id); setView('projects'); } }}>Open task <ChevronRight size={14}/></button>{aiCoachState.recommendation.nextStep && <button className="primary" type="button" onClick={requestCoachApproval}>Apply proposed action <Check size={14}/></button>}<button className="coach-dismiss" type="button" onClick={dismissAiRecommendation}>Dismiss</button></div><small>Validated against the current Focus list. Nothing changes unless you explicitly apply the proposal.</small></div>}
+                {aiCoachState.status === 'applied' && <div className="coach-success" role="status">Coach proposal applied. The task’s next action was updated.</div>}
                 {aiCoachState.status === 'error' && <div className="coach-error" role="alert">AI coaching unavailable: {aiCoachState.error}</div>}
               </section>
               <div className="today-panel">
@@ -674,6 +711,7 @@ function App() {
 
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
     {deferItem && <DeferModal item={deferItem} nextAction={deferNextAction} dueDate={deferDueDate} error={deferError} saving={deferSaving} onNextActionChange={setDeferNextAction} onDueDateChange={setDeferDueDate} onCancel={cancelDefer} onSubmit={submitDefer} />}
+    {coachApproval && <CoachApprovalModal task={coachApproval.task} nextAction={coachApproval.nextAction} error={coachApproval.error} saving={coachApproval.saving} onCancel={() => { if (!coachApproval.saving) setCoachApproval(null); }} onApply={applyCoachApproval} />}
     {showThemeSettings && <ThemeModal theme={theme} onChange={setTheme} onClose={() => setShowThemeSettings(false)} />}
   </div>;
 }
