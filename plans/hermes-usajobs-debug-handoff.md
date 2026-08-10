@@ -1,5 +1,7 @@
 # USAJOBS AI Search Strategy and Results Experience
 
+> **Document status:** reference/historical design · **Scope:** USAJOBS retrieval strategy · **Loading:** read selectively; current implementation and `HERMES_HANDOFF_AI_JOB_SEARCH.md` take precedence.
+
 > **For Hermes/Codex/Cline:** Execute this plan task-by-task. Do not change unrelated Academy, learning, roadmap, executive-coach, or three-pane shell behavior.
 
 **Goal:** Replace the current fragile “keyword search plus local filtering” behavior with a deliberate search pipeline that understands the user's target, uses the USAJOBS API correctly, retrieves a useful candidate pool, ranks it against the user's evidence, and clearly explains why each result was shown.

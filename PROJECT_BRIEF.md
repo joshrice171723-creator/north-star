@@ -1,8 +1,8 @@
 # AI Executive Coach Command Center — Project Brief
 
-> **Read this file first in every new session.** It is the compact, project-wide source of truth. Keep it concise. Detailed vision, decisions, status, and phase scope live in the linked `.hermes/` documents.
+> **Read this file first in every new session.** It is the compact project index. Do not read every linked document; use `.hermes/DOCUMENT_INDEX.md` to select one relevant document.
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-10
 **Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
 
 ## Product identity
@@ -20,7 +20,7 @@ The product is not primarily a learning app. Existing Anthropic certification an
 - **Styles:** `src/styles.css`
 - **Build:** `npm run build`
 - **Desktop production run:** `npm run desktop:prod`
-- **Project branch at documentation reset:** `feat/learning-command-center`
+- **Documentation rule:** This file contains stable rules and navigation, not a session transcript. `.hermes/PROJECT_STATUS.md` contains current verified state.
 
 ## Product vision
 
@@ -38,18 +38,11 @@ The command center should help the user:
 
 Read `.hermes/PRODUCT_VISION.md` for the long-term model and principles.
 
-## Current phase
+## Current work selection
 
-**Release 1 — Personal Execution Foundation → Today View. The roadmap database foundation is complete; the Today View is the bounded objective.**
+The user decides the active objective. The current working tree contains an in-progress job-search change set; for that work, read `HERMES_HANDOFF_AI_JOB_SEARCH.md`. For another task, use `.hermes/DOCUMENT_INDEX.md` and load only the matching reference.
 
-The local Projects + Tasks + Kanban workflow is complete and backed by SQLite in the Electron main process. Phase 3 implements the grounded Today View, which derives prioritized next actions from the persisted roadmap without inventing tasks, duplicating task state, or mutating the roadmap. Advance only the three Today View tasks in phase `AICC-PHA-001`; do not begin coach intelligence, integrations, usage tracking, or unrelated redesign work first.
-
-Read:
-
-- `.hermes/PROJECT_STATUS.md` — current verified state and next board task
-- `.hermes/DECISIONS.md` — durable decisions that should not be reopened casually
-- `.hermes/plans/PHASE-03-release-01-today-view.md` — active implementation boundary
-- `.hermes/handoffs/SESSION_HANDOFF_TEMPLATE.md` — how to start future sessions
+Completed phases and older plans are historical references, not automatic instructions.
 
 ## Must preserve
 
@@ -63,7 +56,7 @@ Read:
 
 ## Non-negotiable safety rules
 
-- Never request, store, expose, or add credentials, cookies, passwords, tokens, authorization headers, or secrets.
+- Never expose credentials, cookies, passwords, authorization headers, or secrets to the renderer, logs, documents, commits, or tool output. Provider credentials may be stored only when explicitly approved, encrypted by the operating system in the Electron main process, and kept out of renderer state and diagnostics.
 - Do not add authentication, cloud sync, scraping, automated crawling, or new network behavior without an explicit approved decision.
 - Do not claim provider-wide API usage unless a real, verified source exists. A safe initial usage tracker may record only requests made by this app.
 - Do not fabricate projects, progress, usage, costs, coach insights, integrations, or official content.
@@ -73,14 +66,15 @@ Read:
 
 ## Working protocol
 
-1. Read this file and all documents linked under the current phase.
+1. Read this file, `.hermes/DOCUMENT_INDEX.md`, git status, and only the task-specific source/docs required.
 2. Inspect the actual source and git state; source code outranks stale notes.
 3. Work on one bounded objective only.
 4. State the smallest safe approach before editing.
-5. Make focused changes and verify them with real execution.
-7. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` when durable state changes.
-8. Update this brief only when the product direction, active phase, constraints, or stable current state changes.
-9. While the SQLite migration is the active priority, stop after database-backed board acceptance and do not silently begin Today/Focus, coaching, integrations, usage tracking, or unrelated redesign.
+5. Make focused changes and validate at meaningful checkpoints.
+6. Do not automatically create tests or run the full suite after every exploratory act. Batch related work; use focused checks for behavior, persistence, networking, security, and shared logic.
+7. Before commit, add/update regression tests for completed behavior and run relevant focused validation. Before merge, run the full applicable verification suite.
+8. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` only when durable state changes.
+9. Update this brief only when product direction, constraints, navigation, or stable current state changes.
 10. Stop when the approved objective is complete. Do not silently begin the next phase.
 
 ## Standard verification

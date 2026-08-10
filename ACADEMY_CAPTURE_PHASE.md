@@ -1,5 +1,7 @@
 # Academy Capture and Study Materials Phase
 
+> **Document status:** completed/reference · **Scope:** Academy capture and study-material tasks only · **Last verified:** 2026-08-05 · **Loading:** do not read for unrelated work.
+
 > **Status:** Phase 4 flashcard review implemented and verified. Unofficial practice exams remain deferred.
 >
 > **Scope:** A new, opt-in feature phase for manually capturing user-requested Academy page text, reviewing saved captures, and eventually creating clearly unofficial study materials from those captures.

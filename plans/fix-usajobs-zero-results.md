@@ -1,5 +1,7 @@
 # Fix USAJOBS Zero-Results Search
 
+> **Document status:** historical plan · **Scope:** prior USAJOBS zero-results investigation · **Loading:** do not read unless tracing that historical issue; verify all claims against current source.
+
 > **For Hermes/Cline:** Execute this plan task-by-task. Do not change unrelated Academy, study-coach, roadmap, or executive-coach behavior.
 
 **Goal:** Make the desktop app reliably accept USAJOBS credentials, search the live USAJOBS API, display returned jobs, and show useful diagnostics when a request or ranking step fails.

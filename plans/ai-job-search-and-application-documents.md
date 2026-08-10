@@ -1,5 +1,7 @@
 # AI Job Search and Application Documents
 
+> **Document status:** reference/design · **Scope:** job-search product requirements · **Loading:** read selectively when requirements or data-model context are needed; do not load by default.
+
 ## Master implementation plan for Cline
 
 **Project:** Claude Architect Study Coach Native / AI executive coach desktop app  

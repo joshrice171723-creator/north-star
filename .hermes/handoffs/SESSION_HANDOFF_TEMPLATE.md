@@ -1,5 +1,7 @@
 # New Session Handoff Template
 
+> **Loading rule:** This template is a prompt, not a command to read the entire documentation tree. Load `PROJECT_BRIEF.md`, `.hermes/DOCUMENT_INDEX.md`, git status, and one relevant task document only.
+
 Copy this prompt into a new session after replacing the bracketed objective.
 
 ```text
@@ -13,26 +15,20 @@ C:\Users\joshr\OneDrive\Desktop\hermes\anthropic-certification
 
 Before making changes:
 
-1. Read PROJECT_BRIEF.md.
-2. Read .hermes/PRODUCT_VISION.md.
-3. Read .hermes/PROJECT_STATUS.md.
-4. Read .hermes/DECISIONS.md.
-5. Read the active phase document under .hermes/plans/.
-6. Inspect git status, recent commits, and the actual source files relevant to this task.
-7. Confirm that the requested work belongs to the active phase.
-
-Current priority:
-Kanban board quality and runtime acceptance. Unless the user explicitly changes priority, do not begin another major capability until the active Phase 2 board acceptance passes.
+1. Read PROJECT_BRIEF.md and .hermes/DOCUMENT_INDEX.md.
+2. Inspect git status and recent commits.
+3. Select and read only the one task document relevant to this objective.
+4. Inspect the actual source and tests relevant to this objective.
+5. Read PRODUCT_VISION.md or DECISIONS.md only when the task requires product direction or a durable architecture decision.
 
 Current objective:
-[ONE bounded Kanban objective. State exactly what should be delivered and what is out of scope.]
 
 Rules:
 
 - Do not start another major feature phase.
 - Preserve existing learning data and behavior.
 - Preserve the native Anthropic Academy pane and resizable desktop shell.
-- Do not request, store, expose, or add credentials, cookies, passwords, tokens, authorization headers, or secrets.
+- Never expose credentials, cookies, passwords, authorization headers, or secrets in renderer state, logs, documents, commits, or tool output. Use approved OS-encrypted main-process storage only when required.
 - Do not add authentication, cloud sync, scraping, crawling, or new network behavior without an explicit approved decision.
 - Do not invent data, usage, costs, coach insights, integrations, or official content.
 - Prefer additive, local-first, reversible changes.
@@ -41,13 +37,14 @@ Rules:
 
 Before finishing:
 
-1. Run the narrowest useful verification.
-2. Run the standard build/syntax/diff checks when code changes.
-3. If UI or Electron behavior changes, run the production desktop app and verify the relevant behavior.
-4. Update .hermes/PROJECT_STATUS.md with the new verified state.
-5. Add a decision to .hermes/DECISIONS.md only if a durable choice was made.
-6. Report what changed, what was preserved, verification results, risks, and the next safest phase.
-7. Stop when this objective is complete.
+1. During exploration, batch related changes and use only the narrowest useful checks.
+2. Do not automatically create tests or run the full suite after every act.
+3. Before commit, add/update regression tests for completed behavior and run focused validation.
+4. Before merge, run the full applicable verification and inspect the final diff.
+5. If UI or Electron behavior changes, run the production desktop app when final validation requires it.
+6. Update .hermes/PROJECT_STATUS.md only when durable verified state changes.
+7. Add a decision to .hermes/DECISIONS.md only for a durable choice.
+8. Report changes, preserved boundaries, verification, risks, and next step. Stop when complete.
 ```
 
 ## Good objective examples

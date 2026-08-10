@@ -1,6 +1,6 @@
 # North Star
 
-A native Electron desktop coach and study workspace for progressing toward the **Claude Certified Architect – Professional (CCAR-P)** credential.
+A native Electron desktop AI Executive Coach Command Center with a protected Learning & Development module for the **Claude Certified Architect – Professional (CCAR-P)** credential.
 
 ## Product scope
 
@@ -12,7 +12,7 @@ North Star is intended to guide the learner through an ordered study path while 
 - App-created practice drills clearly separated from Anthropic content
 - Resizable three-pane workspace with the Anthropic Academy loaded natively on the right
 
-The app does **not** request, collect, or store user credentials.
+The app must not expose credentials in the renderer, logs, documents, commits, or diagnostics. Explicitly approved provider credentials are handled only in the Electron main process and encrypted with OS-backed storage.
 
 ## Development
 
@@ -36,18 +36,19 @@ npm run desktop:prod
 - `src/styles.css` — renderer styling
 - `electron/main.cjs` — Electron main process and native Academy view
 - `electron/preload.cjs` — narrow renderer/main IPC bridge
-- `PROJECT_BRIEF.md` — product source of truth and session handoff
+- `PROJECT_BRIEF.md` — compact project rules and navigation
+- `.hermes/DOCUMENT_INDEX.md` — selective document-loading map
 
 ## Git workflow
 
 - `main` is the stable branch.
 - Use short-lived branches such as `feat/curriculum-progress` or `fix/academy-pane`.
-- Make small commits and verify with `npm run build` before opening a pull request.
+- Make small commits. For exploratory work, do not create/run tests after every act; use risk-based checkpoints. Before merge, run the full applicable verification.
 - Do not commit `node_modules`, `dist`, local secrets, or user data.
 
 ## Status
 
-The local Projects + Tasks + Kanban workflow is the top implementation priority. The baseline is implemented; next work is runtime acceptance and board-focused fixes only. See `PROJECT_BRIEF.md` and `.hermes/plans/PHASE-02-projects-tasks-kanban.md` for the current boundary and verification requirements.
+The active objective is selected by the user. Read `PROJECT_BRIEF.md`, then `.hermes/DOCUMENT_INDEX.md`; do not infer priority from this README or load every plan.
 
 ## License
 

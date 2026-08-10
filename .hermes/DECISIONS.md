@@ -20,15 +20,15 @@ Record decisions that future sessions should not casually reopen. If a decision 
 
 **Status:** Active
 **Decision:** Keep the application local-first unless a future phase explicitly approves a backend, sync, or external integration.
-**Reason:** Privacy, reliability, and reduced architectural risk.
-**Consequence:** New data should use versioned local persistence with clear ownership and rollback behavior.
+## D004 — Credential boundary
 
-## D004 — No credentials in the app
+**Status:** Active
 
-**Status:** Inactive
-**Decision:** Do not request, store, expose, or add credentials, cookies, passwords, authorization headers, or secrets.
-**Reason:** This is a non-negotiable privacy and security boundary.
-**Consequence:** Any provider integration requiring credentials must stop for an explicit architecture/security decision.
+**Decision:** Never expose credentials, cookies, passwords, authorization headers, or secrets to the renderer, logs, documents, commits, diagnostics, or provider-facing model context. Explicitly approved provider credentials may be stored only in the Electron main process using OS-backed encryption and may be used only for the approved provider request.
+
+**Reason:** Provider integrations require a secure boundary, while the renderer and project artifacts must remain credential-free.
+
+**Consequence:** Credential-bearing integrations require explicit approval, safe-storage availability, redacted status/diagnostics, and a documented removal path. Academy credentials and session secrets remain prohibited.
 
 ## D005 — Coach permissions
 
