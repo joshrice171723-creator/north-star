@@ -1,9 +1,13 @@
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage } = require('electron');
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { createDatabase } = require('./database.cjs');
+const { searchJobs, testUsaJobs } = require('./job-search.cjs');
+const { testAdzuna } = require('./adzuna-provider.cjs');
+const { rankJobs } = require('./job-matcher.cjs');
+const { createSearchPlan } = require('./job-search-planner.cjs');
 
 // Load local development secrets without bundling them into the renderer or source.
 // The project .env file is gitignored; existing process environment variables win.
@@ -24,6 +28,11 @@ let academyView;
 let academyVisible = true;
 let academyLayout = null;
 let coachDatabase;
+const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
+function readJobSourceCredentials() { try { const stored = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); const decrypt = (value) => value && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(value, 'base64')) : ''; return { usajobsEmail: stored.usajobsEmail || '', usajobsApiKey: decrypt(stored.usajobsApiKey), adzunaAppId: decrypt(stored.adzunaAppId), adzunaApiKey: decrypt(stored.adzunaApiKey) }; } catch { return { usajobsEmail: '', usajobsApiKey: '', adzunaAppId: '', adzunaApiKey: '' }; } }
+function saveJobSourceCredentials(input = {}) { const email = typeof input.usajobsEmail === 'string' ? input.usajobsEmail.trim().slice(0, 300) : ''; const usaKey = typeof input.usajobsApiKey === 'string' ? input.usajobsApiKey.trim().slice(0, 500) : ''; const appId = typeof input.adzunaAppId === 'string' ? input.adzunaAppId.trim().slice(0, 300) : ''; const adzunaKey = typeof input.adzunaApiKey === 'string' ? input.adzunaApiKey.trim().slice(0, 500) : ''; if ((!email || !usaKey) && (!appId || !adzunaKey)) throw new Error('Enter a complete USAJOBS or Adzuna credential pair.'); if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable on this system.'); const existing = readJobSourceCredentials(); const encrypt = (value) => value ? safeStorage.encryptString(value).toString('base64') : ''; fs.writeFileSync(jobSourceCredentialsPath(), JSON.stringify({ usajobsEmail: email || existing.usajobsEmail, usajobsApiKey: encrypt(usaKey || existing.usajobsApiKey), adzunaAppId: encrypt(appId || existing.adzunaAppId), adzunaApiKey: encrypt(adzunaKey || existing.adzunaApiKey) }), { mode: 0o600 }); return jobSourceStatus(); }
+function clearJobSourceCredentials() { try { fs.rmSync(jobSourceCredentialsPath(), { force: true }); } catch {} return { configured: false, email: '', adzunaConfigured: false }; }
+function jobSourceStatus() { const credentials = readJobSourceCredentials(); return { configured: Boolean(credentials.usajobsEmail && credentials.usajobsApiKey), email: credentials.usajobsEmail, adzunaConfigured: Boolean(credentials.adzunaAppId && credentials.adzunaApiKey) }; }
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
   path.resolve(__dirname, '../../canonical-ai-executive-coach-roadmap.csv'),
@@ -75,7 +84,7 @@ async function openRouterChat(messages, options = {}) {
         'HTTP-Referer': 'https://anthropic.skilljar.com/',
         'X-Title': 'Claude Architect Study Coach'
       },
-      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: OPENROUTER_MAX_OUTPUT_TOKENS })
+      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: Math.min(Number(options.max_tokens) || OPENROUTER_MAX_OUTPUT_TOKENS, 5000) })
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };
@@ -489,6 +498,15 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:jobs:create', (_event, input) => coachDatabase.jobs.create(validateJobRecord(input)));
   ipcMain.handle('coach:jobs:update', (_event, input) => coachDatabase.jobs.update(validateJobRecord(input)));
   ipcMain.handle('coach:jobs:delete', (_event, id) => coachDatabase.jobs.delete(validateCoachDeleteId(id, 'job')));
+  ipcMain.handle('jobs:profile:get', () => coachDatabase.profiles.getCurrent());
+  ipcMain.handle('jobs:profile:save', (_event, input) => coachDatabase.profiles.upsert(input));
+  ipcMain.handle('jobs:resume:get', () => coachDatabase.resumes.getMaster());
+  ipcMain.handle('jobs:resume:save', (_event, input) => coachDatabase.resumes.upsertMaster(input));
+  ipcMain.handle('jobs:source:get', () => jobSourceStatus());
+  ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
+  ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());
+  ipcMain.handle('jobs:source:test', async () => { const credentials = readJobSourceCredentials(); const results = []; if (credentials.usajobsEmail && credentials.usajobsApiKey) results.push({ provider: 'USAJOBS', ...(await testUsaJobs(credentials)) }); if (credentials.adzunaAppId && credentials.adzunaApiKey) results.push({ provider: 'Adzuna', ...(await testAdzuna(credentials)) }); return results.length === 1 ? results[0] : { ok: results.every((result) => result.ok), results }; });
+  ipcMain.handle('jobs:search', async () => { const profile = coachDatabase.profiles.getCurrent(); const resume = coachDatabase.resumes.getMaster(); if (!profile?.targetRoles?.length && !profile?.targetLocations?.length && !profile?.interests?.length) return { ok: false, error: 'Add a target role, location, or interest to your profile first.' }; const plan = await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: openRouterChat }); const found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan }); if (found.error && !found.jobs.length) return { ok: false, ...found.error, ...found, searchPlan: plan }; let ranked = []; let rankingStatus = 'not_run'; if (found.jobs.length) { try { ranked = await rankJobs({ jobs: found.jobs, profile, resume, openRouter: openRouterChat }); rankingStatus = ranked.length ? 'available' : 'fallback'; } catch { ranked = []; rankingStatus = 'unavailable'; } } return { ok: true, ...found, jobs: found.jobs, matches: ranked, searchPlan: plan, ranking: { status: rankingStatus } }; });
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
 }
 

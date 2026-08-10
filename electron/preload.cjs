@@ -33,4 +33,13 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,createJob: (input) => ipcRenderer.invoke('coach:jobs:create', input)
   ,updateJob: (input) => ipcRenderer.invoke('coach:jobs:update', input)
   ,deleteJob: (id) => ipcRenderer.invoke('coach:jobs:delete', id)
+  ,getJobProfile: () => ipcRenderer.invoke('jobs:profile:get')
+  ,saveJobProfile: (input) => ipcRenderer.invoke('jobs:profile:save', input)
+  ,getMasterResume: () => ipcRenderer.invoke('jobs:resume:get')
+  ,saveMasterResume: (input) => ipcRenderer.invoke('jobs:resume:save', input)
+  ,searchJobs: () => ipcRenderer.invoke('jobs:search')
+  ,getJobSource: () => ipcRenderer.invoke('jobs:source:get')
+  ,saveJobSource: (input) => ipcRenderer.invoke('jobs:source:save', input)
+  ,clearJobSource: () => ipcRenderer.invoke('jobs:source:clear')
+  ,testJobSource: () => ipcRenderer.invoke('jobs:source:test')
 });
