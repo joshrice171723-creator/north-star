@@ -7,7 +7,9 @@ const { createDatabase } = require('./database.cjs');
 const { searchJobs, testUsaJobs } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
-const { createSearchPlan } = require('./job-search-planner.cjs');
+const { createSearchPlan, fallbackPlan } = require('./job-search-planner.cjs');
+const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
+installApiAuditFetch();
 
 // Load local development secrets without bundling them into the renderer or source.
 // The project .env file is gitignored; existing process environment variables win.
@@ -29,10 +31,47 @@ let academyVisible = true;
 let academyLayout = null;
 let coachDatabase;
 const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
-function readJobSourceCredentials() { try { const stored = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); const decrypt = (value) => value && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(value, 'base64')) : ''; return { usajobsEmail: stored.usajobsEmail || '', usajobsApiKey: decrypt(stored.usajobsApiKey), adzunaAppId: decrypt(stored.adzunaAppId), adzunaApiKey: decrypt(stored.adzunaApiKey) }; } catch { return { usajobsEmail: '', usajobsApiKey: '', adzunaAppId: '', adzunaApiKey: '' }; } }
-function saveJobSourceCredentials(input = {}) { const email = typeof input.usajobsEmail === 'string' ? input.usajobsEmail.trim().slice(0, 300) : ''; const usaKey = typeof input.usajobsApiKey === 'string' ? input.usajobsApiKey.trim().slice(0, 500) : ''; const appId = typeof input.adzunaAppId === 'string' ? input.adzunaAppId.trim().slice(0, 300) : ''; const adzunaKey = typeof input.adzunaApiKey === 'string' ? input.adzunaApiKey.trim().slice(0, 500) : ''; if ((!email || !usaKey) && (!appId || !adzunaKey)) throw new Error('Enter a complete USAJOBS or Adzuna credential pair.'); if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable on this system.'); const existing = readJobSourceCredentials(); const encrypt = (value) => value ? safeStorage.encryptString(value).toString('base64') : ''; fs.writeFileSync(jobSourceCredentialsPath(), JSON.stringify({ usajobsEmail: email || existing.usajobsEmail, usajobsApiKey: encrypt(usaKey || existing.usajobsApiKey), adzunaAppId: encrypt(appId || existing.adzunaAppId), adzunaApiKey: encrypt(adzunaKey || existing.adzunaApiKey) }), { mode: 0o600 }); return jobSourceStatus(); }
-function clearJobSourceCredentials() { try { fs.rmSync(jobSourceCredentialsPath(), { force: true }); } catch {} return { configured: false, email: '', adzunaConfigured: false }; }
-function jobSourceStatus() { const credentials = readJobSourceCredentials(); return { configured: Boolean(credentials.usajobsEmail && credentials.usajobsApiKey), email: credentials.usajobsEmail, adzunaConfigured: Boolean(credentials.adzunaAppId && credentials.adzunaApiKey) }; }
+function readStoredJobSourceCredentials() { try { const parsed = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
+function readJobSourceCredentials() {
+  const stored = readStoredJobSourceCredentials();
+  const result = { usajobsEmail: stored.usajobsEmail || '', usajobsApiKey: '', adzunaAppId: '', adzunaApiKey: '' };
+  if (!safeStorage.isEncryptionAvailable()) return result;
+  try { result.usajobsApiKey = stored.usajobsApiKey ? safeStorage.decryptString(Buffer.from(stored.usajobsApiKey, 'base64')) : ''; } catch {}
+  try { result.adzunaAppId = stored.adzunaAppId ? safeStorage.decryptString(Buffer.from(stored.adzunaAppId, 'base64')) : ''; } catch {}
+  try { result.adzunaApiKey = stored.adzunaApiKey ? safeStorage.decryptString(Buffer.from(stored.adzunaApiKey, 'base64')) : ''; } catch {}
+  return result;
+}
+function saveJobSourceCredentials(input = {}) {
+  const stored = readStoredJobSourceCredentials();
+  const email = typeof input.usajobsEmail === 'string' ? input.usajobsEmail.trim().slice(0, 300) : '';
+  const usaKey = typeof input.usajobsApiKey === 'string' ? input.usajobsApiKey.trim().slice(0, 500) : '';
+  const appId = typeof input.adzunaAppId === 'string' ? input.adzunaAppId.trim().slice(0, 300) : '';
+  const adzunaKey = typeof input.adzunaApiKey === 'string' ? input.adzunaApiKey.trim().slice(0, 500) : '';
+  if (!safeStorage.isEncryptionAvailable() && (!stored.usajobsApiKey || !stored.adzunaAppId || !stored.adzunaApiKey) && (!usaKey || !appId || !adzunaKey)) throw new Error('Secure credential storage is unavailable. Existing encrypted credentials were not changed; restart the app before saving.');
+  const existing = readJobSourceCredentials();
+  if ((!email && !stored.usajobsEmail) && (!usaKey && !existing.usajobsApiKey) && (!appId && !existing.adzunaAppId) && (!adzunaKey && !existing.adzunaApiKey)) throw new Error('Enter a complete USAJOBS or Adzuna credential pair.');
+  const encrypt = (value) => value ? safeStorage.encryptString(value).toString('base64') : '';
+  const next = {
+    usajobsEmail: email || stored.usajobsEmail || existing.usajobsEmail || '',
+    usajobsApiKey: usaKey ? encrypt(usaKey) : (stored.usajobsApiKey || ''),
+    adzunaAppId: appId ? encrypt(appId) : (stored.adzunaAppId || ''),
+    adzunaApiKey: adzunaKey ? encrypt(adzunaKey) : (stored.adzunaApiKey || ''),
+  };
+  const destination = jobSourceCredentialsPath();
+  const temporary = `${destination}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, JSON.stringify(next), { mode: 0o600 });
+  fs.renameSync(temporary, destination);
+  return jobSourceStatus();
+}
+function clearJobSourceCredentials() { try { fs.rmSync(jobSourceCredentialsPath(), { force: true }); } catch {} return { configured: false, email: '', adzunaConfigured: false, credentialsPresent: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+function jobSourceStatus() {
+  const stored = readStoredJobSourceCredentials();
+  const credentials = readJobSourceCredentials();
+  const secureStorageAvailable = safeStorage.isEncryptionAvailable();
+  const encryptedFieldsPresent = Boolean(stored.usajobsApiKey || stored.adzunaAppId || stored.adzunaApiKey);
+  const decryptionFailed = encryptedFieldsPresent && secureStorageAvailable && Boolean((stored.usajobsApiKey && !credentials.usajobsApiKey) || (stored.adzunaAppId && !credentials.adzunaAppId) || (stored.adzunaApiKey && !credentials.adzunaApiKey));
+  return { configured: Boolean(credentials.usajobsEmail && credentials.usajobsApiKey), email: credentials.usajobsEmail || stored.usajobsEmail || '', adzunaConfigured: Boolean(credentials.adzunaAppId && credentials.adzunaApiKey), credentialsPresent: encryptedFieldsPresent, secureStorageAvailable, decryptionFailed, warning: encryptedFieldsPresent && (!secureStorageAvailable || decryptionFailed) ? 'Encrypted credentials are present, but secure storage is unavailable or could not decrypt them. Your keys were not deleted; restart the app before saving.' : '' };
+}
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
   path.resolve(__dirname, '../../canonical-ai-executive-coach-roadmap.csv'),
@@ -52,7 +91,6 @@ const academyStudyReviewPath = () => path.join(app.getPath('userData'), 'academy
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-5.6-luna-pro';
 const OPENROUTER_MAX_MESSAGES = 100;
-const OPENROUTER_MAX_MESSAGE_BYTES = 256 * 1024;
 const OPENROUTER_MAX_OUTPUT_TOKENS = 700;
 const OPENROUTER_TIMEOUT_MS = 45_000;
 
@@ -60,8 +98,6 @@ function validateOpenRouterMessages(messages) {
   if (!Array.isArray(messages) || !messages.length || messages.length > OPENROUTER_MAX_MESSAGES) {
     throw new Error('OpenRouter requires between 1 and 100 messages.');
   }
-  const serialized = JSON.stringify(messages);
-  if (Buffer.byteLength(serialized, 'utf8') > OPENROUTER_MAX_MESSAGE_BYTES) throw new Error('OpenRouter messages exceed the 256 KB limit.');
   if (messages.some((message) => !message || !['system', 'user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || !message.content.trim())) {
     throw new Error('OpenRouter messages must contain a valid role and non-empty text content.');
   }
@@ -74,6 +110,7 @@ async function openRouterChat(messages, options = {}) {
   const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : (process.env.OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
+  setAuditPurpose(options.auditPurpose || 'openrouter');
   try {
     const response = await fetch(OPENROUTER_ENDPOINT, {
       method: 'POST',
@@ -84,7 +121,7 @@ async function openRouterChat(messages, options = {}) {
         'HTTP-Referer': 'https://anthropic.skilljar.com/',
         'X-Title': 'Claude Architect Study Coach'
       },
-      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: Math.min(Number(options.max_tokens) || OPENROUTER_MAX_OUTPUT_TOKENS, 5000) })
+      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: Math.min(Number(options.max_tokens) || OPENROUTER_MAX_OUTPUT_TOKENS, 5000), ...(options.response_format ? { response_format: options.response_format } : {}) })
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };
@@ -93,6 +130,7 @@ async function openRouterChat(messages, options = {}) {
     return { ok: false, error: error?.name === 'AbortError' ? 'OpenRouter request timed out.' : (error?.message || 'OpenRouter request failed.') };
   } finally {
     clearTimeout(timeout);
+    setAuditPurpose('job-search');
   }
 }
 
@@ -506,7 +544,104 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());
   ipcMain.handle('jobs:source:test', async () => { const credentials = readJobSourceCredentials(); const results = []; if (credentials.usajobsEmail && credentials.usajobsApiKey) results.push({ provider: 'USAJOBS', ...(await testUsaJobs(credentials)) }); if (credentials.adzunaAppId && credentials.adzunaApiKey) results.push({ provider: 'Adzuna', ...(await testAdzuna(credentials)) }); return results.length === 1 ? results[0] : { ok: results.every((result) => result.ok), results }; });
-  ipcMain.handle('jobs:search', async () => { const profile = coachDatabase.profiles.getCurrent(); const resume = coachDatabase.resumes.getMaster(); if (!profile?.targetRoles?.length && !profile?.targetLocations?.length && !profile?.interests?.length) return { ok: false, error: 'Add a target role, location, or interest to your profile first.' }; const plan = await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: openRouterChat }); const found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan }); if (found.error && !found.jobs.length) return { ok: false, ...found.error, ...found, searchPlan: plan }; let ranked = []; let rankingStatus = 'not_run'; if (found.jobs.length) { try { ranked = await rankJobs({ jobs: found.jobs, profile, resume, openRouter: openRouterChat }); rankingStatus = ranked.length ? 'available' : 'fallback'; } catch { ranked = []; rankingStatus = 'unavailable'; } } return { ok: true, ...found, jobs: found.jobs, matches: ranked, searchPlan: plan, ranking: { status: rankingStatus } }; });
+  ipcMain.handle('jobs:search:attempts', (_event, runId) => coachDatabase.listJobSearchAttempts(String(runId || '').slice(0, 160)));
+  ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
+  ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
+  setAuditPersistence((entry) => coachDatabase.recordApiCall(entry));
+  ipcMain.handle('jobs:search', async () => {
+    const profile = coachDatabase.profiles.getCurrent();
+    const resume = coachDatabase.resumes.getMaster();
+    if (!profile?.targetRoles?.length && !profile?.targetLocations?.length && !profile?.interests?.length) return { ok: false, needsProfile: true, error: 'Add a target role, location, or interest to your profile first.' };
+    const runId = coachDatabase.createJobSearchRun();
+    setAuditRun(runId);
+    let plan;
+    try {
+      plan = process.env.HERMES_AI_SEARCH_PLANNING === 'true'
+        ? await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'planning' }) })
+        : fallbackPlan(profile, resume);
+    } catch (cause) {
+      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning: cause?.message || 'AI search planning failed.' });
+      clearAuditRun();
+      throw cause;
+    }
+    const diagnostics = {
+      record: ({ provider, lane, scope, result, request }) => coachDatabase.recordJobSearchAttempt({
+        runId,
+        provider,
+        laneId: lane.laneId,
+        query: result.diagnostics?.query || lane.what || lane.positionTitle || lane.keyword,
+        location: scope.locationName,
+        request,
+        httpStatus: result.diagnostics?.httpStatus,
+        resultCount: result.resultCount,
+        totalAvailable: result.totalAvailable,
+        durationMs: result.diagnostics?.durationMs,
+        errorCode: result.error?.code,
+        errorMessage: result.error?.message,
+        errorDetail: result.diagnostics?.errorSummary,
+        preview: result.jobs,
+      }),
+    };
+    let found;
+    try {
+      found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan, diagnostics });
+    } catch (cause) {
+      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning: cause?.message || 'Search failed.' });
+      clearAuditRun();
+      throw cause;
+    }
+    const attempts = coachDatabase.listJobSearchAttempts(runId);
+    found.diagnostics = { ...found.diagnostics, runId, attempts };
+    found.attemptsDiagnostics = attempts;
+    if (found.error && !found.jobs.length) {
+      coachDatabase.finishJobSearchRun(runId, { status: 'failed', resultCount: 0, warning: found.warning || found.error.message || 'No jobs were returned.' });
+      const apiCalls = coachDatabase.listApiCalls(runId);
+      clearAuditRun();
+      return { ok: false, ...found, searchPlan: plan, apiCalls };
+    }
+    let ranked = [];
+    let rankingStatus = 'not_run';
+    let rankingError = null;
+    if (found.jobs.length) {
+      try {
+        const reportRankingProgress = (batch) => {
+          coachDatabase.recordJobSearchRankingBatch({ runId, ...batch });
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('jobs:search:progress', { runId, ...batch });
+        };
+        ranked = await rankJobs({ jobs: found.jobs, profile, resume, onBatch: reportRankingProgress, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'ranking' }) });
+        rankingStatus = ranked.length ? 'available' : 'unavailable';
+      } catch (cause) {
+        rankingError = { code: cause?.code || 'ai_ranking_failed', message: cause?.message || 'AI job ranking failed.', diagnostics: cause?.rankingDiagnostics || null };
+        rankingStatus = 'unavailable';
+        // Retrieval already produced usable jobs. Do not throw them away when the
+        // optional AI selector times out, returns incomplete JSON, or fails.
+        ranked = found.jobs.map((job) => ({
+          job,
+          externalId: job.externalId,
+          fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null,
+          scoreType: 'retrieval',
+          fitTier: 'retrieval match',
+          strengths: job.searchEvidence?.positionTitleQuery ? [`Title: ${job.searchEvidence.positionTitleQuery}`] : [],
+          gaps: ['AI ranking was unavailable; review the announcement manually.'],
+          unknowns: [],
+          reasoning: 'Retrieved successfully. AI ranking was unavailable, so this result is shown using the deterministic retrieval score.',
+        }));
+      }
+    }
+    const shownByProvider = ranked.reduce((counts, entry) => { const provider = entry.job?.providerKey; if (provider) counts[provider] = (counts[provider] || 0) + 1; return counts; }, {});
+    const rankingProviderCounts = rankingError?.diagnostics?.providerCounts || ranked.rankingDiagnostics?.providerCounts || {};
+    const sourceStats = (found.sourceStats || []).map((source) => { const rankingCounts = rankingProviderCounts[source.key] || {}; return { ...source, aiSubmitted: rankingCounts.submitted ?? found.jobs.filter((job) => job.providerKey === source.key).length, aiAssessed: rankingCounts.assessed || 0, aiReturned: rankingCounts.returned || 0, relevant: rankingCounts.submitted ?? found.jobs.filter((job) => job.providerKey === source.key).length, shown: shownByProvider[source.key] || 0 }; });
+    const relevantCount = found.jobs.length;
+    const warning = rankingError
+      ? [found.warning, 'AI ranking was unavailable; showing retrieved jobs using deterministic scores.'].filter(Boolean).join(' ')
+      : found.warning;
+    coachDatabase.finishJobSearchRun(runId, { resultCount: found.jobs?.length || 0, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
+    const apiCalls = coachDatabase.listApiCalls(runId);
+    const rankingBatches = coachDatabase.listJobSearchRankingBatches(runId);
+    clearAuditRun();
+    const rankingDiagnostics = ranked.rankingDiagnostics || rankingError?.diagnostics || null;
+    return { ok: true, ...found, sourceStats, warning, jobs: found.jobs, matches: ranked, searchPlan: plan, apiCalls, rankingBatches, counts: { ...found.counts, relevant: relevantCount, aiSubmitted: relevantCount, ranked: rankingDiagnostics?.assessedCount || 0, returned: rankingDiagnostics?.returnedCount || ranked.length }, ranking: { status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics } };
+  });
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
 }
 

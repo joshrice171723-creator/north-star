@@ -19,6 +19,11 @@ function withDatabase(run) {
 const emptyPayload = () => ({ projects: [], releases: [], phases: [], tasks: [], subtasks: [] });
 
 test('workspace writes reject a supplied parent and persist a root record', () => withDatabase((database) => {
+  assert.equal(typeof database.bootstrap, 'function');
+  assert.equal(typeof database.syncRoadmap, 'function');
+  assert.equal(typeof database.importRoadmap, 'function');
+  assert.equal(typeof database.saveNote, 'function');
+  assert.equal(typeof database.backup, 'function');
   assert.throws(
     () => database.workspaces.create({ id: 'workspace-nested-attempt', kind: 'workspace', title: 'Nested attempt', parentId: 'other-workspace' }),
     /workspace cannot have a parent/

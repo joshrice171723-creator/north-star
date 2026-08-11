@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createSearchPlan, parsePlannerResponse, fallbackPlan } = require('../electron/job-search-planner.cjs');
+const { createSearchPlan, parsePlannerResponse, parseSearchBriefResponse, fallbackPlan } = require('../electron/job-search-planner.cjs');
 const { filterJobs } = require('../electron/job-search.cjs');
 
 test('planner accepts structured AI output and preserves user exclusions', () => {
@@ -13,7 +13,9 @@ test('planner fallback creates related queries instead of using one raw target p
   const plan = fallbackPlan({ targetRoles: ['AI FDW'], targetIndustries: ['technology'], interests: ['automation'] });
   assert.ok(plan.searchQueries.length >= 2);
   assert.ok(plan.excludedTerms.includes('aviation'));
-  assert.ok(plan.providerQueries.includes('IT Specialist'));
+  assert.ok(plan.providerQueries.usajobs.some((lane) => lane.positionTitle === 'IT Specialist'));
+  assert.ok(plan.providerQueries.adzuna.length > 0);
+  assert.equal(plan.source, 'deterministic-fallback');
 });
 
 test('provider filter removes excluded aviation listings before ranking', () => {
@@ -40,14 +42,104 @@ test('provider filter accepts common USAJOBS AI and technical title variants', (
   ]);
 });
 
-test('planner uses AI output when available', async () => {
-  const plan = await createSearchPlan({ profile: { targetRoles: ['AI FDW'] }, resume: { rawText: 'cloud architecture and automation' }, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ interpretation: 'AI architecture', jobTypes: ['AI Architect'], searchQueries: ['AI architect'], excludedTerms: ['aviation'] }) } }) });
+test('planner uses nested AI output and preserves all provider queries', async () => {
+  const plan = await createSearchPlan({ profile: { targetRoles: ['AI FDW'] }, resume: { rawText: 'cloud architecture and automation' }, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ searchBrief: { interpretation: 'AI architecture', jobFamilies: ['AI Architect'], searchQueries: ['AI architect'], exclusions: ['aviation'] }, providerQueries: { usajobs: [{ laneId: 'usa-1', type: 'position-title', positionTitle: 'Computer Scientist' }], adzuna: [{ laneId: 'adzuna-1', what: 'AI architect', where: 'Dallas, TX' }], remotive: [{ laneId: 'remotive-1', search: 'AI architect', limit: 50 }], arbeitnow: [{ laneId: 'arbeitnow-1', searchTerms: ['AI architect'], maxPages: 1 }] } }) } }) });
   assert.equal(plan.source, 'ai');
   assert.deepEqual(plan.searchQueries, ['AI architect']);
+  assert.equal(plan.providerQueries.usajobs[0].positionTitle, 'Computer Scientist');
+  assert.equal(plan.adzunaQueries[0].what, 'AI architect');
+  assert.equal(plan.publicQueries.remotive[0].search, 'AI architect');
+  assert.deepEqual(plan.publicQueries.arbeitnow[0].searchTerms, ['AI architect']);
+});
+
+test('planner accepts object content and a short wrapper sentence', () => {
+  const response = {
+    ok: true,
+    message: {
+      content: { text: `Here is the plan:\n${JSON.stringify({
+        searchBrief: { jobFamilies: ['AI Engineer'] },
+        providerQueries: {
+          usajobs: [{ positionTitle: 'Computer Scientist' }],
+          adzuna: [{ what: 'AI Engineer' }],
+          remotive: [{ search: 'AI Engineer' }],
+          arbeitnow: [{ searchTerms: ['AI Engineer'] }],
+        },
+      })}` },
+    },
+  };
+  const plan = parseSearchBriefResponse(response, { targetRoles: ['AI Engineer'] });
+  assert.equal(plan.providerQueries.usajobs[0].positionTitle, 'Computer Scientist');
+});
+
+test('planner rejects an AI response that omits a provider query set', async () => {
+  await assert.rejects(() => createSearchPlan({ profile: { targetRoles: ['AI engineer'] }, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ searchBrief: { jobFamilies: ['AI engineer'] }, providerQueries: { usajobs: [{ positionTitle: 'Computer Scientist' }] } }) } }) }), /adzuna.*at least one AI-generated query/i);
 });
 
 test('AI planner preserves provider-compatible queries separately from conceptual queries', () => {
   const plan = parsePlannerResponse({ ok: true, message: { content: JSON.stringify({ interpretation: 'AI engineering', jobTypes: ['AI Engineer'], searchQueries: ['Applied AI Engineer'], providerQueries: ['IT Specialist', 'Computer Scientist', 'Artificial Intelligence'], excludedTerms: [] }) } }, {});
   assert.deepEqual(plan.searchQueries, ['Applied AI Engineer']);
   assert.deepEqual(plan.providerQueries, ['IT Specialist', 'Computer Scientist', 'Artificial Intelligence']);
+});
+
+test('planner accepts fenced JSON and content-part responses', () => {
+  const response = {
+    ok: true,
+    message: {
+      content: [
+        { type: 'text', text: '```json\n' },
+        { type: 'text', text: JSON.stringify({ searchBrief: { jobFamilies: ['AI Engineer'] }, providerQueries: {
+          usajobs: [{ positionTitle: 'Computer Scientist' }],
+          adzuna: [{ what: 'AI Engineer' }],
+          remotive: [{ search: 'AI Engineer' }],
+          arbeitnow: [{ searchTerms: ['AI Engineer'] }],
+        } }) },
+        { type: 'text', text: '\n```' },
+      ],
+    },
+  };
+  const plan = parseSearchBriefResponse(response, { targetRoles: ['AI Engineer'] });
+  assert.equal(plan.providerQueries.usajobs[0].positionTitle, 'Computer Scientist');
+  assert.equal(plan.providerQueries.remotive[0].search, 'AI Engineer');
+});
+
+test('planner preserves the OpenRouter error when planning fails', async () => {
+  await assert.rejects(
+    () => createSearchPlan({ profile: { targetRoles: ['AI engineer'] }, openRouter: async () => ({ ok: false, error: 'OpenRouter request failed (401).' }) }),
+    /AI search planning failed.*OpenRouter request failed \(401\)/,
+  );
+});
+
+test('planner retries once after truncated JSON and accepts the repaired plan', async () => {
+  let calls = 0;
+  const valid = { searchBrief: { jobFamilies: ['AI Engineer'] }, providerQueries: {
+    usajobs: [{ type: 'position-title', positionTitle: 'Computer Scientist' }],
+    adzuna: [{ what: 'AI Engineer' }],
+    remotive: [{ search: 'AI Engineer' }],
+    arbeitnow: [{ searchTerms: ['AI Engineer'] }],
+  } };
+  const plan = await createSearchPlan({ profile: { targetRoles: ['AI Engineer'] }, openRouter: async () => {
+    calls += 1;
+    return calls === 1
+      ? { ok: true, message: { content: '{"searchBrief":{"jobFamilies":["AI Engineer"]}' }, finishReason: 'length' }
+      : { ok: true, message: { content: JSON.stringify(valid) } };
+  } });
+  assert.equal(calls, 2);
+  assert.equal(plan.source, 'ai');
+  assert.equal(plan.providerQueries.adzuna[0].what, 'AI Engineer');
+});
+
+test('planner rejects an incomplete response after one repair attempt', async () => {
+  let calls = 0;
+  await assert.rejects(
+    () => createSearchPlan({ profile: { targetRoles: ['AI Engineer'] }, openRouter: async () => { calls += 1; return { ok: true, message: { content: '{"searchBrief":' } }; } }),
+    /AI search planning failed.*not valid planner JSON/i,
+  );
+  assert.equal(calls, 2);
+});
+
+test('planner extracts JSON when braces appear inside quoted strings', () => {
+  const plan = parseSearchBriefResponse({ ok: true, message: { content: `prefix ${JSON.stringify({ searchBrief: { jobFamilies: ['AI Engineer'], interpretation: 'Build {safe} systems' }, providerQueries: {
+    usajobs: [{ positionTitle: 'Computer Scientist' }], adzuna: [{ what: 'AI Engineer' }], remotive: [{ search: 'AI Engineer' }], arbeitnow: [{ searchTerms: ['AI Engineer'] }],
+  } })} suffix` } }, { targetRoles: ['AI Engineer'] });
+  assert.equal(plan.interpretation, 'Build {safe} systems');
 });
