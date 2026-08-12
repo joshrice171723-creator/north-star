@@ -2,6 +2,10 @@ const USAJOBS_URL = 'https://data.usajobs.gov/api/search';
 const ZIP_LOOKUP_URL = 'https://api.zippopotam.us/us/';
 const MAX_REQUESTS = 24;
 const MAX_RESULTS_PER_REQUEST = 50;
+const TARGET_RETRIEVAL_COUNT = 100;
+const TARGET_TOP_COUNT = 20;
+const TARGET_QUALIFIED_COUNT = 20;
+const MAX_PROVIDER_REQUESTS = 5;
 const { searchAdzuna } = require('./adzuna-provider.cjs');
 const { searchRemotive, searchArbeitnow } = require('./public-job-providers.cjs');
 const timeoutFetch = async (url, options = {}, timeoutMs = 15000) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { return await fetch(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); } };
@@ -83,18 +87,139 @@ function expandSearchAliases(value) { return normalizeMatchText(value).replace(/
 function calculateRetrievalScore(job, brief = {}) { if (matchesHardExclusion(job, brief.exclusions || brief.excludedTerms)) return -1; const title = expandSearchAliases(job.title); const body = expandSearchAliases(`${job.description} ${job.duties} ${job.qualifications} ${(job.requirements || []).join(' ')}`); const families = list(brief.jobFamilies || brief.jobTypes || brief.searchQueries, 12).map(expandSearchAliases); const must = list(brief.mustHaveSkills, 12).map(expandSearchAliases); const nice = list(brief.niceToHaveSkills, 12).map(expandSearchAliases); const domainHit = /\b(artificial intelligence|machine learning|generative ai|natural language processing|software|computer|data)\b/.test(title); const technicalTitle = /\b(engineer|scientist|architect|specialist|developer|researcher|analyst|technologist|programmer|computer|software|data|systems)\b/.test(title); const descriptionDomainHit = /\b(artificial intelligence|machine learning|generative ai|natural language processing|software|computer|data)\b/.test(body); const titleScore = Math.max(families.reduce((best, family) => Math.max(best, family && title.includes(family) ? 39 : family.split(' ').filter((word) => word.length > 2 && title.includes(word)).length >= 2 ? 28 : 0), 0), technicalTitle && domainHit && descriptionDomainHit ? 28 : 0); const skillScore = Math.min(22, must.filter((skill) => skill && body.includes(skill)).length * 9 + nice.filter((skill) => skill && body.includes(skill)).length * 4); const hasCoreSignal = titleScore > 0 || skillScore > 0 || (technicalTitle && domainHit && descriptionDomainHit); if (!hasCoreSignal) return 0; const locationScore = !brief.locations?.length || brief.remotePreference === 'remote' || brief.locations.some((loc) => normalizeMatchText(job.location).includes(normalizeMatchText(loc.raw || loc.city || loc.state))) ? 17 : 0; const seniorityScore = !brief.seniority?.length || brief.seniority.some((level) => normalizeMatchText(`${job.title} ${job.lowGrade} ${job.highGrade}`).includes(level)) ? 11 : 0; return Math.min(100, titleScore + skillScore + locationScore + seniorityScore); }
 function filterJobs(jobs, plan = {}) { return jobs.filter((job) => calculateRetrievalScore(job, plan) >= 40); }
 function scoreJobs(jobs, brief) { return jobs.map((job) => ({ job, retrievalScore: calculateRetrievalScore(job, brief) })).filter((entry) => entry.retrievalScore >= 40).sort((a, b) => b.retrievalScore - a.retrievalScore || String(a.job.title).localeCompare(String(b.job.title))); }
+const PROVIDERS = ['usajobs', 'adzuna', 'remotive', 'arbeitnow'];
+const PROVIDER_LABELS = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow' };
+// New providers must opt into this shared contract. Query-capable sources are
+// given distinct variants until they collect 20 qualified jobs; feed-only
+// sources are fetched once and report an honest shortfall, never fake retries.
+const PROVIDER_CAPABILITIES = { usajobs: { queryCapable: true }, adzuna: { queryCapable: true }, remotive: { queryCapable: true }, arbeitnow: { queryCapable: false, paginated: true } };
+function providerEnvelope(provider, result = {}) {
+  const jobs = Array.isArray(result.jobs) ? result.jobs : [];
+  const error = result.error || null;
+  return { provider, status: error ? (['not_configured', 'no_valid_lane'].includes(error.code) ? 'skipped' : 'failed') : (jobs.length ? 'success' : 'empty'), jobs, error, diagnostics: result.diagnostics || {} };
+}
+function locationEligibility(job, brief = {}) {
+  const requested = (brief.locations || []).map((entry) => normalizeMatchText(entry?.raw || entry)).filter(Boolean);
+  const location = normalizeMatchText(job.location);
+  const isRemote = job.remoteType === 'remote' || /\bremote\b|\banywhere\b/.test(location);
+  const remoteAllowed = ['any', 'remote', 'hybrid'].includes(String(brief.remotePreference || 'any').toLowerCase());
+  if (isRemote) return remoteAllowed ? null : 'not_remote_eligible';
+  if (!requested.length) return null;
+  return requested.some((place) => {
+    const words = place.split(' ').filter((word) => word.length > 1);
+    const city = words[0]; const state = words.find((word) => word.length === 2);
+    // Listings commonly use "Irving, Dallas" or only "TX".  A city or state
+    // token is enough evidence; remote was handled above and is never local.
+    return location.includes(place) || place.includes(location)
+      || (city && city.length > 2 && location.includes(city))
+      || (state && new RegExp(`\\b${state}\\b`).test(location));
+  }) ? null : 'wrong_location';
+}
+function qualificationReason(job, brief = {}) {
+  if (!text(job.title, 300)) return 'missing_title';
+  if (matchesHardExclusion(job, brief.exclusions || brief.excludedTerms || [])) return 'excluded_keyword';
+  const locationReason = locationEligibility(job, brief); if (locationReason) return locationReason;
+  const score = calculateRetrievalScore(job, brief);
+  // A job must have a family/title signal, a declared skill signal, or a
+  // concrete technical title plus supporting description before it reaches AI.
+  return score > 0 ? null : 'query_mismatch';
+}
+function selectTopJobsPerProvider(jobs, plan = {}, { limitPerProvider = TARGET_TOP_COUNT } = {}) {
+  const brief = plan.searchBrief || plan;
+  const unique = dedupeJobs(Array.isArray(jobs) ? jobs : []);
+  const selected = [];
+  const providerStats = {};
+  for (const provider of PROVIDERS) {
+    const source = unique.filter((job) => job.providerKey === provider);
+    const rejectionReasons = {};
+    // Retrieval should remove only hard exclusions and clear location misses.
+    // The final AI evaluator needs to see valid listings even when the local
+    // heuristic cannot recognize a title family or skill phrasing.
+    const eligible = source.filter((job) => {
+      const reason = qualificationReason(job, brief);
+      if (reason) { rejectionReasons[reason] = (rejectionReasons[reason] || 0) + 1; return false; }
+      return true;
+    });
+    const ranked = eligible.map((job) => ({ ...job, retrievalScore: calculateRetrievalScore(job, brief), scoreType: 'deterministic' }))
+      .sort((a, b) => b.retrievalScore - a.retrievalScore || String(a.title).localeCompare(String(b.title)) || String(a.externalId).localeCompare(String(b.externalId)));
+    selected.push(...ranked.slice(0, limitPerProvider));
+    providerStats[provider] = { unique: source.length, hardFiltered: source.length - eligible.length, eligible: eligible.length, qualified: eligible.length, deterministicTop: Math.min(ranked.length, limitPerProvider), rejectionReasons };
+  }
+  return { jobs: selected, providerStats };
+}
+function recoveryUsaJobsLanes(brief = {}) {
+  const titles = ['IT Specialist', 'Computer Scientist', 'Computer Engineer', 'Systems Engineer'];
+  return titles.map((positionTitle, index) => ({ laneId: `recovery-title-${index + 1}`, type: 'position-title', positionTitle, filters: {}, recovery: true, reason: 'Bounded broad federal-title recovery after zero AI-lane results' }));
+}
+function plannedProviderLanes(provider, planned = []) {
+  const seen = new Set();
+  return (Array.isArray(planned) ? planned : []).filter((lane) => {
+    const query = text(lane.search || lane.what || lane.positionTitle || lane.keyword || (lane.searchTerms || []).join(' '), 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!query || seen.has(query)) return false; seen.add(query); return true;
+  }).slice(0, MAX_PROVIDER_REQUESTS);
+}
 
-async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = null }) {
-  // Deterministic planning is the normal fast path. AI planning remains an
-  // optional enhancement, but retrieval must not depend on an OpenRouter call.
+async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = null, refineQuery = null }) {
+  // The normal path is AI planning and AI query refinement. A deterministic
+  // plan remains available only when explicitly requested by configuration.
   if (!['ai', 'deterministic-fallback'].includes(plan.source)) throw new Error('A valid search plan is required.');
-  const brief = plan.searchBrief || plan; const lanes = Array.isArray(plan.providerLanes) ? plan.providerLanes.slice(0, 8) : []; const adzunaLanes = Array.isArray(plan.adzunaQueries) ? plan.adzunaQueries.slice(0, 4) : []; const firstLocation = brief.locations?.[0]; const normalized = await normalizeLocation(firstLocation?.raw || firstLocation || profile.targetLocations?.[0]); if (normalized.error) return { jobs: [], counts: { requests: 0, retrieved: 0, unique: 0, relevant: 0, ranked: 0 }, diagnostics: { attempts: [] }, error: normalized.error, warning: '', providerQueries: lanes.map((lane) => lane.positionTitle || lane.keyword), searchTerms: brief.jobFamilies || [], locationAttempts: [] };
-  const baseScope = normalized.value ? { locationName: normalized.value, label: 'requested location', radiusMiles: brief.radiusMiles } : { locationName: '', label: 'nationwide' }; const scopes = locationScopes(brief, profile); if (baseScope.locationName) scopes[0] = baseScope;
+  const brief = plan.searchBrief || plan; const lanes = Array.isArray(plan.providerLanes) ? plan.providerLanes.slice(0, 8) : []; const adzunaLanes = Array.isArray(plan.adzunaQueries) ? plan.adzunaQueries.slice(0, 4) : []; const firstLocation = brief.locations?.[0]; const normalized = await normalizeLocation(firstLocation?.raw || firstLocation || profile.targetLocations?.[0]); if (normalized.error) return { jobs: [], counts: { requests: 0, retrieved: 0, unique: 0, eligible: 0, deterministicTop: 0, aiSubmitted: 0 }, diagnostics: { attempts: [] }, error: normalized.error, warning: '' };
+  const baseScope = normalized.value ? { locationName: normalized.value, label: 'requested location', radiusMiles: brief.radiusMiles } : { locationName: '', label: 'nationwide' };
   const attempts = []; const results = [];
-  for (const lane of lanes) for (const scope of scopes) { if (attempts.length >= MAX_REQUESTS) break; attempts.push({ provider: 'usajobs', lane, scope }); const result = await searchUsaJobs({ credentials, lane, scope, page: 1, brief }); results.push(result); if (diagnostics) diagnostics.record({ provider: 'usajobs', lane, scope, result, request: Object.fromEntries(buildUsaJobsParams(lane, scope, 1, brief)) }); }
-  if (credentials?.adzunaAppId && credentials?.adzunaApiKey) for (const lane of adzunaLanes) for (const scope of scopes.slice(0, 2)) { if (attempts.length >= MAX_REQUESTS) break; attempts.push({ provider: 'adzuna', lane, scope }); const result = await searchAdzuna({ credentials, lane, scope, page: 1, brief }); results.push(result); if (diagnostics) { const params = require('./adzuna-provider.cjs').buildAdzunaParams(lane, scope, 1, brief); diagnostics.record({ provider: 'adzuna', lane, scope, result, request: Object.fromEntries([...params].filter(([key]) => !['app_id', 'app_key'].includes(key))) }); } }
+  const record = (provider, lane, scope, result, request) => { attempts.push({ provider, lane, scope, request }); results.push(result); };
+  const safeResult = async (run) => { try { return await run(); } catch (cause) { return { jobs: [], resultCount: 0, diagnostics: {}, error: { code: 'provider_exception', message: cause?.message || 'Provider request failed unexpectedly.', retryable: true } }; } };
+  async function paged(provider, providerLanes, search, requestFor, configured = true, maxPages = Math.ceil(TARGET_RETRIEVAL_COUNT / MAX_RESULTS_PER_REQUEST)) {
+    if (!configured) { record(provider, { laneId: `${provider}-not-configured`, type: 'skipped' }, baseScope, { jobs: [], resultCount: 0, diagnostics: {}, error: { code: 'not_configured', message: `${provider} credentials are not configured.`, retryable: false } }); return; }
+    if (!providerLanes.length) { record(provider, { laneId: `${provider}-no-lane`, type: 'skipped' }, baseScope, { jobs: [], resultCount: 0, diagnostics: {}, error: { code: 'no_valid_lane', message: `No valid ${provider} lane was available.`, retryable: false } }); return; }
+    const collected = []; const seen = new Set(); const qualified = new Set(); const attemptedQueries = new Set(); const laneQueue = [...providerLanes]; let requestsMade = 0;
+    for (const lane of laneQueue) {
+      let laneRaw = 0; let laneQualifiedStart = qualified.size;
+      for (let page = 1; page <= maxPages && qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS; page += 1) {
+      const queryKey = JSON.stringify({ lane: lane.positionTitle || lane.keyword || lane.what || lane.search || lane.searchTerms || '', page, location: baseScope.locationName || '' });
+      if (attemptedQueries.has(queryKey)) continue;
+      attemptedQueries.add(queryKey);
+      let result = await safeResult(() => search({ credentials, lane, scope: baseScope, page, brief })); requestsMade += 1;
+      // One bounded retry for retryable transport/provider errors; do not retry unauthorized or malformed responses.
+      if (result.error?.retryable && requestsMade < MAX_PROVIDER_REQUESTS) {
+        record(provider, lane, baseScope, result, requestFor ? () => requestFor(lane, page) : null);
+        result = await safeResult(() => search({ credentials, lane, scope: baseScope, page, brief })); requestsMade += 1;
+      }
+      record(provider, lane, baseScope, result, requestFor ? () => requestFor(lane, page) : null);
+      laneRaw += Number(result.resultCount) || 0;
+      for (const job of result.jobs || []) { const key = `${job.providerKey}:${job.externalId || job.canonicalUrl}`; if (job.externalId && !seen.has(key)) { seen.add(key); collected.push(job); if (!qualificationReason(job, brief)) qualified.add(key); } }
+       const noProviderResults = PROVIDER_CAPABILITIES[provider]?.paginated ? !result.rawResultCount : !result.resultCount;
+       if (result.error || noProviderResults || (PROVIDER_CAPABILITIES[provider]?.paginated && result.hasNextPage === false) || (!PROVIDER_CAPABILITIES[provider]?.paginated && Number.isFinite(result.totalAvailable) && page * MAX_RESULTS_PER_REQUEST >= result.totalAvailable)) break;
+      }
+      if (qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS && PROVIDER_CAPABILITIES[provider]?.queryCapable && typeof refineQuery === 'function') {
+        let nextLane = null;
+        try { nextLane = await refineQuery({ provider, brief, attemptedLanes: laneQueue, outcome: { query: lane.positionTitle || lane.keyword || lane.what || lane.search || '', rawRetrieved: laneRaw, newlyQualified: qualified.size - laneQualifiedStart, qualifiedCount: qualified.size, requestCount: requestsMade } }); } catch { nextLane = null; }
+        const nextKey = nextLane && text(nextLane.search || nextLane.what || nextLane.positionTitle || nextLane.keyword || (nextLane.searchTerms || []).join(' '), 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        if (nextKey && !attemptedQueries.has(JSON.stringify({ lane: nextLane.positionTitle || nextLane.keyword || nextLane.what || nextLane.search || nextLane.searchTerms || '', page: 1, location: baseScope.locationName || '' }))) laneQueue.push(nextLane);
+      }
+      if (qualified.size >= TARGET_QUALIFIED_COUNT || requestsMade >= MAX_PROVIDER_REQUESTS) break;
+    }
+    return { collected, qualifiedCount: qualified.size, queriesAttempted: attemptedQueries.size, exhausted: qualified.size < TARGET_QUALIFIED_COUNT, requestsMade };
+  }
   const publicQueries = plan.publicQueries || {};
-  for (const [provider, search] of [['remotive', searchRemotive], ['arbeitnow', searchArbeitnow]]) for (const lane of (publicQueries[provider] || []).slice(0, 4)) { if (attempts.length >= MAX_REQUESTS) break; const scope = scopes[0] || { locationName: '' }; attempts.push({ provider, lane, scope }); const result = await search({ lane, scope, brief }); results.push(result); if (diagnostics) diagnostics.record({ provider, lane, scope, result, request: result.diagnostics?.request || { query: result.diagnostics?.query || '', location: result.diagnostics?.location || '' } }); }
-  const errors = results.map((result) => result.error).filter(Boolean); const fetched = dedupeJobs(results.flatMap((result) => result.jobs)); const scored = scoreJobs(fetched, brief); const jobs = scored.map((entry) => ({ ...entry.job, retrievalScore: entry.retrievalScore })); const fetchedCount = fetched.length; const filteredCount = Math.max(0, fetched.length - scored.length); const attemptsDiagnostics = results.map((result, index) => ({ ...result.diagnostics, provider: attempts[index].provider, laneId: attempts[index].lane.laneId, type: attempts[index].lane.type, errorCode: result.error?.code || null, errorMessage: result.error?.message || null, totalAvailable: result.totalAvailable })); const providerLabels = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow' }; const sourceStats = [...new Set(attempts.map((attempt) => attempt.provider))].map((provider) => { const providerJobs = fetched.filter((job) => job.providerKey === provider); const providerResults = results.filter((_result, index) => attempts[index].provider === provider); const providerScored = scored.filter((entry) => entry.job.providerKey === provider).length; return { provider: providerLabels[provider] || provider, key: provider, requests: providerResults.length, count: providerJobs.length, shown: 0, aiSubmitted: providerScored, relevant: providerScored, fetched: providerResults.reduce((sum, result) => sum + (Number(result.resultCount) || 0), 0), unique: providerJobs.length, filtered: providerJobs.length - providerScored, errors: providerResults.filter((result) => result.error).length, failures: providerResults.filter((result) => result.error).map((result) => result.error.message).filter(Boolean) }; }); const warning = errors.length ? `${errors.length} job-source request${errors.length === 1 ? '' : 's'} failed; available results are still shown.` : jobs.length ? '' : fetchedCount ? `Job sources returned ${fetchedCount} listings.` : 'No job sources returned listings.'; return { jobs, fetchedCount, filteredCount, counts: { requests: attempts.length, retrieved: results.reduce((sum, result) => sum + (Number(result.resultCount) || 0), 0), unique: fetched.length, filtered: filteredCount, relevant: scored.length, aiSubmitted: scored.length }, sourceStats, attemptsDiagnostics, diagnostics: diagnostics || { attempts: attemptsDiagnostics }, warning, error: errors.length && !jobs.length ? { code: 'provider_error', message: warning, retryable: true } : null }; }
+  const adaptiveLanes = Object.fromEntries(PROVIDERS.map((provider) => {
+    const planned = provider === 'usajobs' ? lanes : provider === 'adzuna' ? adzunaLanes : publicQueries[provider];
+    return [provider, plannedProviderLanes(provider, planned)];
+  }));
+  // Start all four provider pipelines together; each pipeline owns its pagination bound.
+  await Promise.allSettled([
+    paged('usajobs', adaptiveLanes.usajobs, searchUsaJobs, (lane, page) => Object.fromEntries(buildUsaJobsParams(lane, baseScope, page, brief)), Boolean(credentials?.usajobsApiKey && credentials?.usajobsEmail)),
+    paged('adzuna', adaptiveLanes.adzuna, searchAdzuna, (lane, page) => { const params = require('./adzuna-provider.cjs').buildAdzunaParams(lane, baseScope, page, brief); return Object.fromEntries([...params].filter(([key]) => !['app_id', 'app_key'].includes(key))); }, Boolean(credentials?.adzunaAppId && credentials?.adzunaApiKey)),
+    paged('remotive', adaptiveLanes.remotive, searchRemotive, null, true, 1),
+    paged('arbeitnow', adaptiveLanes.arbeitnow, searchArbeitnow, null, true, MAX_PROVIDER_REQUESTS),
+  ]);
+  const envelopes = PROVIDERS.map((provider) => { const providerResults = results.filter((_, index) => attempts[index].provider === provider); const jobs = dedupeJobs(providerResults.flatMap((result) => Array.isArray(result.jobs) ? result.jobs : [])).slice(0, TARGET_RETRIEVAL_COUNT); const error = providerResults.find((result) => result.error)?.error || null; return providerEnvelope(provider, { jobs, error, diagnostics: { requests: providerResults.length } }); });
+  const fetched = dedupeJobs(envelopes.flatMap((envelope) => envelope.jobs));
+  const selection = selectTopJobsPerProvider(fetched, brief);
+  const jobs = selection.jobs;
+  const attemptsDiagnostics = results.map((result, index) => ({ ...result.diagnostics, provider: attempts[index].provider, laneId: attempts[index].lane.laneId, type: attempts[index].lane.type, recovery: Boolean(attempts[index].lane.recovery), errorCode: result.error?.code || null, errorMessage: result.error?.message || null, totalAvailable: result.totalAvailable }));
+  for (let index = 0; index < results.length; index += 1) if (diagnostics) diagnostics.record({ provider: attempts[index].provider, lane: attempts[index].lane, scope: attempts[index].scope, result: results[index], request: attempts[index].request ? attempts[index].request() : (results[index].diagnostics?.request || { query: results[index].diagnostics?.query || '', location: results[index].diagnostics?.location || '' }) });
+  const sourceStats = PROVIDERS.map((provider) => { const providerResults = results.filter((_, index) => attempts[index].provider === provider); const envelope = envelopes.find((entry) => entry.provider === provider); const stats = selection.providerStats[provider]; const retrievedRaw = providerResults.reduce((sum, result) => sum + (Number(result.resultCount) || 0), 0); const shortfall = !envelope.error && stats.qualified < TARGET_QUALIFIED_COUNT; const queryRounds = new Set(providerResults.map((result) => result.diagnostics?.query).filter(Boolean)); return { provider: PROVIDER_LABELS[provider], key: provider, status: envelope.status === 'success' && shortfall ? 'shortfall' : envelope.status, requests: providerResults.length, requestsAttempted: providerResults.length, requestBudget: MAX_PROVIDER_REQUESTS, pagesAttempted: providerResults.length, queryRounds: queryRounds.size, queriesAttempted: [...queryRounds], exhausted: shortfall, shortfallReason: shortfall ? `Only ${stats.qualified} qualified listings after bounded query rounds (maximum ${MAX_PROVIDER_REQUESTS} requests).` : '', retrievedRaw, fetched: retrievedRaw, uniqueCount: stats.unique, unique: stats.unique, hardFilteredCount: stats.hardFiltered, hardFiltered: stats.hardFiltered, filtered: stats.hardFiltered, eligibleCount: stats.eligible, eligible: stats.eligible, qualifiedCount: stats.qualified, deterministicTopCount: stats.deterministicTop, deterministicTop: stats.deterministicTop, finalSelectedCount: 0, aiSubmitted: stats.deterministicTop, targetRetrievalCount: TARGET_RETRIEVAL_COUNT, targetQualifiedCount: TARGET_QUALIFIED_COUNT, targetTopCount: TARGET_TOP_COUNT, errors: providerResults.filter((result) => result.error && result.error.code !== 'not_configured').length, failures: providerResults.map((result) => result.error?.message).filter(Boolean), rejectionReasons: stats.rejectionReasons, recoveryAttempts: 0 }; });
+  const errors = results.map((result) => result.error).filter(Boolean); const warning = errors.length ? `${errors.length} job-source requests failed or did not return results; available results are still shown.` : jobs.length ? '' : fetched.length ? `Job sources returned ${fetched.length} listings.` : 'No job sources returned listings.';
+  return { jobs, providerResults: envelopes, fetchedCount: fetched.length, filteredCount: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.hardFiltered, 0), counts: { requests: attempts.length, retrieved: results.reduce((sum, result) => sum + (Number(result.resultCount) || 0), 0), unique: fetched.length, filtered: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.hardFiltered, 0), eligible: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.eligible, 0), deterministicTop: jobs.length, aiSubmitted: jobs.length }, sourceStats, attemptsDiagnostics, diagnostics: diagnostics || { attempts: attemptsDiagnostics }, warning, error: errors.length && !jobs.length ? { code: 'provider_error', message: warning, retryable: true } : null }; }
 async function testUsaJobs(credentials) { const result = await searchUsaJobs({ credentials, lane: { laneId: 'connection-test', type: 'position-title', positionTitle: 'Computer Scientist', filters: {} }, scope: { locationName: '' }, page: 1, brief: {} }); if (result.error) return { ok: false, ...result.error }; return { ok: true, status: 200, count: result.resultCount }; }
-module.exports = { searchJobs, searchUsaJobs, testUsaJobs, filterJobs, matchesExcluded: matchesHardExclusion, matchesHardExclusion, calculateRetrievalScore, buildUsaJobsParams, normalizeUsaJobsItem, dedupeJobs };
+module.exports = { searchJobs, searchUsaJobs, testUsaJobs, filterJobs, matchesExcluded: matchesHardExclusion, matchesHardExclusion, calculateRetrievalScore, qualificationReason, plannedProviderLanes, PROVIDER_CAPABILITIES, MAX_PROVIDER_REQUESTS, buildUsaJobsParams, normalizeUsaJobsItem, dedupeJobs, selectTopJobsPerProvider, recoveryUsaJobsLanes, PROVIDERS };

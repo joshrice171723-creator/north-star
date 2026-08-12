@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createSearchPlan, parsePlannerResponse, parseSearchBriefResponse, fallbackPlan } = require('../electron/job-search-planner.cjs');
+const { createSearchPlan, refineProviderQuery, parsePlannerResponse, parseSearchBriefResponse, fallbackPlan } = require('../electron/job-search-planner.cjs');
 const { filterJobs } = require('../electron/job-search.cjs');
 
 test('planner accepts structured AI output and preserves user exclusions', () => {
@@ -142,4 +142,18 @@ test('planner extracts JSON when braces appear inside quoted strings', () => {
     usajobs: [{ positionTitle: 'Computer Scientist' }], adzuna: [{ what: 'AI Engineer' }], remotive: [{ search: 'AI Engineer' }], arbeitnow: [{ searchTerms: ['AI Engineer'] }],
   } })} suffix` } }, { targetRoles: ['AI Engineer'] });
   assert.equal(plan.interpretation, 'Build {safe} systems');
+});
+
+test('planner expands FDE into Forward Deployed Engineer before generating lanes', () => {
+  const brief = fallbackPlan({ targetRoles: ['FDE'], interests: ['artificial intelligence'] }, {});
+  assert.ok(brief.jobFamilies.some((value) => /Forward Deployed Engineer/i.test(value)));
+});
+
+test('AI query refinement receives retrieval feedback and returns a provider-valid next query', async () => {
+  let payload;
+  const lane = await refineProviderQuery({ provider: 'remotive', brief: { jobFamilies: ['Forward Deployed Engineer'] }, profile: { targetRoles: ['Forward Deployed Engineer'] }, resume: { rawText: 'Python, deployment, customer-facing systems.' }, attemptedLanes: [{ laneId: 'first', search: 'Forward Deployed Engineer' }], outcome: { rawRetrieved: 20, newlyQualified: 0, qualifiedCount: 0, requestCount: 1 }, openRouter: async (messages) => { payload = JSON.parse(messages[1].content); return { ok: true, message: { content: JSON.stringify({ providerQuery: { search: 'deployment engineer python' } }) } }; } });
+  assert.equal(lane.search, 'deployment engineer python');
+  assert.equal(payload.lastOutcome.newlyQualified, 0);
+  assert.match(payload.resume.rawText, /Python/);
+  assert.equal(payload.attemptedQueries[0].query, 'Forward Deployed Engineer');
 });

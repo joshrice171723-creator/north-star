@@ -7,7 +7,7 @@ const { createDatabase } = require('./database.cjs');
 const { searchJobs, testUsaJobs } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
-const { createSearchPlan, fallbackPlan } = require('./job-search-planner.cjs');
+const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
 
@@ -556,7 +556,7 @@ function registerDatabaseIpc() {
     setAuditRun(runId);
     let plan;
     try {
-      plan = process.env.HERMES_AI_SEARCH_PLANNING === 'true'
+      plan = process.env.HERMES_AI_SEARCH_PLANNING !== 'false'
         ? await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'planning' }) })
         : fallbackPlan(profile, resume);
     } catch (cause) {
@@ -597,7 +597,7 @@ function registerDatabaseIpc() {
     };
     let found;
     try {
-      found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan, diagnostics });
+      found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan, diagnostics, refineQuery: (input) => refineProviderQuery({ ...input, profile, resume, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'provider_query_refinement' }) }) });
     } catch (cause) {
       const warning = cause?.message || 'Search failed.';
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning });
@@ -638,8 +638,8 @@ function registerDatabaseIpc() {
           coachDatabase.recordJobSearchRankingBatch({ runId, ...batch });
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('jobs:search:progress', { runId, ...batch, report: retrievalReport });
         };
-        ranked = await rankJobs({ jobs: found.jobs, profile, resume, onBatch: reportRankingProgress, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'ranking' }) });
-        rankingStatus = ranked.length ? 'available' : 'unavailable';
+        ranked = await rankJobs({ jobs: found.jobs, profile, resume, onBatch: reportRankingProgress, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'final_selection' }) });
+        rankingStatus = ranked.length ? (ranked.rankingDiagnostics?.underSelected ? 'under_selected' : 'available') : 'unavailable';
       } catch (cause) {
         rankingError = { code: cause?.code || 'ai_ranking_failed', message: cause?.message || 'AI job ranking failed.', diagnostics: cause?.rankingDiagnostics || null };
         rankingStatus = 'unavailable';
@@ -649,28 +649,27 @@ function registerDatabaseIpc() {
           job,
           externalId: job.externalId,
           fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null,
-          scoreType: 'retrieval',
-          fitTier: 'retrieval match',
+          scoreType: 'deterministic',
+          fitTier: 'deterministic candidate',
           strengths: job.searchEvidence?.positionTitleQuery ? [`Title: ${job.searchEvidence.positionTitleQuery}`] : [],
-          gaps: ['AI ranking was unavailable; review the announcement manually.'],
+          gaps: ['Final AI selection was unavailable; review the announcement manually.'],
           unknowns: [],
-          reasoning: 'Retrieved successfully. AI ranking was unavailable, so this result is shown using the deterministic retrieval score.',
+          reasoning: 'Retrieved successfully. Final AI selection was unavailable, so this deterministic candidate is shown for review.',
         }));
       }
     }
     const shownByProvider = ranked.reduce((counts, entry) => { const provider = entry.job?.providerKey; if (provider) counts[provider] = (counts[provider] || 0) + 1; return counts; }, {});
     const rankingProviderCounts = rankingError?.diagnostics?.providerCounts || ranked.rankingDiagnostics?.providerCounts || {};
-    const sourceStats = (found.sourceStats || []).map((source) => { const rankingCounts = rankingProviderCounts[source.key] || {}; return { ...source, aiSubmitted: rankingCounts.submitted ?? found.jobs.filter((job) => job.providerKey === source.key).length, aiAssessed: rankingCounts.assessed || 0, aiReturned: rankingCounts.returned || 0, relevant: rankingCounts.submitted ?? found.jobs.filter((job) => job.providerKey === source.key).length, shown: shownByProvider[source.key] || 0 }; });
-    const relevantCount = found.jobs.length;
+    const sourceStats = (found.sourceStats || []).map((source) => { const rankingCounts = rankingProviderCounts[source.key] || {}; return { ...source, aiSubmitted: rankingCounts.submitted ?? found.jobs.filter((job) => job.providerKey === source.key).length, aiAssessed: rankingCounts.assessed || 0, aiReturned: rankingCounts.aiReturned ?? rankingCounts.returned ?? 0, finalSelectedCount: rankingCounts.returned || 0, displayedCount: shownByProvider[source.key] || 0, shown: shownByProvider[source.key] || 0 }; });
     const warning = rankingError
-      ? [found.warning, 'AI ranking was unavailable; showing retrieved jobs using deterministic scores.'].filter(Boolean).join(' ')
+      ? [found.warning, 'Final AI selection was unavailable; showing deterministic provider candidates.'].filter(Boolean).join(' ')
       : found.warning;
-    coachDatabase.finishJobSearchRun(runId, { resultCount: found.jobs?.length || 0, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
+    coachDatabase.finishJobSearchRun(runId, { resultCount: ranked.length, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
     const apiCalls = coachDatabase.listApiCalls(runId);
     const rankingBatches = coachDatabase.listJobSearchRankingBatches(runId);
     clearAuditRun();
     const rankingDiagnostics = ranked.rankingDiagnostics || rankingError?.diagnostics || null;
-    return { ok: true, ...found, sourceStats, warning, jobs: found.jobs, matches: ranked, searchPlan: plan, apiCalls, rankingBatches, counts: { ...found.counts, relevant: relevantCount, aiSubmitted: relevantCount, ranked: rankingDiagnostics?.assessedCount || 0, returned: rankingDiagnostics?.returnedCount || ranked.length }, ranking: { status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics } };
+    return { ok: true, ...found, sourceStats, warning, jobs: found.jobs, matches: ranked, searchPlan: plan, apiCalls, rankingBatches, counts: { ...found.counts, finalSelected: rankingDiagnostics?.returnedCount || 0, displayed: ranked.length }, ranking: { status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics } };
   });
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
 }
