@@ -1,189 +1,74 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { rankJobs, RANKING_BATCH_SIZE, jobForRanking, MAX_RANKING_PROMPT_CHARS } = require('../electron/job-matcher.cjs');
+const { rankJobs, MAX_FINAL_CANDIDATES, jobForRanking, selectionIds } = require('../electron/job-matcher.cjs');
 
-function job(index, providerKey) {
-  return { externalId: `${providerKey}-${index}`, providerKey, title: `AI Engineer ${index}`, description: 'Build machine learning systems.' };
-}
+const jobs = (count, providerKey = 'usajobs') => Array.from({ length: count }, (_, index) => ({ externalId: `${providerKey}-${index + 1}`, providerKey, title: 'Machine Learning Engineer', description: 'machine learning python', retrievalScore: 90 - index, diagnostics: { secret: 'do not send' } }));
+const response = (ids) => ({ ok: true, message: { content: JSON.stringify({ selectedExternalIds: ids }) } });
 
-test('rankJobs assesses candidates in parallel batches and selects top five per provider locally', async () => {
-  const jobs = [
-    ...Array.from({ length: 50 }, (_, index) => job(index, 'adzuna')),
-    ...Array.from({ length: 25 }, (_, index) => job(index, 'usajobs')),
-  ];
-  const batches = [];
-  const result = await rankJobs({
-    jobs,
-    profile: { targetRoles: ['AI engineer'] },
-    resume: {},
-    openRouter: async (messages) => {
-      const payload = JSON.parse(messages[1].content);
-      batches.push(payload.jobs);
-      return {
-        ok: true,
-        message: {
-          content: JSON.stringify(payload.jobs.map((entry, index) => ({
-            externalId: entry.externalId,
-            fitScore: index + 1,
-            fitTier: 'reasonable-fit',
-          }))),
-        },
-      };
-    },
-  });
-
-  assert.equal(RANKING_BATCH_SIZE, 6);
-  assert.equal(batches.length, Math.ceil(75 / RANKING_BATCH_SIZE));
-  assert.ok(batches.every((batch) => batch.length <= RANKING_BATCH_SIZE));
-  assert.equal(batches.flat().length, 75);
-  assert.equal(result.length, 10);
-  assert.equal(result.filter((entry) => entry.job.providerKey === 'adzuna').length, 5);
-  assert.equal(result.filter((entry) => entry.job.providerKey === 'usajobs').length, 5);
-  assert.ok(result.every((entry) => entry.scoreType === 'ai'));
-  assert.deepEqual(result.rankingDiagnostics, {
-    submittedCount: 75,
-    candidateCount: 75,
-    batchCount: 13,
-    totalCalls: 13,
-    assessedCount: 75,
-    returnedCount: 10,
-    selectionCallCount: 0,
-    providerCounts: {
-      adzuna: { submitted: 50, assessed: 50, returned: 5 },
-      usajobs: { submitted: 25, assessed: 25, returned: 5 },
-        remotive: { submitted: 0, assessed: 0, returned: 0 },
-        arbeitnow: { submitted: 0, assessed: 0, returned: 0 },
-    },
-  });
+test('final selector receives at most 80 deterministic candidates and may select any provider mix', async () => {
+  const candidates = [...jobs(30, 'usajobs'), ...jobs(30, 'adzuna'), ...jobs(30, 'remotive')]; let prompt;
+  const selected = await rankJobs({ jobs: candidates, profile: {}, resume: {}, openRouter: async (messages) => { prompt = JSON.parse(messages[1].content); return response(['adzuna-1', 'adzuna-2', 'adzuna-3']); } });
+  assert.equal(prompt.candidates.length, MAX_FINAL_CANDIDATES);
+  assert.deepEqual(selected.slice(0, 3).map((entry) => entry.externalId), ['adzuna-1', 'adzuna-2', 'adzuna-3']);
+  assert.equal(selected.length, 20);
+  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 17);
+  assert.equal(selected[0].scoreType, 'ai-selection');
+  assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
-test('rankJobs emits call lifecycle diagnostics with job and request metrics', async () => {
-  const events = [];
-  const result = await rankJobs({
-    jobs: [job(1, 'adzuna'), job(2, 'adzuna')],
-    profile: {},
-    resume: {},
-    onBatch: (event) => events.push(event),
-    openRouter: async (messages) => ({
-      ok: true,
-      message: { content: JSON.stringify(JSON.parse(messages[1].content).jobs.map((entry) => ({ externalId: entry.externalId, fitScore: 50 }))) },
-    }),
-  });
-  assert.deepEqual(events.map((event) => event.status), ['started', 'success']);
-  assert.equal(events[0].callNumber, 1);
-  assert.equal(events[0].totalCalls, 1);
-  assert.equal(events[0].submittedCount, 2);
-  assert.ok(events[0].promptCharacters > 0);
-  assert.ok(events[0].maxTokens > 0);
-  assert.equal(events[1].assessedCount, 2);
-  assert.ok(events[1].durationMs >= 0);
-  assert.equal(result.rankingDiagnostics.totalCalls, 1);
+test('final selector marks an under-selection when 20 or more candidates were submitted', async () => {
+  const selected = await rankJobs({ jobs: jobs(80), profile: {}, resume: {}, openRouter: async () => response(['usajobs-1', 'usajobs-2', 'usajobs-3']) });
+  assert.equal(selected.rankingDiagnostics.underSelected, true);
+  assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
-test('rankJobs rejects an incomplete batch so retrieval fallback can be used', async () => {
-  const jobs = Array.from({ length: RANKING_BATCH_SIZE + 1 }, (_, index) => job(index, 'adzuna'));
-  await assert.rejects(
-    () => rankJobs({
-      jobs,
-      profile: {},
-      resume: {},
-      openRouter: async (messages) => {
-        const payload = JSON.parse(messages[1].content);
-        return { ok: true, message: { content: JSON.stringify(payload.jobs.slice(0, -1).map((entry) => ({ externalId: entry.externalId, fitScore: 50 }))) } };
-      },
-    }),
-    /did not assess every retrieved job/,
-  );
+test('final selector rejects invented, duplicate, malformed, and over-limit IDs', () => {
+  const candidates = jobs(21);
+  assert.throws(() => selectionIds('{', candidates), { code: 'selection_invalid_json' });
+  assert.throws(() => selectionIds(JSON.stringify({ selectedExternalIds: ['missing'] }), candidates), { code: 'selection_invented_id' });
+  assert.throws(() => selectionIds(JSON.stringify({ selectedExternalIds: ['usajobs-1', 'usajobs-1'] }), candidates), { code: 'selection_duplicate_ids' });
+  assert.throws(() => selectionIds(JSON.stringify({ selectedExternalIds: candidates.map((job) => job.externalId) }), candidates), { code: 'selection_over_limit' });
 });
 
-test('rankJobs splits an 18-job search into bounded OpenRouter calls', async () => {
-  const jobs = [
-    ...Array.from({ length: 10 }, (_, index) => job(index, 'adzuna')),
-    ...Array.from({ length: 5 }, (_, index) => job(index, 'remotive')),
-    ...Array.from({ length: 2 }, (_, index) => job(index, 'arbeitnow')),
-    job(0, 'usajobs'),
-  ];
-  const batches = [];
-  const result = await rankJobs({
-    jobs,
-    profile: {},
-    resume: {},
-    openRouter: async (messages) => {
-      const payload = JSON.parse(messages[1].content);
-      batches.push(payload.jobs);
-      return { ok: true, message: { content: JSON.stringify(payload.jobs.map((entry) => ({ externalId: entry.externalId, fitScore: 50 }))) } };
-    },
-  });
-
-  assert.equal(batches.length, Math.ceil(jobs.length / RANKING_BATCH_SIZE));
-  assert.ok(batches.every((batch) => batch.length <= RANKING_BATCH_SIZE));
-  assert.equal(batches.flat().length, jobs.length);
-  assert.equal(result.rankingDiagnostics.submittedCount, 18);
-  assert.equal(result.rankingDiagnostics.totalCalls, 3);
-  assert.equal(result.rankingDiagnostics.assessedCount, 18);
-  assert.deepEqual(result.rankingDiagnostics.providerCounts, {
-    usajobs: { submitted: 1, assessed: 1, returned: 1 },
-    adzuna: { submitted: 10, assessed: 10, returned: 5 },
-    remotive: { submitted: 5, assessed: 5, returned: 5 },
-    arbeitnow: { submitted: 2, assessed: 2, returned: 2 },
-  });
+test('final selector failure preserves structured diagnostics for deterministic fallback', async () => {
+  await assert.rejects(() => rankJobs({ jobs: jobs(2), profile: {}, resume: {}, openRouter: async () => ({ ok: true, message: { content: '{}' } }) }), (error) => error.code === 'selection_invalid_shape' && error.rankingDiagnostics.submittedCount === 2);
 });
 
-test('rankJobs selects the highest AI score without a second AI call', async () => {
-  const jobs = [job(1, 'adzuna'), job(2, 'adzuna')];
-  let assessmentCalls = 0;
-  let callCount = 0;
-  const result = await rankJobs({ jobs, profile: {}, resume: {}, openRouter: async (messages) => {
-    callCount += 1;
-    const payload = JSON.parse(messages[1].content);
-    assessmentCalls += payload.jobs.length;
-    return { ok: true, message: { content: JSON.stringify(payload.jobs.map((entry, index) => ({ externalId: entry.externalId, fitScore: index === 1 ? 80 : 1, fitTier: index === 1 ? 'strong-fit' : 'low-fit' }))) } };
+test('final selector repairs one malformed response and preserves AI score provenance', async () => {
+  let calls = 0;
+  const selected = await rankJobs({ jobs: jobs(2), profile: {}, resume: {}, openRouter: async () => {
+    calls += 1;
+    return calls === 1
+      ? { ok: true, message: { content: '{' } }
+      : { ok: true, message: { content: JSON.stringify({ selections: [{ externalId: 'usajobs-1', fitScore: 83, fitTier: 'strong match', strengths: ['Python'], gaps: [], unknowns: [], reasoning: 'Evidence-based.' }] }) } };
   } });
-  assert.equal(assessmentCalls, 2);
-  assert.equal(callCount, 1);
-  assert.deepEqual(result.map((entry) => entry.job.externalId), ['adzuna-2', 'adzuna-1']);
+  assert.equal(calls, 2);
+  assert.equal(selected[0].scoreType, 'ai-selection');
+  assert.equal(selected[0].fitScore, 83);
+  assert.equal(selected.rankingDiagnostics.repairAttempted, true);
+  assert.equal(selected.rankingDiagnostics.totalCalls, 2);
 });
 
-test('AI job projection excludes provider catalogs and keeps the payload bounded', async () => {
-  const fullJob = {
-    ...job(1, 'usajobs'),
-    company: 'Example Agency',
-    location: 'Dallas, Texas',
-    description: 'Build machine learning systems.'.repeat(500),
-    requirements: ['Python', 'Machine learning'],
-    locations: Array.from({ length: 20_000 }, (_, index) => ({
-      LocationName: `Synthetic City ${index}, United States`,
-      Longitude: index,
-      Latitude: index,
-    })),
-    rawData: { enormous: 'provider response should never be sent' },
-    diagnostics: { responseBody: 'do not send this' },
-  };
-  const projected = jobForRanking(fullJob);
-  assert.equal(projected.externalId, fullJob.externalId);
-  assert.equal(projected.location, fullJob.location);
-  assert.ok(projected.description.length <= 1800);
-  assert.equal('locations' in projected, false);
-  assert.equal('rawData' in projected, false);
+test('AI projection is bounded and excludes provider diagnostics', () => {
+  const projected = jobForRanking(jobs(1)[0]);
   assert.equal('diagnostics' in projected, false);
+  assert.equal(projected.deterministicScore, 90);
+});
 
-  let rankingPayload;
-  await rankJobs({
-    jobs: [fullJob],
-    profile: { targetRoles: ['AI engineer'] },
-    resume: { rawText: 'Experienced engineer.' },
-    openRouter: async (messages) => {
-      const payload = JSON.parse(messages[1].content);
-      if (payload.assessments) {
-        return { ok: true, message: { content: JSON.stringify({ selections: { usajobs: [fullJob.externalId], adzuna: [], remotive: [], arbeitnow: [] } }) } };
-      }
-      rankingPayload = payload;
-      return { ok: true, message: { content: JSON.stringify([{ externalId: fullJob.externalId, fitScore: 80, fitTier: 'strong-fit' }]) } };
-    },
-  });
-
-  assert.ok(JSON.stringify(rankingPayload).length < MAX_RANKING_PROMPT_CHARS);
-  assert.equal('locations' in rankingPayload.jobs[0], false);
-  assert.equal('rawData' in rankingPayload.jobs[0], false);
-  assert.equal('diagnostics' in rankingPayload.jobs[0], false);
+test('final selector consumes scored assessments and keeps provider representation', async () => {
+  const candidates = [...jobs(5, 'usajobs'), ...jobs(5, 'adzuna'), ...jobs(5, 'remotive'), ...jobs(5, 'arbeitnow')];
+  let prompt;
+  const selected = await rankJobs({ jobs: candidates, profile: {}, resume: {}, openRouter: async (messages) => {
+    prompt = JSON.parse(messages[1].content);
+    return { ok: true, message: { content: JSON.stringify({ selections: [
+      { externalId: 'adzuna-1', fitScore: 88, fitTier: 'strong match', strengths: ['Python'], gaps: ['Salary unknown'], unknowns: [], reasoning: 'Strong evidence.' },
+    ] }) } };
+  } });
+  assert.match(prompt.candidates[0].externalId, /usajobs/);
+  assert.deepEqual(selected[0].fitScore, 88);
+  assert.equal(selected[0].scoreType, 'ai-selection');
+  assert.deepEqual(selected[0].strengths, ['Python']);
+  assert.ok(selected.filter((entry) => entry.job.providerKey === 'usajobs').length >= 3);
+  assert.ok(selected.filter((entry) => entry.job.providerKey === 'adzuna').length >= 3);
+  assert.equal(selected.rankingDiagnostics.finalSelectedCount, 20);
 });
