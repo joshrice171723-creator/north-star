@@ -175,6 +175,11 @@ const validateJobRecord = (input) => {
   for (const field of ['followUpDate', 'appliedAt']) if (input[field] !== undefined && input[field] !== null && (typeof input[field] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input[field]))) throw new Error(`Invalid job: ${field}.`);
   return input;
 };
+const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progress', 'needs_user_input', 'ready_for_review', 'ready_to_submit', 'submitted', 'withdrawn', 'blocked']);
+const validateApplicationId = (value) => validateCoachId(value, 'application id');
+const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
+const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
+const assertTrustedRenderer = (event) => { if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted IPC sender.'); };
 const validateRoadmapPayload = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid roadmap payload.');
   const collections = ['projects', 'releases', 'phases', 'tasks', 'subtasks'];
@@ -540,6 +545,15 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:profile:save', (_event, input) => coachDatabase.profiles.upsert(input));
   ipcMain.handle('jobs:resume:get', () => coachDatabase.resumes.getMaster());
   ipcMain.handle('jobs:resume:save', (_event, input) => coachDatabase.resumes.upsertMaster(input));
+  ipcMain.handle('jobs:applications:start', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.createOrResume({ jobId: validateCoachId(input?.jobId, 'job id') }); });
+  ipcMain.handle('jobs:applications:get', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.get(validateApplicationId(id)); });
+  ipcMain.handle('jobs:applications:get-for-job', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.applications.getForJob(validateCoachId(jobId, 'job id')); });
+  ipcMain.handle('jobs:applications:list', (event) => { assertTrustedRenderer(event); return coachDatabase.applications.listActive(); });
+  ipcMain.handle('jobs:applications:transition', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.transition(validateApplicationTransition(input)); });
+  ipcMain.handle('jobs:applications:abandon', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.abandon(validateApplicationId(id)); });
+  ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
+  ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
+  ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());

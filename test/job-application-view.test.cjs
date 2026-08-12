@@ -1,0 +1,3 @@
+const assert = require('node:assert/strict'); const test = require('node:test'); const fs = require('node:fs'); const path = require('node:path');
+const root = path.join(__dirname, '..'); const jobsView = fs.readFileSync(path.join(root, 'src', 'JobsView.jsx'), 'utf8'); const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
+test('application workspace stays separate and exposes no browser or submission bridge', () => { assert.match(jobsView, /ApplicationWorkspace/); assert.match(preload, /startJobApplication/); assert.doesNotMatch(preload, /submitJobApplication|applicationBrowser/); });
