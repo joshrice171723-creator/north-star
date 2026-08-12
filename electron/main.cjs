@@ -617,7 +617,9 @@ function registerDatabaseIpc() {
       };
     }
     const attempts = coachDatabase.listJobSearchAttempts(runId);
-    found.diagnostics = { ...found.diagnostics, runId, attempts };
+    // Keep backend-only callbacks out of Electron IPC payloads. A function in
+    // the result can prevent the renderer's search promise from settling.
+    found.diagnostics = { runId, attempts };
     found.attemptsDiagnostics = attempts;
     if (found.error && !found.jobs.length) {
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', resultCount: 0, warning: found.warning || found.error.message || 'No jobs were returned.' });
