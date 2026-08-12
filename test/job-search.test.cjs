@@ -10,6 +10,16 @@ const {
 } = require('../electron/job-search.cjs');
 const { fallbackSearchBrief, buildProviderLanes } = require('../electron/job-search-planner.cjs');
 
+function aiSearchPlan(brief, includeAdzuna = false) {
+  return {
+    ...brief,
+    source: 'ai',
+    searchBrief: brief,
+    providerLanes: buildProviderLanes(brief),
+    ...(includeAdzuna ? { adzunaQueries: [{ laneId: 'adzuna-test', type: 'adzuna-query', what: 'AI engineer' }] } : {}),
+  };
+}
+
 function usaItem(overrides = {}) {
   return {
     MatchedObjectId: '123',
@@ -112,11 +122,16 @@ test('searchJobs keeps relevant jobs and exposes lane counts', async () => {
   global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ SearchResult: { SearchResultCountAll: '1', SearchResultItems: [usaItem()] } }) });
   try {
     const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'] }, {});
-    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'], remotePreference: 'any' }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key' }, plan: { ...brief, searchBrief: brief, providerLanes: buildProviderLanes(brief) } });
+    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'], remotePreference: 'any' }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key' }, plan: aiSearchPlan(brief) });
     assert.ok(result.jobs.length >= 1);
     assert.ok(result.diagnostics.attempts.length >= 1);
     assert.equal(result.counts.retrieved, 16);
     assert.equal(result.counts.unique, 1);
+    assert.equal(result.counts.filtered, 0);
+    assert.equal(result.counts.aiSubmitted, 1);
+    assert.equal(result.sourceStats[0].fetched, 16);
+    assert.equal(result.sourceStats[0].filtered, 0);
+    assert.equal(result.sourceStats[0].aiSubmitted, 1);
   } finally { global.fetch = originalFetch; }
 });
 
@@ -127,7 +142,7 @@ test('Adzuna failure does not hide successful USAJOBS results', async () => {
     : { ok: true, status: 200, json: async () => ({ SearchResult: { SearchResultCountAll: '1', SearchResultItems: [usaItem()] } }) };
   try {
     const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'] }, {});
-    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'], remotePreference: 'any' }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key', adzunaAppId: 'app-1', adzunaApiKey: 'key-1' }, plan: { ...brief, searchBrief: brief, providerLanes: buildProviderLanes(brief) } });
+    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'], remotePreference: 'any' }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key', adzunaAppId: 'app-1', adzunaApiKey: 'key-1' }, plan: aiSearchPlan(brief, true) });
     assert.ok(result.jobs.length >= 1);
     assert.equal(result.error, null);
     assert.match(result.warning, /job-source requests failed/);
@@ -144,12 +159,24 @@ test('retrieval score favors title and skills and hard exclusions remove aviatio
   assert.equal(filterJobs([unrelated], brief).length, 0);
 });
 
+test('retrieval uses a 40-point minimum and does not score salary', () => {
+  const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'] }, {});
+  const relevant = normalizeUsaJobsItem(usaItem(), { laneId: 'title-1', type: 'position-title', positionTitle: 'Computer Scientist' });
+  const withoutSalary = { ...relevant, salaryMin: null, salaryMax: null };
+  assert.equal(calculateRetrievalScore(withoutSalary, brief), calculateRetrievalScore(relevant, brief));
+  assert.ok(calculateRetrievalScore(withoutSalary, brief) >= 40);
+  const weak = { ...relevant, title: 'Administrative Assistant', description: '', duties: '', qualifications: '', requirements: [] };
+  assert.ok(calculateRetrievalScore(weak, brief) < 40);
+  assert.deepEqual(filterJobs([withoutSalary, weak], brief), [withoutSalary]);
+});
+
 
 test('provider failure remains distinct from an empty successful search', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
   try {
-    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: [] }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key' }, plan: { ...fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {}) } });
+    const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {});
+    const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: [] }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key' }, plan: aiSearchPlan(brief) });
     assert.ok(result.error);
     assert.equal(result.error.code, 'provider_error');
     assert.equal(result.counts.retrieved, 0);

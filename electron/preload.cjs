@@ -38,8 +38,10 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,getMasterResume: () => ipcRenderer.invoke('jobs:resume:get')
   ,saveMasterResume: (input) => ipcRenderer.invoke('jobs:resume:save', input)
   ,searchJobs: () => ipcRenderer.invoke('jobs:search')
+  ,onJobSearchProgress: (listener) => { const handler = (_event, progress) => listener(progress); ipcRenderer.on('jobs:search:progress', handler); return () => ipcRenderer.removeListener('jobs:search:progress', handler); }
   ,getJobSource: () => ipcRenderer.invoke('jobs:source:get')
   ,saveJobSource: (input) => ipcRenderer.invoke('jobs:source:save', input)
   ,clearJobSource: () => ipcRenderer.invoke('jobs:source:clear')
   ,testJobSource: () => ipcRenderer.invoke('jobs:source:test')
+  ,getJobSearchAttempts: (runId) => ipcRenderer.invoke('jobs:search:attempts', runId)
 });

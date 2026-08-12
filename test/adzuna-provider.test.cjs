@@ -7,9 +7,10 @@ test('Adzuna request uses documented US search parameters', () => {
   assert.equal(params.get('what'), 'Data Scientist');
   assert.equal(params.get('where'), 'Dallas, TX');
   assert.equal(params.get('salary_min'), '90000');
-  assert.equal(params.get('page'), '2');
-  assert.equal(params.get('app_id'), '');
-  assert.equal(params.get('app_key'), '');
+  assert.equal(params.get('page'), null);
+  assert.equal(params.get('content-type'), 'application/json');
+  assert.equal(params.get('app_id'), null);
+  assert.equal(params.get('app_key'), null);
 });
 
 test('Adzuna normalization returns the shared job shape', () => {
