@@ -560,9 +560,22 @@ function registerDatabaseIpc() {
         ? await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'planning' }) })
         : fallbackPlan(profile, resume);
     } catch (cause) {
-      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning: cause?.message || 'AI search planning failed.' });
+      const warning = cause?.message || 'AI search planning failed.';
+      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning });
+      const attempts = coachDatabase.listJobSearchAttempts(runId);
+      const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      throw cause;
+      return {
+        ok: false,
+        error: { code: cause?.code || 'search_planning_failed', message: warning },
+        warning,
+        jobs: [],
+        matches: [],
+        sourceStats: [],
+        attemptsDiagnostics: attempts,
+        diagnostics: { runId, attempts },
+        apiCalls,
+      };
     }
     const diagnostics = {
       record: ({ provider, lane, scope, result, request }) => coachDatabase.recordJobSearchAttempt({
@@ -586,9 +599,22 @@ function registerDatabaseIpc() {
     try {
       found = await searchJobs({ profile, credentials: readJobSourceCredentials(), plan, diagnostics });
     } catch (cause) {
-      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning: cause?.message || 'Search failed.' });
+      const warning = cause?.message || 'Search failed.';
+      coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning });
+      const attempts = coachDatabase.listJobSearchAttempts(runId);
+      const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      throw cause;
+      return {
+        ok: false,
+        error: { code: cause?.code || 'job_search_failed', message: warning },
+        warning,
+        jobs: [],
+        matches: [],
+        sourceStats: [],
+        attemptsDiagnostics: attempts,
+        diagnostics: { runId, attempts },
+        apiCalls,
+      };
     }
     const attempts = coachDatabase.listJobSearchAttempts(runId);
     found.diagnostics = { ...found.diagnostics, runId, attempts };
