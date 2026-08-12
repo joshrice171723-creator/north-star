@@ -625,6 +625,8 @@ function registerDatabaseIpc() {
       clearAuditRun();
       return { ok: false, ...found, searchPlan: plan, apiCalls };
     }
+    const retrievalApiCalls = coachDatabase.listApiCalls(runId);
+    const retrievalReport = { ok: true, ...found, searchPlan: plan, apiCalls: retrievalApiCalls };
     let ranked = [];
     let rankingStatus = 'not_run';
     let rankingError = null;
@@ -632,7 +634,7 @@ function registerDatabaseIpc() {
       try {
         const reportRankingProgress = (batch) => {
           coachDatabase.recordJobSearchRankingBatch({ runId, ...batch });
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('jobs:search:progress', { runId, ...batch });
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('jobs:search:progress', { runId, ...batch, report: retrievalReport });
         };
         ranked = await rankJobs({ jobs: found.jobs, profile, resume, onBatch: reportRankingProgress, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'ranking' }) });
         rankingStatus = ranked.length ? 'available' : 'unavailable';
