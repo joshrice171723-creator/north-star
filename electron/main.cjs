@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage } = require('electron');
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = require('electron');
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -8,6 +8,7 @@ const { searchJobs, testUsaJobs } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
+const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
 
@@ -179,6 +180,22 @@ const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progres
 const validateApplicationId = (value) => validateCoachId(value, 'application id');
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
+const documentGenerationInFlight = new Set();
+async function generateApplicationDocument(input = {}) {
+  const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
+  if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
+  const key = `${applicationId}:${documentType}`; if (documentGenerationInFlight.has(key)) throw new Error('Document generation is already in progress.'); documentGenerationInFlight.add(key);
+  try {
+    const application = coachDatabase.applications.get(applicationId); if (!application) throw new Error('Application not found.');
+    const job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.');
+    const profile = coachDatabase.profiles.getCurrent() || {}; const resume = coachDatabase.resumes.getMaster() || {}; const evidenceCatalog = buildEvidenceCatalog(profile, resume);
+    const response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
+    if (!response?.ok) throw new Error(response?.error || 'OpenRouter document generation failed.');
+    let content; try { content = normalizeGeneratedContent(documentType, JSON.parse(response.message?.content || '')); } catch { throw new Error('OpenRouter returned malformed document JSON.'); }
+    const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job); const status = validation.errors.length ? 'needs_review' : 'draft';
+    return coachDatabase.applications.documents.save({ applicationId, documentType, title: `${job.roleTitle} ${documentType === 'resume' ? 'Resume' : 'Cover Letter'}`, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: resume.version, modelName: response.model, promptVersion: PROMPT_VERSION, status });
+  } finally { documentGenerationInFlight.delete(key); }
+}
 const assertTrustedRenderer = (event) => { if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted IPC sender.'); };
 const validateRoadmapPayload = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid roadmap payload.');
@@ -554,6 +571,15 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
+  ipcMain.handle('jobs:documents:generate', async (event, input) => { assertTrustedRenderer(event); return generateApplicationDocument(input); });
+  ipcMain.handle('jobs:documents:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.list(validateApplicationId(input?.applicationId), input?.documentType); });
+  ipcMain.handle('jobs:documents:get', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:save-edit', (event, input) => { assertTrustedRenderer(event); const current = coachDatabase.applications.documents.get(validateCoachId(input?.id, 'document id')); if (!current) throw new Error('Document not found.'); return coachDatabase.applications.documents.save({ applicationId: current.applicationId, documentType: current.documentType, title: current.title, content: input.content || current.content, validation: input.validation || { valid: false, errors: [{ code: 'user_edit_requires_review', message: 'User-edited content requires factual review.' }], warnings: [], info: [] }, provenance: input.provenance || current.provenance, sourceResumeVersion: current.sourceResumeVersion, modelName: current.modelName, promptVersion: current.promptVersion, status: 'needs_review' }); });
+  ipcMain.handle('jobs:documents:validate', (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); return doc.validation; });
+  ipcMain.handle('jobs:documents:approve', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.approve(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:select', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.select(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: `${doc.documentType}-v${doc.version}.txt`, filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, renderPlainText(doc.documentType, doc.content), 'utf8'); return coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }); });
+  ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: `${doc.documentType}-v${doc.version}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(doc.htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }); } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());
