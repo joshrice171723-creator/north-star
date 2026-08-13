@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopShell', {
   navigateAcademy: (url) => ipcRenderer.invoke('academy:navigate', url),
-  openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   captureAcademyPage: () => ipcRenderer.invoke('academy:capture-page'),
   getAcademyCaptures: () => ipcRenderer.invoke('academy:get-captures'),
   deleteAcademyCapture: (id) => ipcRenderer.invoke('academy:delete-capture', id),

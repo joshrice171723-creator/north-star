@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView, { EmailMonitorPanel } from './JobsView.jsx';
-import FreeFindsView from './FreeFindsView.jsx';
 import './styles.css';
 import './theme.css';
 import { buildRoadmapHierarchy, workspaceProjects, kanbanTasksForScope } from './roadmapHierarchy.mjs';
@@ -304,7 +303,7 @@ function App() {
   const [roadmapStatus, setRoadmapStatus] = useState({ state: 'loading', message: 'Loading the local roadmapâ€¦' });
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
-  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects', 'jobs', 'free-finds', 'follow-through'].includes(savedState?.view) ? savedState.view : 'today');
+  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects', 'jobs', 'follow-through'].includes(savedState?.view) ? savedState.view : 'today');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
   const [notes, setNotes] = useState(() => savedState?.notes || '');
   const [practiceResults, setPracticeResults] = useState(() => savedState?.practiceResults || {});
@@ -592,7 +591,6 @@ function App() {
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><Target size={17}/> Projects <em>{roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><FileText size={17}/> Archive <em>{roadmap.projects.filter((project) => project.kind === 'project' && project.archived).length}</em></button>
         <button className={view === 'jobs' ? 'nav active' : 'nav'} onClick={() => setView('jobs')}><BriefcaseBusiness size={17}/> Job search <em>{jobs.filter((job) => !['accepted', 'rejected'].includes(job.stage)).length}</em></button>
-        <button className={view === 'free-finds' ? 'nav active' : 'nav'} onClick={() => setView('free-finds')}><Gift size={17}/> Free Finds</button>
         <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Readiness</button>
       </nav>
       <div className="nav-label nav-label-spaced">LEARNING &amp; DEVELOPMENT</div>
@@ -606,7 +604,7 @@ function App() {
     </aside>
 
     <main className="main">
-      <header><div className="crumb">NORTH STAR <ChevronRight size={14}/> <b>{view === 'today' ? 'Today’s Focus' : view === 'command-center' ? 'Command center' : view === 'follow-through' ? 'Follow-through' : view === 'projects' ? 'Projects' : view === 'jobs' ? 'Job search' : view === 'free-finds' ? 'Free Finds' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
+      <header><div className="crumb">NORTH STAR <ChevronRight size={14}/> <b>{view === 'today' ? 'Today’s Focus' : view === 'command-center' ? 'Command center' : view === 'follow-through' ? 'Follow-through' : view === 'projects' ? 'Projects' : view === 'jobs' ? 'Job search' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
       <div className="main-scroll">
         {['curriculum', 'overview', 'practice', 'command-center'].includes(view) && (
         <section className="hero"><div><span className="eyebrow">NORTH STAR · COMMAND CENTER</span><h1>See what matters. Choose what moves. <Star className="hero-star" size={23} fill="currentColor" strokeWidth={1.8}/></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
@@ -615,7 +613,6 @@ function App() {
 <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate  /  not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'}  /  ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmapâ€¦'}</small></div></section>
 )}
         {view === 'jobs' && <><EmailMonitorPanel jobs={jobs} /><JobsView jobs={jobs} onRefresh={refreshJobs} /></>}
-        {view === 'free-finds' && <FreeFindsView />}
         {view === 'today' && (roadmapStatus.state === 'loading'
           ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmapâ€¦</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'
