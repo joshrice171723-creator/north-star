@@ -110,7 +110,7 @@ function clearEmailCredentials() { try { fs.rmSync(emailCredentialsPath(), { for
 async function connectGmailWithGoogle() {
   const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || '';
-  if (!clientId) throw new Error('GMAIL_OAUTH_CLIENT_ID is not configured.');
+  if (!clientId) throw new Error('Google sign-in is not configured. Add GMAIL_OAUTH_CLIENT_ID to the local .env, then restart the app.');
   const pkce = createPkcePair();
   const state = crypto.randomBytes(24).toString('hex');
   const server = http.createServer();

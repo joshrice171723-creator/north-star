@@ -53,4 +53,11 @@ The active objective is selected by the user. Read `PROJECT_BRIEF.md`, then `.he
 ## License
 
 Private project. All rights reserved unless changed by the repository owner.
-Gmail unattended monitoring requires `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET` in the local `.env`, plus a refresh token saved through the email source IPC. Access and refresh tokens are encrypted with Electron safe storage; tokens are never exposed to the renderer.
+Gmail sign-in requires one-time Google Cloud setup. Create an OAuth client of type **Desktop app** in a Google Cloud project with the Gmail API enabled, then add the downloaded client values to the gitignored local `.env`:
+
+```dotenv
+GMAIL_OAUTH_CLIENT_ID=your-desktop-client-id.apps.googleusercontent.com
+GMAIL_OAUTH_CLIENT_SECRET=your-desktop-client-secret
+```
+
+Restart the app after changing `.env`, then use **Sign in with Google**. The app opens the Google consent window, captures the local callback, and stores the refresh token through Electron safe storage. Users do not need to find or paste an API key.
