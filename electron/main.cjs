@@ -184,12 +184,13 @@ const documentGenerationInFlight = new Set();
 async function generateApplicationDocument(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
   if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
+  if (input.guidance !== undefined && (typeof input.guidance !== 'string' || input.guidance.length > 2000)) throw new Error('Document guidance must be 2,000 characters or fewer.');
   const key = `${applicationId}:${documentType}`; if (documentGenerationInFlight.has(key)) throw new Error('Document generation is already in progress.'); documentGenerationInFlight.add(key);
   try {
     const application = coachDatabase.applications.get(applicationId); if (!application) throw new Error('Application not found.');
     const job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.');
     const profile = coachDatabase.profiles.getCurrent() || {}; const resume = coachDatabase.resumes.getMaster() || {}; const evidenceCatalog = buildEvidenceCatalog(profile, resume);
-    const response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
+    const response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog, guidance: input.guidance || '' }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
     if (!response?.ok) throw new Error(response?.error || 'OpenRouter document generation failed.');
     let content; try { content = normalizeGeneratedContent(documentType, JSON.parse(response.message?.content || '')); } catch { throw new Error('OpenRouter returned malformed document JSON.'); }
     const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job); const status = validation.errors.length ? 'needs_review' : 'draft';
