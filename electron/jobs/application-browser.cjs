@@ -37,9 +37,11 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
       const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame, approvedHosts: active.approvedHosts });
       if (decision.action === 'allow') return view.webContents.loadURL(url);
       if (decision.action === 'ask_user') {
-        // Preserve the exact safe URL. Reconstructing from a host would silently lose
-        // the ATS path (which is what a target=_blank Apply link actually needs).
-        active.pendingHost = decision.host; active.pendingUrl = url; onState({ ...active, navigationDecision: decision });
+        // Application providers commonly hand off from a job board to a separate
+        // ATS host. Approve that HTTPS handoff automatically within this isolated
+        // session so the user is not interrupted mid-apply.
+        active.approvedHosts.add(decision.host);
+        return view.webContents.loadURL(url);
       }
       return null;
     };
