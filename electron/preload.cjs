@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,setApplicationBrowserBounds: (bounds) => ipcRenderer.invoke('jobs:browser:bounds', bounds)
   ,getApplicationBrowserSnapshot: (applicationId) => ipcRenderer.invoke('jobs:browser:snapshot', applicationId)
   ,rescanApplicationBrowser: () => ipcRenderer.invoke('jobs:browser:rescan')
+  ,buildApplicationFillPlan: () => ipcRenderer.invoke('jobs:browser:build-fill-plan')
+  ,fillApprovedApplicationFields: (planId) => ipcRenderer.invoke('jobs:browser:fill-plan', planId)
   ,approveApplicationBrowserHost: (host) => ipcRenderer.invoke('jobs:browser:approve-host', host)
   ,applicationBrowserBack: () => ipcRenderer.invoke('jobs:browser:back')
   ,applicationBrowserForward: () => ipcRenderer.invoke('jobs:browser:forward')
