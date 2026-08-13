@@ -7,6 +7,7 @@ const { eq, isNull, and, asc, desc } = require('drizzle-orm');
 const { sqliteTable, text, integer, index, uniqueIndex } = require('drizzle-orm/sqlite-core');
 const { assertTransition, computeApplicationReadiness, validateAnswer } = require('./jobs/application-domain.cjs');
 const { DOCUMENT_TYPES, STATUSES, renderPlainText, renderHtml } = require('./jobs/application-documents.cjs');
+const { chunkText, searchChunks, stableEmailId } = require('./job-email-rag.cjs');
 
 const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
@@ -404,6 +405,33 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   function listJobSearchAttempts(runId) {
     return sqlite.prepare('SELECT * FROM job_search_attempts WHERE run_id = ? ORDER BY created_at ASC').all(runId).map((row) => ({ ...row, request: (() => { try { return JSON.parse(row.request_json || '{}'); } catch { return {}; } })(), preview: (() => { try { const parsed = JSON.parse(row.preview_json || '[]'); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() }));
   }
+  function upsertEmail(input = {}) {
+    const timestamp = now();
+    const emailId = input.id || stableEmailId(input.provider || 'gmail', input.externalId);
+    const matchedTerms = Array.isArray(input.matchedTerms) ? input.matchedTerms.slice(0, 30) : [];
+    sqlite.prepare(`INSERT INTO email_messages (id, provider, external_id, thread_id, subject, sender, recipients, received_at, body, is_job_related, classification_score, matched_terms_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, external_id) DO UPDATE SET thread_id=excluded.thread_id, subject=excluded.subject, sender=excluded.sender, recipients=excluded.recipients, received_at=excluded.received_at, body=excluded.body, is_job_related=excluded.is_job_related, classification_score=excluded.classification_score, matched_terms_json=excluded.matched_terms_json, updated_at=excluded.updated_at`).run(
+      emailId, String(input.provider || 'gmail').slice(0, 40), String(input.externalId || '').slice(0, 300), String(input.threadId || '').slice(0, 300), String(input.subject || '').slice(0, 1000), String(input.from || '').slice(0, 500), String(input.to || '').slice(0, 1000), input.receivedAt || null, String(input.body || '').slice(0, 200000), input.isJobRelated ? 1 : 0, Number(input.score) || 0, JSON.stringify(matchedTerms), input.createdAt || timestamp, timestamp,
+    );
+    sqlite.prepare('DELETE FROM email_chunks WHERE email_id = ?').run(emailId);
+    const insertChunk = sqlite.prepare('INSERT INTO email_chunks (id, email_id, chunk_index, content, created_at) VALUES (?, ?, ?, ?, ?)');
+    for (const chunk of chunkText(`${input.subject || ''}\n${input.from || ''}\n${input.body || ''}`)) insertChunk.run(id('email-chunk'), emailId, chunk.index, chunk.content, timestamp);
+    return getEmail(emailId);
+  }
+  function getEmail(emailId) {
+    const row = sqlite.prepare('SELECT * FROM email_messages WHERE id = ?').get(String(emailId));
+    if (!row) return null;
+    return { ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]') };
+  }
+  function listEmails({ jobOnly = true, limit = 50 } = {}) {
+    const rows = sqlite.prepare(`SELECT * FROM email_messages ${jobOnly ? 'WHERE is_job_related = 1' : ''} ORDER BY received_at DESC, updated_at DESC LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)));
+    return rows.map((row) => ({ ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]') }));
+  }
+  function searchEmailRag(query, limit = 10) {
+    const chunks = sqlite.prepare('SELECT c.id, c.email_id AS emailId, c.chunk_index AS chunkIndex, c.content, e.subject, e.sender, e.received_at AS receivedAt FROM email_chunks c JOIN email_messages e ON e.id = c.email_id WHERE e.is_job_related = 1').all();
+    return searchChunks(chunks, query, limit);
+  }
 
   seedDefaults();
   const hierarchyRepairResult = repairWorkspaceHierarchy();
@@ -412,6 +440,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
+    email: { upsert: upsertEmail, get: getEmail, list: listEmails, search: searchEmailRag },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
