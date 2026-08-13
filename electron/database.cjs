@@ -409,10 +409,11 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const timestamp = now();
     const emailId = input.id || stableEmailId(input.provider || 'gmail', input.externalId);
     const matchedTerms = Array.isArray(input.matchedTerms) ? input.matchedTerms.slice(0, 30) : [];
-    sqlite.prepare(`INSERT INTO email_messages (id, provider, external_id, thread_id, subject, sender, recipients, received_at, body, is_job_related, classification_score, matched_terms_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider, external_id) DO UPDATE SET thread_id=excluded.thread_id, subject=excluded.subject, sender=excluded.sender, recipients=excluded.recipients, received_at=excluded.received_at, body=excluded.body, is_job_related=excluded.is_job_related, classification_score=excluded.classification_score, matched_terms_json=excluded.matched_terms_json, updated_at=excluded.updated_at`).run(
-      emailId, String(input.provider || 'gmail').slice(0, 40), String(input.externalId || '').slice(0, 300), String(input.threadId || '').slice(0, 300), String(input.subject || '').slice(0, 1000), String(input.from || '').slice(0, 500), String(input.to || '').slice(0, 1000), input.receivedAt || null, String(input.body || '').slice(0, 200000), input.isJobRelated ? 1 : 0, Number(input.score) || 0, JSON.stringify(matchedTerms), input.createdAt || timestamp, timestamp,
+    const matchedPipelineSignals = Array.isArray(input.matchedPipelineSignals) ? input.matchedPipelineSignals.slice(0, 30) : [];
+    sqlite.prepare(`INSERT INTO email_messages (id, provider, external_id, thread_id, subject, sender, recipients, received_at, body, is_job_related, classification_score, matched_terms_json, matched_pipeline_signals_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, external_id) DO UPDATE SET thread_id=excluded.thread_id, subject=excluded.subject, sender=excluded.sender, recipients=excluded.recipients, received_at=excluded.received_at, body=excluded.body, is_job_related=excluded.is_job_related, classification_score=excluded.classification_score, matched_terms_json=excluded.matched_terms_json, matched_pipeline_signals_json=excluded.matched_pipeline_signals_json, updated_at=excluded.updated_at`).run(
+      emailId, String(input.provider || 'gmail').slice(0, 40), String(input.externalId || '').slice(0, 300), String(input.threadId || '').slice(0, 300), String(input.subject || '').slice(0, 1000), String(input.from || '').slice(0, 500), String(input.to || '').slice(0, 1000), input.receivedAt || null, String(input.body || '').slice(0, 200000), input.isJobRelated ? 1 : 0, Number(input.score) || 0, JSON.stringify(matchedTerms), JSON.stringify(matchedPipelineSignals), input.createdAt || timestamp, timestamp,
     );
     sqlite.prepare('DELETE FROM email_chunks WHERE email_id = ?').run(emailId);
     const insertChunk = sqlite.prepare('INSERT INTO email_chunks (id, email_id, chunk_index, content, created_at) VALUES (?, ?, ?, ?, ?)');
@@ -422,11 +423,11 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   function getEmail(emailId) {
     const row = sqlite.prepare('SELECT * FROM email_messages WHERE id = ?').get(String(emailId));
     if (!row) return null;
-    return { ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]') };
+    return { ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]') };
   }
   function listEmails({ jobOnly = true, limit = 50 } = {}) {
     const rows = sqlite.prepare(`SELECT * FROM email_messages ${jobOnly ? 'WHERE is_job_related = 1' : ''} ORDER BY received_at DESC, updated_at DESC LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)));
-    return rows.map((row) => ({ ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]') }));
+    return rows.map((row) => ({ ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]') }));
   }
   function searchEmailRag(query, limit = 10) {
     const chunks = sqlite.prepare('SELECT c.id, c.email_id AS emailId, c.chunk_index AS chunkIndex, c.content, e.subject, e.sender, e.received_at AS receivedAt FROM email_chunks c JOIN email_messages e ON e.id = c.email_id WHERE e.is_job_related = 1').all();
