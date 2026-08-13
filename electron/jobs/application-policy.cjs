@@ -20,7 +20,7 @@ const profileSource = (field) => {
 };
 
 const reusableAnswerFor = (field, answers = []) => {
-  const key = fieldText(field).replace(/\s+/g, ' ').trim();
+  const key = String(field.label || field.name || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_./-]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   return answers.find((answer) => answer?.questionKey === key || fieldText({ label: answer?.questionText }).replace(/\s+/g, ' ').trim() === key);
 };
 
