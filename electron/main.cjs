@@ -9,6 +9,7 @@ const { searchJobs, testUsaJobs } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
+const { normalizeGmailMessage } = require('./job-email-rag.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
@@ -34,6 +35,7 @@ let academyVisible = true;
 let academyLayout = null;
 let coachDatabase;
 let applicationBrowser;
+let emailMonitorTimer;
 const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
 function readStoredJobSourceCredentials() { try { const parsed = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
 function readJobSourceCredentials() {
@@ -75,6 +77,42 @@ function jobSourceStatus() {
   const encryptedFieldsPresent = Boolean(stored.usajobsApiKey || stored.adzunaAppId || stored.adzunaApiKey);
   const decryptionFailed = encryptedFieldsPresent && secureStorageAvailable && Boolean((stored.usajobsApiKey && !credentials.usajobsApiKey) || (stored.adzunaAppId && !credentials.adzunaAppId) || (stored.adzunaApiKey && !credentials.adzunaApiKey));
   return { configured: Boolean(credentials.usajobsEmail && credentials.usajobsApiKey), email: credentials.usajobsEmail || stored.usajobsEmail || '', adzunaConfigured: Boolean(credentials.adzunaAppId && credentials.adzunaApiKey), credentialsPresent: encryptedFieldsPresent, secureStorageAvailable, decryptionFailed, warning: encryptedFieldsPresent && (!secureStorageAvailable || decryptionFailed) ? 'Encrypted credentials are present, but secure storage is unavailable or could not decrypt them. Your keys were not deleted; restart the app before saving.' : '' };
+}
+const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
+function readEmailCredentials() {
+  try {
+    const stored = JSON.parse(fs.readFileSync(emailCredentialsPath(), 'utf8'));
+    if (!stored?.accessToken || !safeStorage.isEncryptionAvailable()) return { provider: 'gmail', email: stored?.email || '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() };
+    return { provider: 'gmail', email: stored.email || '', accessToken: safeStorage.decryptString(Buffer.from(stored.accessToken, 'base64')), configured: true, secureStorageAvailable: true };
+  } catch { return { provider: 'gmail', email: '', accessToken: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+}
+function saveEmailCredentials(input = {}) {
+  const accessToken = typeof input.accessToken === 'string' ? input.accessToken.trim() : '';
+  const email = typeof input.email === 'string' ? input.email.trim().slice(0, 320) : '';
+  if (!accessToken) throw new Error('A Gmail OAuth access token is required.');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable; Gmail credentials were not saved.');
+  const destination = emailCredentialsPath();
+  const temporary = `${destination}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, JSON.stringify({ email, accessToken: safeStorage.encryptString(accessToken).toString('base64') }), { mode: 0o600 });
+  fs.renameSync(temporary, destination);
+  return { provider: 'gmail', email, configured: true, secureStorageAvailable: true };
+}
+function clearEmailCredentials() { try { fs.rmSync(emailCredentialsPath(), { force: true }); } catch {} return { provider: 'gmail', email: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+async function syncJobEmails() {
+  const credentials = readEmailCredentials();
+  if (!credentials.configured) return { ok: false, configured: false, imported: 0, message: 'Connect Gmail before syncing.' };
+  const headers = { Authorization: `Bearer ${credentials.accessToken}` };
+  const listResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&q=newer_than:30d', { headers });
+  if (!listResponse.ok) return { ok: false, configured: true, imported: 0, message: `Gmail sync failed (${listResponse.status}). Reconnect if the access token expired.` };
+  const listed = await listResponse.json();
+  let imported = 0;
+  for (const item of (listed.messages || [])) {
+    const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`, { headers });
+    if (!response.ok) continue;
+    coachDatabase.email.upsert({ provider: 'gmail', ...normalizeGmailMessage(await response.json()) });
+    imported += 1;
+  }
+  return { ok: true, configured: true, imported, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
 }
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
@@ -612,6 +650,12 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:search:attempts', (_event, runId) => coachDatabase.listJobSearchAttempts(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
+  ipcMain.handle('email:source:get', () => { const { accessToken, ...safe } = readEmailCredentials(); return safe; });
+  ipcMain.handle('email:source:save', (_event, input) => saveEmailCredentials(input));
+  ipcMain.handle('email:source:clear', () => clearEmailCredentials());
+  ipcMain.handle('email:sync', () => syncJobEmails());
+  ipcMain.handle('email:list', (_event, options) => coachDatabase.email.list(options || {}));
+  ipcMain.handle('email:search', (_event, query, limit) => coachDatabase.email.search(String(query || '').slice(0, 500), Math.min(20, Number(limit) || 10)));
   setAuditPersistence((entry) => coachDatabase.recordApiCall(entry));
   ipcMain.handle('jobs:search', async () => {
     const profile = coachDatabase.profiles.getCurrent();
@@ -742,6 +786,9 @@ function registerDatabaseIpc() {
 app.whenReady().then(() => {
   coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), seedPath: roadmapSeedPath });
   registerDatabaseIpc();
+  // Poll only after a token has been explicitly configured; syncing is read-only
+  // and failures are intentionally isolated so the desktop app stays available.
+  emailMonitorTimer = setInterval(() => { if (readEmailCredentials().configured) syncJobEmails().catch(() => {}); }, 10 * 60 * 1000);
   ipcMain.handle('academy:navigate', (_event, url) => navigateAcademy(url));
   ipcMain.handle('academy:capture-page', () => captureAcademyPage());
   ipcMain.handle('academy:get-captures', () => getAcademyCaptures());
@@ -767,6 +814,6 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { try { coachDatabase?.close(); } catch { /* best effort */ } });
+app.on('will-quit', () => { if (emailMonitorTimer) clearInterval(emailMonitorTimer); try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };

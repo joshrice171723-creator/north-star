@@ -75,4 +75,10 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,clearJobSource: () => ipcRenderer.invoke('jobs:source:clear')
   ,testJobSource: () => ipcRenderer.invoke('jobs:source:test')
   ,getJobSearchAttempts: (runId) => ipcRenderer.invoke('jobs:search:attempts', runId)
+  ,getEmailSource: () => ipcRenderer.invoke('email:source:get')
+  ,saveEmailSource: (input) => ipcRenderer.invoke('email:source:save', input)
+  ,clearEmailSource: () => ipcRenderer.invoke('email:source:clear')
+  ,syncJobEmails: () => ipcRenderer.invoke('email:sync')
+  ,listJobEmails: (options) => ipcRenderer.invoke('email:list', options)
+  ,searchJobEmails: (query, limit) => ipcRenderer.invoke('email:search', query, limit)
 });
