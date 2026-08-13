@@ -5,3 +5,8 @@ test('policy blocks protected controls and fails closed for unknown fields', () 
   assert.equal(decideField({ elementType: 'button', label: 'Submit application' }).action, 'blocked');
   assert.equal(decideField({ elementType: 'input', label: 'Unfamiliar field' }).action, 'ask');
 });
+test('machine-formatted ATS fields are classified without splitting a name', () => {
+  const profile = { email: 'candidate@example.test', fullName: 'Ada Lovelace' };
+  assert.equal(decideField({ elementType: 'input', name: 'email_address' }, { profile }).action, 'fill');
+  assert.equal(decideField({ elementType: 'input', name: 'first_name' }, { profile }).action, 'ask');
+});
