@@ -10,6 +10,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
+const { tokenIsUsable, refreshGmailAccessToken } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
@@ -82,32 +83,56 @@ const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-cre
 function readEmailCredentials() {
   try {
     const stored = JSON.parse(fs.readFileSync(emailCredentialsPath(), 'utf8'));
-    if (!stored?.accessToken || !safeStorage.isEncryptionAvailable()) return { provider: 'gmail', email: stored?.email || '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() };
-    return { provider: 'gmail', email: stored.email || '', accessToken: safeStorage.decryptString(Buffer.from(stored.accessToken, 'base64')), configured: true, secureStorageAvailable: true };
-  } catch { return { provider: 'gmail', email: '', accessToken: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+    if (!safeStorage.isEncryptionAvailable()) return { provider: 'gmail', email: stored?.email || '', configured: false, secureStorageAvailable: false };
+    const decrypt = (value) => value ? safeStorage.decryptString(Buffer.from(value, 'base64')) : '';
+    const accessToken = decrypt(stored?.accessToken);
+    const refreshToken = decrypt(stored?.refreshToken);
+    return { provider: 'gmail', email: stored.email || '', accessToken, refreshToken, expiresAt: Number(stored.expiresAt) || 0, configured: Boolean(accessToken || refreshToken), secureStorageAvailable: true };
+  } catch { return { provider: 'gmail', email: '', accessToken: '', refreshToken: '', expiresAt: 0, configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
 }
 function saveEmailCredentials(input = {}) {
   const accessToken = typeof input.accessToken === 'string' ? input.accessToken.trim() : '';
+  const refreshToken = typeof input.refreshToken === 'string' ? input.refreshToken.trim() : '';
   const email = typeof input.email === 'string' ? input.email.trim().slice(0, 320) : '';
-  if (!accessToken) throw new Error('A Gmail OAuth access token is required.');
+  if (!accessToken && !refreshToken) throw new Error('A Gmail OAuth access token or refresh token is required.');
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable; Gmail credentials were not saved.');
   const destination = emailCredentialsPath();
-  const temporary = `${destination}.tmp-${process.pid}`;
-  fs.writeFileSync(temporary, JSON.stringify({ email, accessToken: safeStorage.encryptString(accessToken).toString('base64') }), { mode: 0o600 });
+  const temporary = destination + '.tmp-' + process.pid;
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(destination, 'utf8')); } catch {}
+  const encrypt = (value) => value ? safeStorage.encryptString(value).toString('base64') : '';
+  fs.writeFileSync(temporary, JSON.stringify({ email: email || stored.email || '', accessToken: accessToken ? encrypt(accessToken) : (stored.accessToken || ''), refreshToken: refreshToken ? encrypt(refreshToken) : (stored.refreshToken || ''), expiresAt: Number.isFinite(Number(input.expiresAt)) ? Number(input.expiresAt) : (accessToken ? 0 : (Number(stored.expiresAt) || 0)) }), { mode: 0o600 });
   fs.renameSync(temporary, destination);
-  return { provider: 'gmail', email, configured: true, secureStorageAvailable: true };
+  return { provider: 'gmail', email: email || stored.email || '', configured: true, secureStorageAvailable: true };
 }
 function clearEmailCredentials() { try { fs.rmSync(emailCredentialsPath(), { force: true }); } catch {} return { provider: 'gmail', email: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
 async function syncJobEmails() {
-  const credentials = readEmailCredentials();
+  let credentials = readEmailCredentials();
   if (!credentials.configured) return { ok: false, configured: false, imported: 0, message: 'Connect Gmail before syncing.' };
-  const headers = { Authorization: `Bearer ${credentials.accessToken}` };
-  const listResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&q=newer_than:30d', { headers });
-  if (!listResponse.ok) return { ok: false, configured: true, imported: 0, message: `Gmail sync failed (${listResponse.status}). Reconnect if the access token expired.` };
+  const refresh = async () => {
+    const next = await refreshGmailAccessToken({ refreshToken: credentials.refreshToken, clientId: process.env.GMAIL_OAUTH_CLIENT_ID, clientSecret: process.env.GMAIL_OAUTH_CLIENT_SECRET });
+    credentials = { ...credentials, ...next };
+    saveEmailCredentials({ email: credentials.email, accessToken: next.accessToken, expiresAt: next.expiresAt });
+  };
+  if (!tokenIsUsable(credentials)) {
+    if (!credentials.refreshToken) return { ok: false, configured: true, imported: 0, message: 'Gmail access token expired. Add a refresh token to resume unattended monitoring.' };
+    try { await refresh(); } catch (cause) { return { ok: false, configured: true, imported: 0, message: cause.message }; }
+  }
+  const request = async (url) => {
+    let response = await fetch(url, { headers: { Authorization: `Bearer ${credentials.accessToken}` } });
+    if (response.status === 401 && credentials.refreshToken) {
+      try { await refresh(); } catch (cause) { return { response, refreshError: cause }; }
+      response = await fetch(url, { headers: { Authorization: `Bearer ${credentials.accessToken}` } });
+    }
+    return { response };
+  };
+  const listedRequest = await request('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&q=newer_than:30d');
+  const listResponse = listedRequest.response;
+  if (!listResponse.ok) return { ok: false, configured: true, imported: 0, message: listedRequest.refreshError?.message || `Gmail sync failed (${listResponse.status}). Add a valid refresh token if the access token expired.` };
   const listed = await listResponse.json();
   let imported = 0;
   for (const item of (listed.messages || [])) {
-    const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`, { headers });
+    const { response } = await request(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`);
     if (!response.ok) continue;
     coachDatabase.email.upsert({ provider: 'gmail', ...normalizeGmailMessage(await response.json()) });
     imported += 1;

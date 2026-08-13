@@ -8,7 +8,7 @@ const PROFILE_LIST_FIELDS = ['targetRoles', 'targetLocations', 'targetIndustries
 
 const emptyJob = () => ({ id: '', company: '', roleTitle: '', url: '', location: '', employmentType: '', salaryRange: '', source: '', stage: 'target', priority: 'medium', nextAction: '', followUpDate: '', contactName: '', contactEmail: '', notes: '', appliedAt: null });
 const emptySourceForm = () => ({ usajobsEmail: '', usajobsApiKey: '', adzunaAppId: '', adzunaApiKey: '' });
-const emptyEmailForm = () => ({ email: '', accessToken: '' });
+const emptyEmailForm = () => ({ email: '', accessToken: '', refreshToken: '' });
 const savedCredentialPlaceholder = '••••••••••••';
 const label = (type) => type === 'resume' ? 'Resume' : 'Cover letter';
 const asList = (value) => (Array.isArray(value) ? value : []).flatMap((entry) => String(entry || '').split(',')).map((entry) => entry.trim()).filter(Boolean);
@@ -96,7 +96,7 @@ function EmailMonitorPanel() {
   const [busy, setBusy] = useState(false);
   const load = async () => { const [savedSource, savedEmails] = await Promise.all([window.desktopShell?.getEmailSource?.(), window.desktopShell?.listJobEmails?.({ jobOnly: true, limit: 30 })]); if (savedSource) { setSource(savedSource); setForm((current) => ({ ...current, email: savedSource.email || '' })); } setEmails(savedEmails || []); };
   useEffect(() => { load().catch((cause) => setMessage(cause?.message || 'Could not load email monitor.')); }, []);
-  const save = async () => { setBusy(true); try { const saved = await window.desktopShell?.saveEmailSource?.(form); setSource(saved); setForm((current) => ({ ...current, accessToken: '' })); setMessage('Gmail connected. Read-only sync runs every 10 minutes while the app is open.'); } catch (cause) { setMessage(cause?.message || 'Could not connect Gmail.'); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); try { const saved = await window.desktopShell?.saveEmailSource?.(form); setSource(saved); setForm((current) => ({ ...current, accessToken: '', refreshToken: '' })); setMessage('Gmail connected. Read-only sync runs every 10 minutes while the app is open; the refresh token keeps access durable.'); } catch (cause) { setMessage(cause?.message || 'Could not connect Gmail.'); } finally { setBusy(false); } };
   const sync = async () => { setBusy(true); try { const result = await window.desktopShell?.syncJobEmails?.(); setMessage(result?.message || `Synced ${result?.imported || 0} messages; ${result?.jobRelated || 0} appear job-related.`); await load(); } catch (cause) { setMessage(cause?.message || 'Could not sync Gmail.'); } finally { setBusy(false); } };
   const search = async () => { setResults(query.trim() ? await window.desktopShell?.searchJobEmails?.(query, 10) : []); };
   const clear = async () => { await window.desktopShell?.clearEmailSource?.(); setSource({ configured: false, email: '' }); setForm(emptyEmailForm()); setMessage('Gmail connection cleared. Indexed content remains local.'); };

@@ -53,3 +53,4 @@ The active objective is selected by the user. Read `PROJECT_BRIEF.md`, then `.he
 ## License
 
 Private project. All rights reserved unless changed by the repository owner.
+Gmail unattended monitoring requires `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET` in the local `.env`, plus a refresh token saved through the email source IPC. Access and refresh tokens are encrypted with Electron safe storage; tokens are never exposed to the renderer.
