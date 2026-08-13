@@ -10,11 +10,13 @@ function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-function classifyJobEmail({ subject = '', from = '', body = '' } = {}) {
+function classifyJobEmail({ subject = '', from = '', body = '', pipelineSignals = [] } = {}) {
   const text = `${subject} ${from} ${body}`.toLowerCase();
   const matchedTerms = JOB_TERMS.filter((term) => text.includes(term));
-  const score = Math.min(100, matchedTerms.length * 18 + (from.toLowerCase().includes('recruit') ? 20 : 0));
-  return { isJobRelated: score >= 18, score, matchedTerms };
+  const normalizedPipelineSignals = [...new Set(pipelineSignals.map((term) => normalizeText(term).toLowerCase()).filter((term) => term.length >= 3))];
+  const matchedPipelineSignals = normalizedPipelineSignals.filter((term) => text.includes(term));
+  const score = Math.min(100, matchedTerms.length * 18 + matchedPipelineSignals.length * 35 + (from.toLowerCase().includes('recruit') ? 20 : 0));
+  return { isJobRelated: score >= 18, score, matchedTerms, matchedPipelineSignals };
 }
 
 function chunkText(text, { size = 1200, overlap = 180 } = {}) {
@@ -57,14 +59,14 @@ function extractGmailText(payload) {
   return decodeBase64Url(textPart?.body?.data || '');
 }
 
-function normalizeGmailMessage(message) {
+function normalizeGmailMessage(message, options = {}) {
   const payload = message?.payload || {};
   const subject = normalizeText(header(payload, 'Subject'));
   const from = normalizeText(header(payload, 'From'));
   const to = normalizeText(header(payload, 'To'));
   const receivedAt = header(payload, 'Date') || null;
   const body = normalizeText(extractGmailText(payload));
-  const classification = classifyJobEmail({ subject, from, body });
+  const classification = classifyJobEmail({ subject, from, body, pipelineSignals: options.pipelineSignals });
   return { externalId: message.id, threadId: message.threadId || '', subject, from, to, receivedAt, body, ...classification };
 }
 

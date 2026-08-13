@@ -9,6 +9,12 @@ test('classifies recruiter and interview messages as job-related', () => {
   assert.ok(result.matchedTerms.includes('interview'));
 });
 
+test('classifies messages using saved pipeline signals', () => {
+  const result = classifyJobEmail({ subject: 'Next steps', from: 'talent@acme.example', body: 'Following up on our conversation.', pipelineSignals: ['Acme Corporation', 'Senior Platform Engineer'] });
+  assert.equal(result.isJobRelated, true);
+  assert.deepEqual(result.matchedPipelineSignals, ['acme corporation']);
+});
+
 test('chunks text with overlap and retrieves matching chunks', () => {
   const chunks = chunkText('alpha '.repeat(500), { size: 100, overlap: 20 });
   assert.ok(chunks.length > 1);
