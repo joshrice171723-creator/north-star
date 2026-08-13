@@ -12,11 +12,23 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const appSession = session.fromPartition('persist:job-application-copilot');
     // Both handlers are installed because Chromium may consult either path depending on API.
     appSession.setPermissionCheckHandler(() => false); appSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const guard = (event, url, details = {}) => { const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts }); if (decision.action === 'deny') event.preventDefault(); if (decision.action === 'ask_user') { event.preventDefault(); active.pendingHost = decision.host; onState({ ...active, navigationDecision: decision }); } };
+    const requestNavigation = async (url, isMainFrame = true) => {
+      const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame, approvedHosts: active.approvedHosts });
+      if (decision.action === 'allow') return view.webContents.loadURL(url);
+      if (decision.action === 'ask_user') {
+        // Preserve the exact safe URL. Reconstructing from a host would silently lose
+        // the ATS path (which is what a target=_blank Apply link actually needs).
+        active.pendingHost = decision.host; active.pendingUrl = url; onState({ ...active, navigationDecision: decision });
+      }
+      return null;
+    };
+    // Remote pages never receive a second window. A user-triggered target=_blank link
+    // is routed through the same isolated view and the normal host checkpoint instead.
+    view.webContents.setWindowOpenHandler(({ url }) => { requestNavigation(url, true).catch(() => {}); return { action: 'deny' }; });
+    const guard = (event, url, details = {}) => { const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts }); if (decision.action !== 'allow') { event.preventDefault(); requestNavigation(url, details.isMainFrame !== false).catch(() => {}); } };
     view.webContents.on('will-navigate', guard); view.webContents.on('will-redirect', guard); view.webContents.on('did-finish-load', async () => { active.currentUrl = redactUrl(view.webContents.getURL()); active.status = 'observing'; try { await inspect(); } catch { onState({ ...active, error: 'Inspection was unavailable for this page.' }); } });
     await view.webContents.loadURL(initialUrl); return publicState(); };
-  const approveHost = async (host) => { if (!active?.pendingHost || host !== active.pendingHost) throw new Error('No matching navigation approval is pending.'); active.approvedHosts.add(host); active.pendingHost = ''; await view.webContents.loadURL(`https://${host}`); return publicState(); };
+  const approveHost = async (host) => { if (!active?.pendingHost || host !== active.pendingHost || !active.pendingUrl) throw new Error('No matching navigation approval is pending.'); const pendingUrl = active.pendingUrl; active.approvedHosts.add(host); active.pendingHost = ''; active.pendingUrl = ''; await view.webContents.loadURL(pendingUrl); return publicState(); };
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
