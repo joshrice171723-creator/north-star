@@ -276,6 +276,29 @@ const validateJobRecord = (input) => {
   for (const field of ['followUpDate', 'appliedAt']) if (input[field] !== undefined && input[field] !== null && (typeof input[field] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input[field]))) throw new Error(`Invalid job: ${field}.`);
   return input;
 };
+const validateJobDetailId = (value) => validateCoachId(value, 'job id');
+const validateJobFollowUp = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid follow-up task.'); validateJobDetailId(input.jobId); if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) throw new Error('Invalid follow-up title.'); if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error('Invalid follow-up due date.'); if (input.sourceEmailId !== undefined && input.sourceEmailId !== null) validateCoachId(input.sourceEmailId, 'email id'); return input; };
+const validateJobCalendarEvent = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid calendar event.'); validateJobDetailId(input.jobId); if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) throw new Error('Invalid calendar event title.'); for (const field of ['startsAt', 'endsAt']) if (typeof input[field] !== 'string' || !input[field].trim() || input[field].length > 80) throw new Error(`Invalid calendar event ${field}.`); return input; };
+async function interpretJobEmail(input = {}) {
+  validateJobDetailId(input.jobId); validateCoachId(input.emailId, 'email id');
+  const email = coachDatabase.email.get(input.emailId); if (!email || !email.linkedJobIds.includes(input.jobId)) throw new Error('Choose an email linked to this job.');
+  const job = coachDatabase.jobs.list().find((entry) => entry.id === input.jobId); if (!job) throw new Error('Pipeline job not found.');
+  const response = await openRouterChat([
+    { role: 'system', content: 'Interpret one job-search email. Return JSON only: {"summary":"","signal":"interview|rejection|offer|next_step|none","recommendedStage":"target|researching|ready|applied|screen|interviewing|final|offer|accepted|rejected|null","followUpTitle":"","followUpDate":"YYYY-MM-DD or null","confidence":"low|medium|high"}. Do not invent facts. A recommendation never applies changes.' },
+    { role: 'user', content: JSON.stringify({ job: { company: job.company, roleTitle: job.roleTitle, stage: job.stage }, email: { subject: email.subject, sender: email.sender, receivedAt: email.received_at || email.receivedAt, body: String(email.body || '').slice(0, 12000) } }) }
+  ], { auditPurpose: 'job_email_interpretation', response_format: { type: 'json_object' }, max_tokens: 700 });
+  if (!response?.ok) throw new Error(response?.error || 'Could not interpret the job email.');
+  let interpretation; try { interpretation = JSON.parse(response.message?.content || '{}'); } catch { throw new Error('The AI response was not valid JSON.'); }
+  const stage = interpretation.recommendedStage === null ? null : interpretation.recommendedStage;
+  if (stage !== null && !JOB_STAGES.has(stage)) interpretation.recommendedStage = null;
+  if (!['interview', 'rejection', 'offer', 'next_step', 'none'].includes(interpretation.signal)) interpretation.signal = 'none';
+  if (!['low', 'medium', 'high'].includes(interpretation.confidence)) interpretation.confidence = 'low';
+  interpretation.summary = typeof interpretation.summary === 'string' ? interpretation.summary.slice(0, 2000) : '';
+  interpretation.followUpTitle = typeof interpretation.followUpTitle === 'string' ? interpretation.followUpTitle.slice(0, 500) : '';
+  interpretation.followUpDate = typeof interpretation.followUpDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(interpretation.followUpDate) ? interpretation.followUpDate : null;
+  coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted “${email.subject || 'Untitled email'}”.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
+  return interpretation;
+}
 const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progress', 'needs_user_input', 'ready_for_review', 'ready_to_submit', 'submitted', 'withdrawn', 'blocked']);
 const validateApplicationId = (value) => validateCoachId(value, 'application id');
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
@@ -718,6 +741,14 @@ function registerDatabaseIpc() {
   ipcMain.handle('email:search', (_event, query, limit) => coachDatabase.email.search(String(query || '').slice(0, 500), Math.min(20, Number(limit) || 10)));
   ipcMain.handle('email:link', (_event, input) => coachDatabase.email.link(input || {}));
   ipcMain.handle('email:unlink', (_event, input) => coachDatabase.email.unlink(input || {}));
+  ipcMain.handle('jobs:detail:emails:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.listForJob(validateJobDetailId(jobId)); });
+  ipcMain.handle('jobs:detail:activity:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.activity.list(validateJobDetailId(jobId)); });
+  ipcMain.handle('jobs:detail:follow-ups:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.followUps.list(validateJobDetailId(jobId)); });
+  ipcMain.handle('jobs:detail:follow-ups:create', (event, input) => { assertTrustedRenderer(event); return coachDatabase.jobs.followUps.create(validateJobFollowUp(input)); });
+  ipcMain.handle('jobs:detail:follow-ups:complete', (event, input) => { assertTrustedRenderer(event); validateCoachId(input?.id, 'follow-up task id'); return coachDatabase.jobs.followUps.complete(input.id, Boolean(input.completed)); });
+  ipcMain.handle('jobs:detail:calendar:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.calendar.list(validateJobDetailId(jobId)); });
+  ipcMain.handle('jobs:detail:calendar:create', (event, input) => { assertTrustedRenderer(event); return coachDatabase.jobs.calendar.create(validateJobCalendarEvent(input)); });
+  ipcMain.handle('jobs:detail:email:interpret', async (event, input) => { assertTrustedRenderer(event); return interpretJobEmail(input || {}); });
   setAuditPersistence((entry) => coachDatabase.recordApiCall(entry));
   ipcMain.handle('jobs:search', async () => {
     const profile = coachDatabase.profiles.getCurrent();
