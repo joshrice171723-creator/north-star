@@ -276,7 +276,7 @@ function CoachApprovalModal({ task, nextAction, error, saving, onCancel, onApply
 }
 
 const THEMES = {
-  graphite: { name: 'Graphite', description: 'Neutral, focused, and understated.', colors: ['#101114', '#22252c', '#b8c0cc'] },
+  graphite: { name: 'Midnight', description: 'Deep indigo space with a radiant solar signal.', colors: ['#070b22', '#1c2559', '#ff7138'] },
   'mission-control': { name: 'Mission Control', description: 'Industrial charcoal with an electric lime signal.', colors: ['#0b0d0c', '#1b1f1d', '#b7ff2a'] },
   ember: { name: 'Ember', description: 'Warm contrast with a restrained copper accent.', colors: ['#17110f', '#33201d', '#e47b58'] },
   arctic: { name: 'Arctic', description: 'Clean blue surfaces with crisp cyan highlights.', colors: ['#0b1520', '#1a3044', '#65c7e8'] },
