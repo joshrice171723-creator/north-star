@@ -82,4 +82,6 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,syncJobEmails: () => ipcRenderer.invoke('email:sync')
   ,listJobEmails: (options) => ipcRenderer.invoke('email:list', options)
   ,searchJobEmails: (query, limit) => ipcRenderer.invoke('email:search', query, limit)
+  ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
+  ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
 });

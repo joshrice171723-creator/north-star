@@ -612,7 +612,7 @@ function App() {
         {view === 'jobs' ? null : (
 <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate  /  not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'}  /  ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmapâ€¦'}</small></div></section>
 )}
-        {view === 'jobs' && <><EmailMonitorPanel /><JobsView jobs={jobs} onRefresh={refreshJobs} /></>} 
+        {view === 'jobs' && <><EmailMonitorPanel jobs={jobs} /><JobsView jobs={jobs} onRefresh={refreshJobs} /></>}
         {view === 'today' && (roadmapStatus.state === 'loading'
           ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmapâ€¦</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'

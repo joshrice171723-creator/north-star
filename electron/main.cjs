@@ -716,6 +716,8 @@ function registerDatabaseIpc() {
   ipcMain.handle('email:sync', () => syncJobEmails());
   ipcMain.handle('email:list', (_event, options) => coachDatabase.email.list(options || {}));
   ipcMain.handle('email:search', (_event, query, limit) => coachDatabase.email.search(String(query || '').slice(0, 500), Math.min(20, Number(limit) || 10)));
+  ipcMain.handle('email:link', (_event, input) => coachDatabase.email.link(input || {}));
+  ipcMain.handle('email:unlink', (_event, input) => coachDatabase.email.unlink(input || {}));
   setAuditPersistence((entry) => coachDatabase.recordApiCall(entry));
   ipcMain.handle('jobs:search', async () => {
     const profile = coachDatabase.profiles.getCurrent();
