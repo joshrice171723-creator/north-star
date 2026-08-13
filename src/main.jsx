@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
-import JobsView, { EmailMonitorPanel } from './JobsView.jsx';
+import JobsView from './JobsView.jsx';
 import './styles.css';
 import './theme.css';
 import { buildRoadmapHierarchy, workspaceProjects, kanbanTasksForScope } from './roadmapHierarchy.mjs';
@@ -363,6 +363,18 @@ function App() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme })); } catch { /* local persistence is best-effort */ }
   }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    const crumb = document.querySelector('.crumb');
+    const jobSearch = crumb?.querySelector('b');
+    if (!crumb || !jobSearch || view !== 'jobs') return undefined;
+    // The shared header remains outside JobsView, so it tells the nested detail workspace to return to the pipeline.
+    const goToJobSearch = () => window.dispatchEvent(new CustomEvent('job-search-navigation'));
+    const goToNorthStar = (event) => { if (event.target === jobSearch) return; setView('today'); };
+    const keydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); goToJobSearch(); } };
+    jobSearch.setAttribute('role', 'button'); jobSearch.setAttribute('tabindex', '0'); jobSearch.setAttribute('title', 'Return to Job search');
+    jobSearch.addEventListener('click', goToJobSearch); jobSearch.addEventListener('keydown', keydown); crumb.addEventListener('click', goToNorthStar);
+    return () => { jobSearch.removeEventListener('click', goToJobSearch); jobSearch.removeEventListener('keydown', keydown); crumb.removeEventListener('click', goToNorthStar); jobSearch.removeAttribute('role'); jobSearch.removeAttribute('tabindex'); jobSearch.removeAttribute('title'); };
+  }, [view]);
   const refreshJobs = useCallback(async () => { const records = await window.desktopShell?.listJobs?.(); setJobs(Array.isArray(records) ? records : []); }, []);
   useEffect(() => { refreshJobs().catch(() => setJobs([])); }, [refreshJobs]);
   const refreshRoadmap = useCallback(async () => {
@@ -612,7 +624,7 @@ function App() {
         {view === 'jobs' ? null : (
 <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate  /  not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'}  /  ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmapâ€¦'}</small></div></section>
 )}
-        {view === 'jobs' && <><EmailMonitorPanel jobs={jobs} /><JobsView jobs={jobs} onRefresh={refreshJobs} /></>}
+        {view === 'jobs' && <JobsView jobs={jobs} onRefresh={refreshJobs} />}
         {view === 'today' && (roadmapStatus.state === 'loading'
           ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmapâ€¦</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'
