@@ -588,7 +588,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:rescan', async (event) => { assertTrustedRenderer(event); await applicationBrowser.inspect(); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return applicationBrowser.createFillPlan(coachDatabase.profiles.getCurrent() || {}); });
-  ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId); });
+  ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId, coachDatabase.profiles.getCurrent() || {}); });
   ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
   ipcMain.handle('jobs:browser:back', (event) => { assertTrustedRenderer(event); return applicationBrowser.goBack(); });
   ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });

@@ -10,13 +10,16 @@ function buildFillPlan({ sessionId, applicationId, pageFingerprint, fields = [],
   }) };
 }
 
-function validatePlanForFill({ plan, currentPageFingerprint, fields = [] }) {
+function validatePlanForFill({ plan, currentPageFingerprint, fields = [], profile = {} }) {
   if (!plan || plan.pageFingerprint !== currentPageFingerprint) throw new Error('This fill plan is stale. Rescan and review the current form first.');
   const known = new Map(fields.map((field) => [field.fieldFingerprint, field]));
   return plan.fields.filter((entry) => entry.action === 'fill').map((entry) => {
     const field = known.get(entry.fieldFingerprint); if (!field) return { ...entry, action: 'blocked', reasonCode: 'field_changed' };
     // Defense in depth: classify again immediately before a future mutation.
-    const decision = decideField(field); return decision.action === 'fill' ? entry : { ...entry, action: 'blocked', reasonCode: decision.reasonCode };
+    const decision = decideField(field, { profile });
+    // Recompute from the current trusted profile to prevent a stale plan from
+    // applying a value that was removed or changed after review.
+    return decision.action === 'fill' && String(decision.value) === entry.displayValue ? entry : { ...entry, action: 'blocked', reasonCode: decision.reasonCode };
   });
 }
 
