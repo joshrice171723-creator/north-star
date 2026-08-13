@@ -112,7 +112,7 @@ function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, 
   const selectedWorkspaceId = selectedProject?.parentId || activeWorkspaceId || null;
   const selectedWorkspace = workspaceNodes.find((entry) => entry.id === selectedWorkspaceId) || null;
   const scopedProjectNodes = projectNodes.filter((entry) => !selectedWorkspaceId || entry.parentId === selectedWorkspaceId);
-  const children = (parentId) => (hierarchy.childrenById.get(parentId) || []).filter((entry) => entry.kind !== 'workspace' && entry.type !== 'workspace').filter((entry) => showArchived || !entry.archived).sort((a, b) => (a.orderIndex  /  a.order  /  0) - (b.orderIndex  /  b.order  /  0));
+  const children = (parentId) => (hierarchy.childrenById.get(parentId) || []).filter((entry) => entry.kind !== 'workspace' && entry.type !== 'workspace').filter((entry) => showArchived || !entry.archived).sort((a, b) => (a.orderIndex ?? a.order ?? 0) - (b.orderIndex ?? b.order ?? 0));
   const allRoadmapTasks = [...roadmap.tasks, ...roadmap.subtasks].filter((task) => !task.archived);
   const topLevelTasks = roadmap.tasks.filter((task) => !task.archived);
   const assignedTaskCount = (entry) => {
@@ -122,9 +122,9 @@ function DatabaseRoadmapWorkspace({ roadmap, refreshRoadmap, selectedProjectId, 
     if (entry.kind === 'phase') return topLevelTasks.filter((task) => task.phaseId === entry.id).length;
     return allRoadmapTasks.filter((task) => task.parentTaskId === entry.id).length;
   };
-  const visibleTasks = (kanbanScope ? kanbanTasksForScope(roadmap, kanbanScope, topLevelTasks) : topLevelTasks.filter((task) => !selectedProjectId || task.projectId === selectedProjectId)).filter((task) => (!query.trim() || JSON.stringify(task).toLowerCase().includes(query.trim().toLowerCase())) && (statusFilter === 'all' || task.status === statusFilter) && (priorityFilter === 'all' || task.priority === priorityFilter)).sort((a, b) => (a.orderIndex  /  a.order  /  0) - (b.orderIndex  /  b.order  /  0));
+  const visibleTasks = (kanbanScope ? kanbanTasksForScope(roadmap, kanbanScope, topLevelTasks) : topLevelTasks.filter((task) => !selectedProjectId || task.projectId === selectedProjectId)).filter((task) => (!query.trim() || JSON.stringify(task).toLowerCase().includes(query.trim().toLowerCase())) && (statusFilter === 'all' || task.status === statusFilter) && (priorityFilter === 'all' || task.priority === priorityFilter)).sort((a, b) => (a.orderIndex ?? a.order ?? 0) - (b.orderIndex ?? b.order ?? 0));
   const unscheduledTasks = visibleTasks.filter((task) => !task.releaseId && !task.phaseId);
-  const subtasksFor = (taskId) => roadmap.subtasks.filter((subtask) => !subtask.archived && subtask.parentTaskId === taskId).sort((a, b) => (a.orderIndex  /  0) - (b.orderIndex  /  0));
+  const subtasksFor = (taskId) => roadmap.subtasks.filter((subtask) => !subtask.archived && subtask.parentTaskId === taskId).sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
   useEffect(() => {
     if (!focusTaskId) return;
     const record = allRoadmapTasks.find((task) => task.id === focusTaskId);
@@ -311,7 +311,7 @@ function App() {
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [curriculumQuery, setCurriculumQuery] = useState('');
   const [showNotes, setShowNotes] = useState(false);
-  const [academyOpen, setAcademyOpen] = useState(() => savedState?.academyOpen  /  true);
+  const [academyOpen, setAcademyOpen] = useState(() => savedState?.academyOpen ?? true);
   const [captureState, setCaptureState] = useState({ status: 'idle', message: '' });
   const [captures, setCaptures] = useState([]);
   const [captureQuery, setCaptureQuery] = useState('');
