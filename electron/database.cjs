@@ -431,7 +431,15 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
   function searchEmailRag(query, limit = 10) {
     const chunks = sqlite.prepare('SELECT c.id, c.email_id AS emailId, c.chunk_index AS chunkIndex, c.content, e.subject, e.sender, e.received_at AS receivedAt FROM email_chunks c JOIN email_messages e ON e.id = c.email_id WHERE e.is_job_related = 1').all();
-    return searchChunks(chunks, query, limit);
+    const bestByEmail = new Map();
+    for (const chunk of searchChunks(chunks, query, Math.min(200, Math.max(1, Number(limit) || 10) * 20))) {
+      const current = bestByEmail.get(chunk.emailId);
+      if (!current || chunk.score > current.score || (chunk.score === current.score && chunk.chunkIndex < current.chunkIndex)) bestByEmail.set(chunk.emailId, chunk);
+    }
+    return [...bestByEmail.values()].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return String(b.receivedAt || '').localeCompare(String(a.receivedAt || ''));
+    }).slice(0, Math.min(20, Math.max(1, Number(limit) || 10)));
   }
 
   seedDefaults();

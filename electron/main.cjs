@@ -162,15 +162,16 @@ async function syncJobEmails() {
   const listResponse = listedRequest.response;
   if (!listResponse.ok) return { ok: false, configured: true, imported: 0, message: listedRequest.refreshError?.message || `Gmail sync failed (${listResponse.status}). Add a valid refresh token if the access token expired.` };
   const listed = await listResponse.json();
+  const uniqueMessages = [...new Map((listed.messages || []).filter((item) => item?.id).map((item) => [String(item.id), item])).values()];
   const pipelineSignals = coachDatabase.jobs.list().flatMap((job) => [job.company, job.roleTitle, job.contactName, job.contactEmail, job.url, job.canonicalUrl, job.applicationUrl]);
   let imported = 0;
-  for (const item of (listed.messages || [])) {
+  for (const item of uniqueMessages) {
     const { response } = await request(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`);
     if (!response.ok) continue;
     coachDatabase.email.upsert({ provider: 'gmail', ...normalizeGmailMessage(await response.json(), { pipelineSignals }) });
     imported += 1;
   }
-  return { ok: true, configured: true, imported, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
+  return { ok: true, configured: true, imported, retrieved: uniqueMessages.length, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
 }
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
