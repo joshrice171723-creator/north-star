@@ -282,7 +282,10 @@ const THEMES = {
   arctic: { name: 'Arctic', description: 'Clean blue surfaces with crisp cyan highlights.', colors: ['#0b1520', '#1a3044', '#65c7e8'] },
   moss: { name: 'Moss', description: 'Quiet green tones for a grounded study space.', colors: ['#101814', '#203127', '#8fcb9b'] },
   orchid: { name: 'Orchid', description: 'Deep violet surfaces with a creative lift.', colors: ['#15111e', '#2d2140', '#b893ff'] },
-  paper: { name: 'Paper', description: 'A bright, warm reading-room alternative.', colors: ['#f3f0ea', '#e9e4da', '#6d56c7'] }
+  paper: { name: 'Paper', description: 'A bright, warm reading-room alternative.', colors: ['#f3f0ea', '#e9e4da', '#6d56c7'] },
+  'sunset-citadel': { name: 'Sunset Citadel', description: 'Solar gold and molten orange against a deep night sky.', colors: ['#090f2f', '#38205b', '#ffb51b'] },
+  'arcane-cobalt': { name: 'Arcane Cobalt', description: 'Electric cobalt, spellbound violet, and neon pink.', colors: ['#07143d', '#292b83', '#e75cff'] },
+  dragonfire: { name: 'Dragonfire', description: 'Charcoal stone lit by crimson scales and amber flame.', colors: ['#160d1d', '#4c1f2d', '#ff6a1a'] }
 };
 
 function ThemeModal({ theme, onChange, onClose }) {
