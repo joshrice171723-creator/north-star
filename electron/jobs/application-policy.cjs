@@ -19,6 +19,11 @@ const profileSource = (field) => {
   return 'fullName';
 };
 
+const reusableAnswerFor = (field, answers = []) => {
+  const key = fieldText(field).replace(/\s+/g, ' ').trim();
+  return answers.find((answer) => answer?.questionKey === key || fieldText({ label: answer?.questionText }).replace(/\s+/g, ' ').trim() === key);
+};
+
 function classifyField(field = {}) {
   const text = fieldText(field);
   if (field.inputType === 'password' || /password|captcha|verification code|one[- ]time|mfa/.test(text)) return 'authentication_captcha';
@@ -42,9 +47,13 @@ function decideField(field, { profile = {}, excluded = false } = {}) {
     const source = profileSource(field); const value = profile[source];
     return value ? { action: 'fill', reasonCode: 'verified_profile', value, provenance: [`profile.${source}`], confidence: 1 } : { action: 'ask', reasonCode: 'missing_profile', value: null, provenance: [], confidence: 1 };
   }
+  // Reusable answers are always written by the user in the local assistant.
+  // They deliberately apply only to an exact normalized field label/name match.
+  const reusable = reusableAnswerFor(field, profile.reusableAnswers);
+  if (reusable?.answerText) return { action: 'fill', reasonCode: 'saved_reusable_answer', value: reusable.answerText, provenance: [`answer.${reusable.id}`], confidence: 1 };
   if (category === 'work_authorization') return profile.workAuthorization ? { action: 'suggest', reasonCode: 'verified_profile', value: profile.workAuthorization, provenance: ['profile.workAuthorization'], confidence: 1 } : { action: 'ask', reasonCode: 'missing_profile', value: null, provenance: [], confidence: 1 };
   if (category === 'compensation' || category === 'free_text') return { action: 'ask', reasonCode: 'requires_approval', value: null, provenance: [], confidence: 0.8 };
   return { action: 'ask', reasonCode: 'unknown', value: null, provenance: [], confidence: 0 };
 }
 
-module.exports = { BLOCKED, fieldText, profileSource, classifyField, decideField };
+module.exports = { BLOCKED, fieldText, profileSource, reusableAnswerFor, classifyField, decideField };

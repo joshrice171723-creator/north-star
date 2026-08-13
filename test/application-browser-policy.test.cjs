@@ -12,3 +12,8 @@ test('machine-formatted ATS fields are classified without splitting a name', () 
   assert.equal(decideField({ elementType: 'input', name: 'last_name' }, { profile }).value, 'Lovelace');
   assert.equal(decideField({ elementType: 'input', name: 'state_province' }, { profile }).value, 'Illinois');
 });
+test('user-approved reusable answers only fill an exact field match', () => {
+  const profile = { reusableAnswers: [{ id: 'answer-1', questionKey: 'desired salary', questionText: 'Desired salary', answerText: '120000' }] };
+  assert.equal(decideField({ elementType: 'input', label: 'Desired salary' }, { profile }).value, '120000');
+  assert.equal(decideField({ elementType: 'input', label: 'Current salary' }, { profile }).action, 'ask');
+});
