@@ -4,8 +4,28 @@ const redactUrl = (value) => { try { const url = new URL(value); return `${url.o
 const isHttps = (value) => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
 function decideNavigation({ fromUrl, toUrl, isMainFrame = true, approvedHosts = new Set() }) { if (!isMainFrame || !isHttps(toUrl)) return { action: 'deny', reason: 'only_main_frame_https' }; const target = new URL(toUrl); if (!fromUrl || new URL(fromUrl).origin === target.origin || approvedHosts.has(target.host)) return { action: 'allow', reason: 'same_or_approved_origin' }; return { action: 'ask_user', reason: 'new_https_host', host: target.host }; }
 
+function buildContextMenuTemplate({ params = {}, webContents, clipboard }) {
+  const editFlags = params.editFlags || {};
+  const hasSelection = Boolean(params.selectionText?.trim());
+  const hasLink = Boolean(params.linkURL);
+  // Invoke editing commands on the isolated employer page itself. A role-only
+  // menu can target the React window instead when a WebContentsView has focus.
+  return [
+    { label: 'Back', enabled: Boolean(webContents.canGoBack()), click: () => webContents.goBack() },
+    { label: 'Forward', enabled: Boolean(webContents.canGoForward()), click: () => webContents.goForward() },
+    { label: 'Reload', click: () => webContents.reload() },
+    { type: 'separator' },
+    { label: 'Cut', enabled: Boolean(params.isEditable && editFlags.canCut), click: () => webContents.cut() },
+    { label: 'Copy', enabled: Boolean(hasSelection || editFlags.canCopy), click: () => webContents.copy() },
+    { label: 'Paste', enabled: Boolean(params.isEditable && editFlags.canPaste), click: () => webContents.paste() },
+    { label: 'Select all', enabled: editFlags.canSelectAll !== false, click: () => webContents.selectAll() },
+    { type: 'separator' },
+    { label: 'Copy link address', enabled: hasLink, click: () => clipboard.writeText(params.linkURL) },
+  ];
+}
+
 function createApplicationBrowser({ electron, getApplicationUrl, attachView = () => {}, detachView = () => {}, onSnapshot = () => {}, onState = () => {} }) {
-  const { WebContentsView, session } = electron; let view = null; let active = null;
+  const { WebContentsView, session, Menu, clipboard } = electron; let view = null; let active = null;
   const hide = () => { if (view) view.setBounds({ x: 0, y: 0, width: 1, height: 1 }); };
   const inspect = async () => { if (!view || view.webContents.isDestroyed()) return null; const snapshot = normalizeSnapshot(await view.webContents.executeJavaScript(INSPECTION_SCRIPT, true)); active.snapshot = snapshot; active.lastObservedAt = new Date().toISOString(); onSnapshot(active); return snapshot; };
   const open = async ({ applicationId }) => { const initialUrl = getApplicationUrl(applicationId); if (!isHttps(initialUrl)) throw new Error('The saved application URL must use HTTPS.'); close(); active = { applicationId, approvedHosts: new Set([new URL(initialUrl).host]), snapshot: null, plans: new Map(), currentUrl: redactUrl(initialUrl), status: 'navigating' };
@@ -26,6 +46,9 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     // Remote pages never receive a second window. A user-triggered target=_blank link
     // is routed through the same isolated view and the normal host checkpoint instead.
     view.webContents.setWindowOpenHandler(({ url }) => { requestNavigation(url, true).catch(() => {}); return { action: 'deny' }; });
+    view.webContents.on('context-menu', (_event, params) => {
+      Menu.buildFromTemplate(buildContextMenuTemplate({ params, webContents: view.webContents, clipboard })).popup();
+    });
     const guard = (event, url, details = {}) => { const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts }); if (decision.action !== 'allow') { event.preventDefault(); requestNavigation(url, details.isMainFrame !== false).catch(() => {}); } };
     view.webContents.on('will-navigate', guard); view.webContents.on('will-redirect', guard); view.webContents.on('did-finish-load', async () => { active.currentUrl = redactUrl(view.webContents.getURL()); active.status = 'observing'; try { await inspect(); } catch { onState({ ...active, error: 'Inspection was unavailable for this page.' }); } });
     await view.webContents.loadURL(initialUrl); return publicState(); };
@@ -49,4 +72,4 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
   return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
-module.exports = { redactUrl, isHttps, decideNavigation, createApplicationBrowser };
+module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, createApplicationBrowser };
