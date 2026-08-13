@@ -1,5 +1,5 @@
 const electron = require('electron');
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = electron;
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog, shell } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
@@ -644,6 +644,15 @@ function createWindow() {
 }
 
 function registerDatabaseIpc() {
+  // Keep renderer-provided marketplace links constrained to the services this feature presents.
+  ipcMain.handle('shell:open-external', (event, rawUrl) => {
+    assertTrustedRenderer(event);
+    let url;
+    try { url = new URL(String(rawUrl || '')); } catch { throw new Error('Invalid external link.'); }
+    const allowedHosts = new Set(['www.facebook.com', 'buynothingproject.org', 'www.freecycle.org']);
+    if (url.protocol !== 'https:' || (!allowedHosts.has(url.hostname) && !url.hostname.endsWith('.craigslist.org'))) throw new Error('That marketplace link is not allowed.');
+    return shell.openExternal(url.toString());
+  });
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
   ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
   ipcMain.handle('coach:import-roadmap', (_event, payload) => coachDatabase.importRoadmap(validateRoadmapPayload(payload)));
