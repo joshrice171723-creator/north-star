@@ -285,7 +285,8 @@ const THEMES = {
   paper: { name: 'Paper', description: 'A bright, warm reading-room alternative.', colors: ['#f3f0ea', '#e9e4da', '#6d56c7'] },
   'sunset-citadel': { name: 'Sunset Citadel', description: 'High-contrast solar yellow and flame orange over a midnight sky.', colors: ['#05072e', '#ff3b00', '#ffe600'] },
   'arcane-cobalt': { name: 'Arcane Cobalt', description: 'Vivid cobalt and ultraviolet with a hot-magenta signal.', colors: ['#030b3d', '#004cff', '#ff16a8'] },
-  dragonfire: { name: 'Dragonfire', description: 'Crimson, electric blue, and blazing orange at full intensity.', colors: ['#10002d', '#e40046', '#ff5a00'] }
+  dragonfire: { name: 'Dragonfire', description: 'Crimson, electric blue, and blazing orange at full intensity.', colors: ['#10002d', '#e40046', '#ff5a00'] },
+  'solar-sorcerer': { name: 'Solar Sorcerer', description: 'The image in full: cosmic blue, violet clouds, solar gold, and laser fire.', colors: ['#04062c', '#174bd9', '#ffd900', '#ff4b12', '#c344d7'] }
 };
 
 function ThemeModal({ theme, onChange, onClose }) {
