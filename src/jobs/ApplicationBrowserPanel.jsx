@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, ExternalLink, RefreshCw, X } from 'lucide-react';
 
-export default function ApplicationBrowserPanel({ applicationId, browserWidth, browserLeft, assistantWidth, onClose, onSubmission }) {
+export default function ApplicationBrowserPanel({ applicationId, browserWidth, browserLeft, onClose, onSubmission }) {
   const [state, setState] = useState(null); const [message, setMessage] = useState(''); const [plan, setPlan] = useState(null); const [busy, setBusy] = useState(false); const [profile, setProfile] = useState({ firstName: '', lastName: '', email: '', phone: '', country: '' }); const [answerValues, setAnswerValues] = useState({}); const [documents, setDocuments] = useState([]);
   // The remote employer page is intentionally the middle pane. The trusted
   // assistant stays separate on the right, beside—not over—the web page.
