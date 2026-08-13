@@ -1,4 +1,5 @@
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = require('electron');
+const electron = require('electron');
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -9,6 +10,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
+const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
 
@@ -31,6 +33,7 @@ let academyView;
 let academyVisible = true;
 let academyLayout = null;
 let coachDatabase;
+let applicationBrowser;
 const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
 function readStoredJobSourceCredentials() { try { const parsed = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
 function readJobSourceCredentials() {
@@ -514,6 +517,12 @@ function createWindow() {
     }
   });
   mainWindow.setBrowserView(academyView);
+  applicationBrowser = createApplicationBrowser({
+    electron,
+    getApplicationUrl: (applicationId) => coachDatabase.applications.get(applicationId)?.applicationUrl || '',
+    attachView: (view) => mainWindow?.contentView.addChildView(view),
+    detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
+  });
   academyBounds();
 
   academyView.webContents.setWindowOpenHandler(({ url }) => {
@@ -531,7 +540,7 @@ function createWindow() {
 
   academyView.webContents.loadURL(academyUrl);
   mainWindow.on('resize', academyBounds);
-  mainWindow.on('closed', () => { mainWindow = null; academyView = null; });
+  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
@@ -572,6 +581,17 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
+  // The remote WebContentsView is controlled only by this narrow local-renderer API.
+  ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const result = await applicationBrowser.open({ applicationId: input.applicationId }); applicationBrowser.setBounds(input?.bounds); return result; });
+  ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
+  ipcMain.handle('jobs:browser:bounds', (event, bounds) => { assertTrustedRenderer(event); applicationBrowser.setBounds(bounds); return applicationBrowser.publicState(); });
+  ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });
+  ipcMain.handle('jobs:browser:rescan', async (event) => { assertTrustedRenderer(event); await applicationBrowser.inspect(); return applicationBrowser.publicState(); });
+  ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
+  ipcMain.handle('jobs:browser:back', (event) => { assertTrustedRenderer(event); return applicationBrowser.goBack(); });
+  ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });
+  ipcMain.handle('jobs:browser:reload', (event) => { assertTrustedRenderer(event); return applicationBrowser.reload(); });
+  ipcMain.handle('jobs:browser:clear-session', async (event) => { assertTrustedRenderer(event); await applicationBrowser.clearSession(); return { ok: true }; });
   ipcMain.handle('jobs:documents:generate', async (event, input) => { assertTrustedRenderer(event); return generateApplicationDocument(input); });
   ipcMain.handle('jobs:documents:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.list(validateApplicationId(input?.applicationId), input?.documentType); });
   ipcMain.handle('jobs:documents:get', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); });

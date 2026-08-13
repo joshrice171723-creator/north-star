@@ -58,3 +58,5 @@ body{zoom:1.25}
 
 .job-source-warning{display:block;margin:8px 0;padding:8px 9px;border:1px solid #8a6241;border-radius:7px;background:#2b2119;color:#f2c49b;line-height:1.4}
 .job-search-raw{white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;padding:10px;background:#111318;border:1px solid var(--line);font:11px/1.45 ui-monospace,monospace;color:#cfd3dc}.job-search-raw b{display:block;color:#f2a07c;margin:10px 0 4px}
+/* Keep trusted controls on the renderer side of the isolated remote view. */
+.application-browser-panel { position: fixed; z-index: 4; top: 58px; right: 0; width: 40%; height: calc(100vh - 58px); overflow: auto; padding: 18px; box-sizing: border-box; background: #15191f; border-left: 1px solid #34414e; }
