@@ -1,4 +1,5 @@
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage } = require('electron');
+const electron = require('electron');
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -8,6 +9,8 @@ const { searchJobs, testUsaJobs } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
+const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
+const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
 
@@ -30,6 +33,7 @@ let academyView;
 let academyVisible = true;
 let academyLayout = null;
 let coachDatabase;
+let applicationBrowser;
 const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
 function readStoredJobSourceCredentials() { try { const parsed = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
 function readJobSourceCredentials() {
@@ -179,6 +183,23 @@ const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progres
 const validateApplicationId = (value) => validateCoachId(value, 'application id');
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
+const documentGenerationInFlight = new Set();
+async function generateApplicationDocument(input = {}) {
+  const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
+  if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
+  if (input.guidance !== undefined && (typeof input.guidance !== 'string' || input.guidance.length > 2000)) throw new Error('Document guidance must be 2,000 characters or fewer.');
+  const key = `${applicationId}:${documentType}`; if (documentGenerationInFlight.has(key)) throw new Error('Document generation is already in progress.'); documentGenerationInFlight.add(key);
+  try {
+    const application = coachDatabase.applications.get(applicationId); if (!application) throw new Error('Application not found.');
+    const job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.');
+    const profile = coachDatabase.profiles.getCurrent() || {}; const resume = coachDatabase.resumes.getMaster() || {}; const evidenceCatalog = buildEvidenceCatalog(profile, resume);
+    const response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog, guidance: input.guidance || '' }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
+    if (!response?.ok) throw new Error(response?.error || 'OpenRouter document generation failed.');
+    let content; try { content = normalizeGeneratedContent(documentType, JSON.parse(response.message?.content || '')); } catch { throw new Error('OpenRouter returned malformed document JSON.'); }
+    const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job); const status = validation.errors.length ? 'needs_review' : 'draft';
+    return coachDatabase.applications.documents.save({ applicationId, documentType, title: `${job.roleTitle} ${documentType === 'resume' ? 'Resume' : 'Cover Letter'}`, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: resume.version, modelName: response.model, promptVersion: PROMPT_VERSION, status });
+  } finally { documentGenerationInFlight.delete(key); }
+}
 const assertTrustedRenderer = (event) => { if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted IPC sender.'); };
 const validateRoadmapPayload = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid roadmap payload.');
@@ -496,6 +517,12 @@ function createWindow() {
     }
   });
   mainWindow.setBrowserView(academyView);
+  applicationBrowser = createApplicationBrowser({
+    electron,
+    getApplicationUrl: (applicationId) => coachDatabase.applications.get(applicationId)?.applicationUrl || '',
+    attachView: (view) => mainWindow?.contentView.addChildView(view),
+    detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
+  });
   academyBounds();
 
   academyView.webContents.setWindowOpenHandler(({ url }) => {
@@ -513,7 +540,7 @@ function createWindow() {
 
   academyView.webContents.loadURL(academyUrl);
   mainWindow.on('resize', academyBounds);
-  mainWindow.on('closed', () => { mainWindow = null; academyView = null; });
+  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
@@ -554,6 +581,30 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
+  // The remote WebContentsView is controlled only by this narrow local-renderer API.
+  ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const result = await applicationBrowser.open({ applicationId: input.applicationId }); applicationBrowser.setBounds(input?.bounds); return result; });
+  ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
+  ipcMain.handle('jobs:browser:bounds', (event, bounds) => { assertTrustedRenderer(event); applicationBrowser.setBounds(bounds); return applicationBrowser.publicState(); });
+  ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });
+  ipcMain.handle('jobs:browser:rescan', async (event) => { assertTrustedRenderer(event); await applicationBrowser.inspect(); return applicationBrowser.publicState(); });
+  const browserProfile = () => { const state = applicationBrowser.publicState(); const profile = coachDatabase.profiles.getCurrent() || {}; return { ...profile, reusableAnswers: state?.applicationId ? coachDatabase.applications.listAnswers(state.applicationId).filter((answer) => answer.scope === 'global' && answer.approvalStatus === 'approved') : [] }; };
+  ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return applicationBrowser.createFillPlan(browserProfile()); });
+  ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId, browserProfile()); });
+  ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
+  ipcMain.handle('jobs:browser:back', (event) => { assertTrustedRenderer(event); return applicationBrowser.goBack(); });
+  ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });
+  ipcMain.handle('jobs:browser:reload', (event) => { assertTrustedRenderer(event); return applicationBrowser.reload(); });
+  ipcMain.handle('jobs:browser:clear-session', async (event) => { assertTrustedRenderer(event); await applicationBrowser.clearSession(); return { ok: true }; });
+  ipcMain.handle('jobs:applications:confirm-submission', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (!input?.userAcknowledged) throw new Error('Confirm that the employer page shows a received/submitted message first.'); return coachDatabase.applications.completeSubmission({ applicationId: input.applicationId, userAcknowledged: true, confirmationNumber: typeof input.confirmationNumber === 'string' ? input.confirmationNumber : '', confirmationUrl: applicationBrowser.publicState()?.currentUrl || '', nextAction: 'Watch email for an employer response.', followUpDate: typeof input.followUpDate === 'string' ? input.followUpDate : '' }); });
+  ipcMain.handle('jobs:documents:generate', async (event, input) => { assertTrustedRenderer(event); return generateApplicationDocument(input); });
+  ipcMain.handle('jobs:documents:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.list(validateApplicationId(input?.applicationId), input?.documentType); });
+  ipcMain.handle('jobs:documents:get', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:save-edit', (event, input) => { assertTrustedRenderer(event); const current = coachDatabase.applications.documents.get(validateCoachId(input?.id, 'document id')); if (!current) throw new Error('Document not found.'); const application = coachDatabase.applications.get(current.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const evidenceCatalog = buildEvidenceCatalog(coachDatabase.profiles.getCurrent() || {}, coachDatabase.resumes.getMaster() || {}); const content = input?.content && typeof input.content === 'object' && !Array.isArray(input.content) ? input.content : current.content; const validation = validateGeneratedDocument(current.documentType, content, evidenceCatalog, job); return coachDatabase.applications.documents.save({ applicationId: current.applicationId, documentType: current.documentType, title: current.title, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: current.sourceResumeVersion, modelName: current.modelName, promptVersion: current.promptVersion, status: validation.errors.length ? 'needs_review' : 'draft' }); });
+  ipcMain.handle('jobs:documents:validate', (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); return doc.validation; });
+  ipcMain.handle('jobs:documents:approve', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.approve(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:select', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.select(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: `${doc.documentType}-v${doc.version}.txt`, filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath }; });
+  ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: `${doc.documentType}-v${doc.version}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());

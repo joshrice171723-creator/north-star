@@ -35,6 +35,8 @@ test('job profile survives database close and reopen', () => {
     radiusMiles: 25,
     remotePreference: 'hybrid',
     minimumSalary: 100000,
+    firstName: 'Ada',
+    lastName: 'Lovelace',
   };
 
   const first = createDatabase({ userDataPath, seedPath });
@@ -60,6 +62,8 @@ test('job profile survives database close and reopen', () => {
     assert.equal(restored.radiusMiles, profile.radiusMiles);
     assert.equal(restored.remotePreference, profile.remotePreference);
     assert.equal(restored.minimumSalary, profile.minimumSalary);
+    assert.equal(restored.firstName, profile.firstName);
+    assert.equal(restored.lastName, profile.lastName);
   } finally {
     second.close();
     fs.rmSync(userDataPath, { recursive: true, force: true });

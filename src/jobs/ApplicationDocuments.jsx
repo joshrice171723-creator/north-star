@@ -1,0 +1,51 @@
+import React, { useEffect, useState } from 'react';
+
+const label = (type) => type === 'resume' ? 'Resume' : 'Cover letter';
+const claimText = (value) => value && typeof value === 'object' ? value.text || '' : value || '';
+const clone = (value) => JSON.parse(JSON.stringify(value || {}));
+
+function updatePath(content, path, value) {
+  const next = clone(content); let target = next;
+  for (let index = 0; index < path.length - 1; index += 1) target = target[path[index]];
+  const key = path[path.length - 1]; const current = target[key];
+  // Preserve evidence IDs while the candidate edits wording; validation in the
+  // main process remains the authority that decides whether approval is safe.
+  target[key] = current && typeof current === 'object' && !Array.isArray(current) ? { ...current, text: value } : value;
+  return next;
+}
+
+function ClaimField({ content, path, label: fieldLabel, multiline = false, onChange }) {
+  const value = path.reduce((current, key) => current?.[key], content);
+  const props = { value: claimText(value), onChange: (event) => onChange(updatePath(content, path, event.target.value)) };
+  return <label className="job-field"><span>{fieldLabel}</span>{multiline ? <textarea rows="3" {...props} /> : <input {...props} />}</label>;
+}
+
+function ResumeEditor({ content, onChange }) {
+  return <div className="application-document-editor"><ClaimField content={content} path={['headline']} label="Headline" onChange={onChange} />
+    <section><h4>Summary</h4>{(content.summary || []).map((_, index) => <ClaimField key={index} content={content} path={['summary', index]} label={`Summary point ${index + 1}`} multiline onChange={onChange} />)}</section>
+    <section><h4>Skills</h4>{(content.skills || []).map((_, index) => <ClaimField key={index} content={content} path={['skills', index]} label={`Skill ${index + 1}`} onChange={onChange} />)}</section>
+    <section><h4>Experience</h4>{(content.experience || []).map((experience, index) => <div className="job-profile-panel" key={index}><ClaimField content={content} path={['experience', index, 'title']} label="Title" onChange={onChange} /><ClaimField content={content} path={['experience', index, 'company']} label="Company" onChange={onChange} /><ClaimField content={content} path={['experience', index, 'dates']} label="Dates" onChange={onChange} />{(experience.bullets || []).map((_, bulletIndex) => <ClaimField key={bulletIndex} content={content} path={['experience', index, 'bullets', bulletIndex]} label={`Achievement ${bulletIndex + 1}`} multiline onChange={onChange} />)}</div>)}</section>
+    <section><h4>Education</h4>{(content.education || []).map((_, index) => <ClaimField key={index} content={content} path={['education', index]} label={`Education ${index + 1}`} onChange={onChange} />)}</section>
+  </div>;
+}
+
+function CoverLetterEditor({ content, onChange }) {
+  return <div className="application-document-editor"><ClaimField content={content} path={['recipient']} label="Recipient" onChange={onChange} /><ClaimField content={content} path={['subject']} label="Subject" onChange={onChange} /><section><h4>Letter</h4>{(content.paragraphs || []).map((_, index) => <ClaimField key={index} content={content} path={['paragraphs', index]} label={`Paragraph ${index + 1}`} multiline onChange={onChange} />)}</section><ClaimField content={content} path={['closing']} label="Closing" multiline onChange={onChange} /></div>;
+}
+
+const validationMessage = (issue) => issue.path ? `${issue.message} Review the claim in ${issue.path.replace(/^\./, '').replaceAll('.', ' › ')}.` : issue.message;
+
+export default function ApplicationDocuments({ applicationId, initialType = 'resume' }) {
+  const [type, setType] = useState(initialType); const [docs, setDocs] = useState([]); const [selected, setSelected] = useState(null); const [draft, setDraft] = useState({}); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const [steeringOpen, setSteeringOpen] = useState(false); const [guidance, setGuidance] = useState('');
+  const choose = (entry) => { setSelected(entry); setDraft(clone(entry?.content)); };
+  const load = async () => { const next = await window.desktopShell.listApplicationDocuments({ applicationId, documentType: type }); setDocs(next || []); choose((next || []).find((entry) => entry.isSelected) || next?.[0] || null); };
+  useEffect(() => { setType(initialType); }, [initialType]);
+  useEffect(() => { load().catch((error) => setMessage(error.message)); }, [applicationId, type]);
+  const generate = async (steering = '') => { setBusy(true); setSteeringOpen(false); setMessage('Generating grounded draft…'); try { await window.desktopShell.generateApplicationDocument({ applicationId, documentType: type, guidance: steering }); await load(); setMessage('Draft saved. Review its claims, then approve and select it for this job.'); } catch (error) { setMessage(error.message); } finally { setBusy(false); } };
+  const save = async () => { try { await window.desktopShell.saveApplicationDocumentEdit({ id: selected.id, content: draft }); await load(); setMessage('Saved as a new version. Its factual review is shown below.'); } catch (error) { setMessage(error.message); } };
+  const approve = async () => { try { await window.desktopShell.approveApplicationDocument(selected.id); await load(); setMessage('Document approved. You can now select it for this application.'); } catch (error) { setMessage(error.message); } };
+  const select = async () => { try { await window.desktopShell.selectApplicationDocument(selected.id); await load(); setMessage('Selected for this job only; this does not submit or upload it.'); } catch (error) { setMessage(error.message); } };
+  const exportFile = async (kind) => { try { const result = await window.desktopShell[kind === 'pdf' ? 'exportApplicationDocumentPdf' : 'exportApplicationDocumentText'](selected.id); if (!result?.canceled) { await load(); setMessage(`${kind.toUpperCase()} exported to ${result.savedPath || 'the selected location'}.`); } } catch (error) { setMessage(error.message); } };
+  const validation = selected?.validation || { errors: [], warnings: [] }; const canApprove = selected && validation.valid !== false && !validation.errors?.length;
+  return <section className="job-profile-panel application-documents"><div className="job-modal-head"><div><span className="eyebrow">EVIDENCE-GROUNDED DOCUMENTS</span><h3>{label(type)} versions</h3><small>Draft → review issues → approve → select for this application → export.</small></div><div><button className={type === 'resume' ? 'primary' : 'secondary'} onClick={() => setType('resume')}>Resume</button> <button className={type === 'cover_letter' ? 'primary' : 'secondary'} onClick={() => setType('cover_letter')}>Cover letter</button></div></div>{message && <div className="job-search-status">{message}</div>}<div className="job-actions"><button className="primary" disabled={busy} onClick={() => selected ? setSteeringOpen(true) : generate()}>{busy ? 'Generating…' : selected ? 'Regenerate' : `Generate ${label(type).toLowerCase()}`}</button>{selected && <><button className="secondary" onClick={save}>Save changes as new version</button><button className="secondary" disabled={!canApprove || selected.status === 'approved'} onClick={approve}>Approve</button><button className="secondary" disabled={selected.status !== 'approved'} onClick={select}>Select for this application</button><button className="secondary" onClick={() => exportFile('pdf')}>Export PDF</button><button className="secondary" onClick={() => exportFile('text')}>Export text</button></>}</div>{selected ? <><p><b>Version {selected.version}</b> · {selected.status.replaceAll('_', ' ')}{selected.isSelected ? ' · selected for this application' : ''}. Saving creates a local version in this application workspace and keeps earlier versions.</p>{type === 'resume' ? <ResumeEditor content={draft} onChange={setDraft} /> : <CoverLetterEditor content={draft} onChange={setDraft} />}<section className="job-profile-panel"><h4>Review before approval</h4>{validation.errors?.length ? <><p>Approval is blocked until these claims are corrected or supported by your resume evidence:</p>{validation.errors.map((issue, index) => <p className="form-error" key={`${issue.code}-${index}`}>{validationMessage(issue)}</p>)}</> : <p>Ready for approval. Review the document’s wording, then approve it.</p>}{validation.warnings?.map((issue, index) => <p key={`${issue.code}-${index}`}>{validationMessage(issue)}</p>)}</section><details><summary>Version history</summary>{docs.map((entry) => <button className="secondary" key={entry.id} onClick={() => choose(entry)}>Version {entry.version} · {entry.status.replaceAll('_', ' ')}{entry.isSelected ? ' · selected' : ''}</button>)}</details><details><summary>Evidence and technical details</summary><p>Evidence IDs and diagnostics are available for advanced review; normal document editing never requires JSON.</p><pre>{JSON.stringify({ evidenceIds: selected.provenance, validation: selected.validation, exports: { pdf: selected.exportedPdfPath, text: selected.exportedTextPath } }, null, 2)}</pre></details></> : <p>No {label(type).toLowerCase()} version yet. Generate a grounded draft to begin.</p>}{steeringOpen && <div className="modal" onClick={() => setSteeringOpen(false)}><section className="job-modal" onClick={(event) => event.stopPropagation()}><div className="job-modal-head"><div><span className="eyebrow">STEER THE NEXT DRAFT</span><h2>What should it emphasize?</h2></div></div><p>Describe the experience, strengths, tone, or role fit to prioritize. This can guide emphasis but cannot add facts not supported by your master resume.</p><label className="job-field"><span>Guidance (optional)</span><textarea rows="7" maxLength="2000" value={guidance} onChange={(event) => setGuidance(event.target.value)} placeholder="Example: Lead with my full-stack Ruby on Rails experience, show concrete product impact, and keep the tone direct and senior." /></label><small>{guidance.length}/2000</small><div className="job-modal-actions"><button className="secondary" onClick={() => setSteeringOpen(false)}>Cancel</button><button className="primary" onClick={() => generate(guidance)}>Generate new version</button></div></section></div>}</section>;
+}
