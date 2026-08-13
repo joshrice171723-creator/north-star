@@ -80,6 +80,26 @@ function jobSourceStatus() {
   const decryptionFailed = encryptedFieldsPresent && secureStorageAvailable && Boolean((stored.usajobsApiKey && !credentials.usajobsApiKey) || (stored.adzunaAppId && !credentials.adzunaAppId) || (stored.adzunaApiKey && !credentials.adzunaApiKey));
   return { configured: Boolean(credentials.usajobsEmail && credentials.usajobsApiKey), email: credentials.usajobsEmail || stored.usajobsEmail || '', adzunaConfigured: Boolean(credentials.adzunaAppId && credentials.adzunaApiKey), credentialsPresent: encryptedFieldsPresent, secureStorageAvailable, decryptionFailed, warning: encryptedFieldsPresent && (!secureStorageAvailable || decryptionFailed) ? 'Encrypted credentials are present, but secure storage is unavailable or could not decrypt them. Your keys were not deleted; restart the app before saving.' : '' };
 }
+const openRouterCredentialsPath = () => path.join(app.getPath('userData'), 'openrouter-credentials.json');
+function readStoredOpenRouterCredentials() { try { const parsed = JSON.parse(fs.readFileSync(openRouterCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
+function readOpenRouterApiKey() {
+  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
+  const stored = readStoredOpenRouterCredentials();
+  if (!stored.apiKey || !safeStorage.isEncryptionAvailable()) return '';
+  try { return safeStorage.decryptString(Buffer.from(stored.apiKey, 'base64')); } catch { return ''; }
+}
+function saveOpenRouterApiKey(value) {
+  const apiKey = typeof value === 'string' ? value.trim().slice(0, 500) : '';
+  if (!apiKey) throw new Error('Enter an OpenRouter API key.');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable. Restart the app before saving the OpenRouter key.');
+  const destination = openRouterCredentialsPath();
+  const temporary = `${destination}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, JSON.stringify({ apiKey: safeStorage.encryptString(apiKey).toString('base64') }), { mode: 0o600 });
+  fs.renameSync(temporary, destination);
+  return openRouterStatus();
+}
+function clearOpenRouterApiKey() { try { fs.rmSync(openRouterCredentialsPath(), { force: true }); } catch {} return openRouterStatus(); }
+function openRouterStatus() { return { configured: Boolean(readOpenRouterApiKey()), secureStorageAvailable: safeStorage.isEncryptionAvailable(), environmentConfigured: Boolean(process.env.OPENROUTER_API_KEY) }; }
 const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
 function readEmailCredentials() {
   try {
@@ -206,7 +226,7 @@ function validateOpenRouterMessages(messages) {
 }
 
 async function openRouterChat(messages, options = {}) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = readOpenRouterApiKey();
   if (!apiKey) return { ok: false, error: 'OPENROUTER_API_KEY is not configured for the Electron process.' };
   const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : (process.env.OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL);
   const controller = new AbortController();
@@ -296,7 +316,7 @@ async function interpretJobEmail(input = {}) {
   interpretation.summary = typeof interpretation.summary === 'string' ? interpretation.summary.slice(0, 2000) : '';
   interpretation.followUpTitle = typeof interpretation.followUpTitle === 'string' ? interpretation.followUpTitle.slice(0, 500) : '';
   interpretation.followUpDate = typeof interpretation.followUpDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(interpretation.followUpDate) ? interpretation.followUpDate : null;
-  coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted “${email.subject || 'Untitled email'}”.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
+  coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted â€œ${email.subject || 'Untitled email'}â€.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
   return interpretation;
 }
 const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progress', 'needs_user_input', 'ready_for_review', 'ready_to_submit', 'submitted', 'withdrawn', 'blocked']);
@@ -460,7 +480,7 @@ function generateAcademyFlashcards(ids) {
     const generated = selected.map((capture) => {
       const paragraphs = String(capture.content || '').split(/\n+/).map((part) => part.trim()).filter((part) => part.length >= 30);
       const answer = (paragraphs[0] || String(capture.content || '').trim()).slice(0, 1200);
-      return { id: crypto.createHash('sha256').update(`${capture.id}:flashcard`).digest('hex').slice(0, 24), type: 'flashcard', label: 'App-generated', derivation: 'Academy-derived', question: `What key point is stated in “${String(capture.pageTitle || 'this Academy capture').slice(0, 180)}”?`, answer, sourceCaptureId: capture.id, sourceTitle: String(capture.pageTitle || ''), sourceUrl: String(capture.sourceUrl || ''), generatedAt };
+      return { id: crypto.createHash('sha256').update(`${capture.id}:flashcard`).digest('hex').slice(0, 24), type: 'flashcard', label: 'App-generated', derivation: 'Academy-derived', question: `What key point is stated in â€œ${String(capture.pageTitle || 'this Academy capture').slice(0, 180)}â€?`, answer, sourceCaptureId: capture.id, sourceTitle: String(capture.pageTitle || ''), sourceUrl: String(capture.sourceUrl || ''), generatedAt };
     });
     const selectedIds = new Set(selected.map((capture) => capture.id));
     const materials = [...data.materials.filter((entry) => !selectedIds.has(entry.sourceCaptureId)), ...generated];
@@ -578,7 +598,7 @@ function showRendererContextMenu(params) {
       node = node.parentElement;
     }
     const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
-    return (el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().replace(/\\s+/g, '.') : '') + (text ? ' — "' + text + '"' : '') + ' — ' + path.join(' > ')).slice(0, 500);
+    return (el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().replace(/\\s+/g, '.') : '') + (text ? ' â€” "' + text + '"' : '') + ' â€” ' + path.join(' > ')).slice(0, 500);
   })()`;
   const copyReference = async () => {
     try { const reference = await renderer.executeJavaScript(referenceScript, true); clipboard.writeText(reference); } catch (error) { clipboard.writeText('UI reference unavailable: ' + error.message); }
@@ -725,6 +745,9 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:documents:select', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.select(validateCoachId(id, 'document id')); });
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: `${doc.documentType}-v${doc.version}.txt`, filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: `${doc.documentType}-v${doc.version}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
+  ipcMain.handle('jobs:ai:get', () => openRouterStatus());
+  ipcMain.handle('jobs:ai:save', (_event, input) => saveOpenRouterApiKey(input?.apiKey));
+  ipcMain.handle('jobs:ai:clear', () => clearOpenRouterApiKey());
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());
@@ -910,3 +933,5 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => { if (emailMonitorTimer) clearInterval(emailMonitorTimer); try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };
+
+

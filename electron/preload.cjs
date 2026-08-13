@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,listJobCalendarEvents: (jobId) => ipcRenderer.invoke('jobs:detail:calendar:list', jobId)
   ,createJobCalendarEvent: (input) => ipcRenderer.invoke('jobs:detail:calendar:create', input)
   ,interpretJobEmail: (input) => ipcRenderer.invoke('jobs:detail:email:interpret', input)
+  ,getOpenRouterStatus: () => ipcRenderer.invoke('jobs:ai:get')
+  ,saveOpenRouterApiKey: (apiKey) => ipcRenderer.invoke('jobs:ai:save', { apiKey })
+  ,clearOpenRouterApiKey: () => ipcRenderer.invoke('jobs:ai:clear')
   ,getJobProfile: () => ipcRenderer.invoke('jobs:profile:get')
   ,saveJobProfile: (input) => ipcRenderer.invoke('jobs:profile:save', input)
   ,getMasterResume: () => ipcRenderer.invoke('jobs:resume:get')
@@ -93,3 +96,5 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
   ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
 });
+
+
