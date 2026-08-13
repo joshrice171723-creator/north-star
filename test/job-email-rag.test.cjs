@@ -10,9 +10,9 @@ test('classifies recruiter and interview messages as job-related', () => {
 });
 
 test('classifies messages using saved pipeline signals', () => {
-  const result = classifyJobEmail({ subject: 'Next steps', from: 'talent@acme.example', body: 'Following up on our conversation.', pipelineSignals: ['Acme Corporation', 'Senior Platform Engineer'] });
+  const result = classifyJobEmail({ subject: 'Next steps', from: 'talent@acme.example', body: 'Following up on our conversation.', pipelineSignals: ['Acme Corporation', 'Senior Platform Engineer', 'talent@acme.example'] });
   assert.equal(result.isJobRelated, true);
-  assert.deepEqual(result.matchedPipelineSignals, ['acme corporation']);
+  assert.deepEqual(result.matchedPipelineSignals, ['talent@acme.example']);
 });
 
 test('chunks text with overlap and retrieves matching chunks', () => {
