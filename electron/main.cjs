@@ -2,6 +2,7 @@ const electron = require('electron');
 const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
+const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { createDatabase } = require('./database.cjs');
@@ -10,7 +11,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
-const { tokenIsUsable, refreshGmailAccessToken } = require('./gmail-oauth.cjs');
+const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
@@ -106,6 +107,37 @@ function saveEmailCredentials(input = {}) {
   return { provider: 'gmail', email: email || stored.email || '', configured: true, secureStorageAvailable: true };
 }
 function clearEmailCredentials() { try { fs.rmSync(emailCredentialsPath(), { force: true }); } catch {} return { provider: 'gmail', email: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+async function connectGmailWithGoogle() {
+  const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || '';
+  if (!clientId) throw new Error('GMAIL_OAUTH_CLIENT_ID is not configured.');
+  const pkce = createPkcePair();
+  const state = crypto.randomBytes(24).toString('hex');
+  const server = http.createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const address = server.address();
+  const redirectUri = `http://127.0.0.1:${address.port}/oauth2callback`;
+  const callback = new Promise((resolve, reject) => {
+    server.on('request', (request, response) => {
+      const url = new URL(request.url, redirectUri);
+      if (url.pathname !== '/oauth2callback') return;
+      if (url.searchParams.get('state') !== state) { response.end('Invalid OAuth state. You can close this window.'); reject(new Error('Gmail OAuth state validation failed.')); return; }
+      if (url.searchParams.get('error')) { response.end('Google sign-in was cancelled. You can close this window.'); reject(new Error('Google sign-in was cancelled.')); return; }
+      response.end('Gmail connected. You can close this window.');
+      resolve(url.searchParams.get('code'));
+    });
+  });
+  const authWindow = new BrowserWindow({ parent: mainWindow, modal: true, width: 520, height: 760, title: 'Connect Gmail', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  try {
+    await authWindow.loadURL(buildGmailAuthorizationUrl({ clientId, redirectUri, state, codeChallenge: pkce.challenge }));
+    const code = await Promise.race([callback, new Promise((_, reject) => authWindow.once('closed', () => reject(new Error('Google sign-in window was closed.'))))]);
+    const tokens = await exchangeGmailAuthorizationCode({ code, clientId, clientSecret, redirectUri, codeVerifier: pkce.verifier });
+    const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tokens.accessToken}` } });
+    const profile = profileResponse.ok ? await profileResponse.json() : {};
+    saveEmailCredentials({ email: profile.email || '', ...tokens });
+    return { provider: 'gmail', email: profile.email || '', configured: true, secureStorageAvailable: true };
+  } finally { server.close(); if (!authWindow.isDestroyed()) authWindow.close(); }
+}
 async function syncJobEmails() {
   let credentials = readEmailCredentials();
   if (!credentials.configured) return { ok: false, configured: false, imported: 0, message: 'Connect Gmail before syncing.' };
@@ -675,7 +707,8 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:search:attempts', (_event, runId) => coachDatabase.listJobSearchAttempts(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
-  ipcMain.handle('email:source:get', () => { const { accessToken, ...safe } = readEmailCredentials(); return safe; });
+  ipcMain.handle('email:source:get', () => { const { accessToken, refreshToken, ...safe } = readEmailCredentials(); return safe; });
+  ipcMain.handle('email:source:connect', () => connectGmailWithGoogle());
   ipcMain.handle('email:source:save', (_event, input) => saveEmailCredentials(input));
   ipcMain.handle('email:source:clear', () => clearEmailCredentials());
   ipcMain.handle('email:sync', () => syncJobEmails());

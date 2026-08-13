@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { tokenIsUsable, refreshGmailAccessToken } = require('../electron/gmail-oauth.cjs');
+const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl } = require('../electron/gmail-oauth.cjs');
+
+test('builds a PKCE authorization URL for the Google sign-in window', () => {
+  const pkce = createPkcePair(() => Buffer.from('test-verifier-seed-012345678901234567890123456789'));
+  const url = new URL(buildGmailAuthorizationUrl({ clientId: 'client-id', redirectUri: 'http://127.0.0.1:1234/oauth2callback', state: 'state', codeChallenge: pkce.challenge }));
+  assert.equal(url.searchParams.get('access_type'), 'offline');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:1234/oauth2callback');
+});
 
 test('refreshes an expired Gmail access token with the stored refresh token', async () => {
   let request;
