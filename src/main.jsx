@@ -291,7 +291,8 @@ const THEMES = {
   'jungle-gem': { name: 'Jungle Gem', description: 'Emerald and jade with amethyst shadows and coral heat.', colors: ['#081b1a', '#00d6a0', '#ffe05a', '#8b4dff', '#ff5b3d'] },
   'lava-lagoon': { name: 'Lava Lagoon', description: 'Volcanic crimson, cyan water, violet mist, and amber light.', colors: ['#1c0d1b', '#ff4b29', '#ffd34d', '#00d3e6', '#cc3eff'] },
   'prism-night': { name: 'Prism Night', description: 'Ultraviolet, aqua, pink, and yellow in a dark prism field.', colors: ['#100d21', '#a35cff', '#fff05a', '#00e0c8', '#ff5f9e'] },
-  'toxic-candy': { name: 'Toxic Candy', description: 'Acid green, electric cyan, pink, and gold against black teal.', colors: ['#0e1718', '#73ff38', '#ffdc39', '#ff32a3', '#28d7ff'] }
+  'toxic-candy': { name: 'Toxic Candy', description: 'Acid green, electric cyan, pink, and gold against black teal.', colors: ['#0e1718', '#73ff38', '#ffdc39', '#ff32a3', '#28d7ff'] },
+  'classic-dark': { name: 'Classic Dark', description: 'A calm charcoal workspace with slate panels and a measured blue accent.', colors: ['#0f1115', '#1b1f26', '#2b333f', '#6f9ac4'] }
 };
 
 function ThemeModal({ theme, onChange, onClose }) {
