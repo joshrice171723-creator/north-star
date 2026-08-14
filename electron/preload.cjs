@@ -99,4 +99,5 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,searchJobEmails: (query, limit) => ipcRenderer.invoke('email:search', query, limit)
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
   ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
+  ,setJobEmailExcluded: (input) => ipcRenderer.invoke('email:exclude', input)
 });

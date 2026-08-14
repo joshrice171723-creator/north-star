@@ -441,11 +441,21 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
   function emailToRenderer(row) {
     const linkedJobIds = sqlite.prepare('SELECT job_id FROM email_job_links WHERE email_id = ? ORDER BY created_at ASC').all(row.id).map((entry) => entry.job_id);
-    return { ...row, isJobRelated: Boolean(row.is_job_related), matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]'), linkedJobIds };
+    return { ...row, isJobRelated: Boolean(row.is_job_related), isExcluded: Boolean(row.user_excluded), matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]'), linkedJobIds };
   }
-  function listEmails({ jobOnly = true, limit = 50 } = {}) {
-    const rows = sqlite.prepare(`SELECT * FROM email_messages ${jobOnly ? 'WHERE is_job_related = 1' : ''} ORDER BY received_at DESC, updated_at DESC LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)));
+  function listEmails({ jobOnly = true, includeExcluded = false, limit = 50 } = {}) {
+    const conditions = [];
+    if (jobOnly) conditions.push('is_job_related = 1');
+    if (!includeExcluded) conditions.push('user_excluded = 0');
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = sqlite.prepare(`SELECT * FROM email_messages ${where} ORDER BY received_at DESC, updated_at DESC LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)));
     return rows.map(emailToRenderer);
+  }
+  function setEmailExcluded(input = {}) {
+    const emailId = bounded(input.emailId, 160);
+    if (!sqlite.prepare('SELECT 1 FROM email_messages WHERE id = ?').get(emailId)) throw new Error('Email not found.');
+    sqlite.prepare('UPDATE email_messages SET user_excluded = ?, updated_at = ? WHERE id = ?').run(input.excluded ? 1 : 0, now(), emailId);
+    return getEmail(emailId);
   }
   function linkEmailToJob(input = {}) {
     const emailId = bounded(input.emailId, 160); const jobId = bounded(input.jobId, 160);
@@ -461,7 +471,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     return getEmail(emailId);
   }
   function searchEmailRag(query, limit = 10) {
-    const chunks = sqlite.prepare('SELECT c.id, c.email_id AS emailId, c.chunk_index AS chunkIndex, c.content, e.subject, e.sender, e.received_at AS receivedAt FROM email_chunks c JOIN email_messages e ON e.id = c.email_id WHERE e.is_job_related = 1').all();
+    const chunks = sqlite.prepare('SELECT c.id, c.email_id AS emailId, c.chunk_index AS chunkIndex, c.content, e.subject, e.sender, e.received_at AS receivedAt FROM email_chunks c JOIN email_messages e ON e.id = c.email_id WHERE e.is_job_related = 1 AND e.user_excluded = 0').all();
     const bestByEmail = new Map();
     for (const chunk of searchChunks(chunks, query, Math.min(200, Math.max(1, Number(limit) || 10) * 20))) {
       const current = bestByEmail.get(chunk.emailId);
@@ -480,7 +490,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
-    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob },
+    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
