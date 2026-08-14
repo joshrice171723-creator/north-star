@@ -221,14 +221,14 @@ test('deterministic provider selection keeps high-quality jobs eligible beyond 2
   assert.ok(result.jobs.every((job) => job.scoreType === 'deterministic'));
 });
 
-test('qualification records a distinct reason and never sends unrelated listings to AI', () => {
+test('qualification uses only the deterministic score threshold as its gate', () => {
   const unrelated = { providerKey: 'remotive', externalId: 'unrelated', title: 'Customer Success Manager', description: 'Own renewals and account plans.', location: 'Remote', remoteType: 'remote' };
   const valid = { providerKey: 'remotive', externalId: 'valid', title: 'Machine Learning Engineer', description: 'Python machine learning systems.', location: 'Remote', remoteType: 'remote' };
   const brief = { jobFamilies: ['Machine Learning Engineer'], mustHaveSkills: ['python'], remotePreference: 'any' };
-  assert.equal(qualificationReason(unrelated, brief), 'query_mismatch');
+  assert.equal(qualificationReason(unrelated, brief), 'deterministic_score_below_minimum');
   const selected = selectTopJobsPerProvider([unrelated, valid], brief);
   assert.equal(selected.jobs.length, 1);
-  assert.equal(selected.providerStats.remotive.rejectionReasons.query_mismatch, 1);
+  assert.equal(selected.providerStats.remotive.rejectionReasons.deterministic_score_below_minimum, 1);
 });
 
 test('Remotive continues with distinct query variants until it has 20 qualified jobs', async () => {

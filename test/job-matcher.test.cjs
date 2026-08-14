@@ -3,7 +3,7 @@ const test = require('node:test');
 const { rankJobs, MAX_FINAL_CANDIDATES, jobForRanking, selectionIds } = require('../electron/job-matcher.cjs');
 
 const jobs = (count, providerKey = 'usajobs') => Array.from({ length: count }, (_, index) => ({ externalId: `${providerKey}-${index + 1}`, providerKey, title: 'Machine Learning Engineer', description: 'machine learning python', retrievalScore: 90 - index, diagnostics: { secret: 'do not send' } }));
-const response = (ids) => ({ ok: true, message: { content: JSON.stringify({ selectedExternalIds: ids }) } });
+const response = (ids, fitScore = 80) => ({ ok: true, message: { content: JSON.stringify({ selections: ids.map((externalId) => ({ externalId, fitScore, fitTier: 'good match', strengths: ['Relevant experience'], gaps: [], unknowns: [], reasoning: 'Evidence-based fit.' })) }) } });
 
 test('final selector receives at most 80 deterministic candidates and may select any provider mix', async () => {
   const candidates = [...jobs(30, 'usajobs'), ...jobs(30, 'adzuna'), ...jobs(30, 'remotive')]; let prompt;
@@ -16,7 +16,7 @@ test('final selector receives at most 80 deterministic candidates and may select
   assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
-test('final selector marks an under-selection when 20 or more candidates were submitted', async () => {
+test('final selector allows an under-selection when fewer than 80 strong matches exist', async () => {
   const selected = await rankJobs({ jobs: jobs(80), profile: {}, resume: {}, openRouter: async () => response(['usajobs-1', 'usajobs-2', 'usajobs-3']) });
   assert.equal(selected.rankingDiagnostics.underSelected, false);
   assert.equal(selected.rankingDiagnostics.returnedCount, 3);
