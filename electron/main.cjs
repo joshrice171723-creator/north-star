@@ -882,8 +882,11 @@ async function captureGoogleVoiceConversation(job) {
   const page = await googleVoiceView.webContents.executeJavaScript(`(() => {
     const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
     const selected = clean(window.getSelection?.()?.toString());
-    const content = (selected.length >= 20 ? selected : clean(document.body?.innerText)).slice(0, 20000);
-    const phoneNumber = (content.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
+    const body = clean(document.body?.innerText);
+    const content = (selected.length >= 20 ? selected : body).slice(0, 20000);
+    // Use the whole rendered conversation for the assignment key even when a
+    // user selected only the message text before choosing “Assign”.
+    const phoneNumber = (body.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
     return { sourceUrl: location.href, title: clean(document.title) || 'Google Voice conversation', content, phoneNumber };
   })()`, true);
   return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, page);
