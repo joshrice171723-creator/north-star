@@ -75,7 +75,7 @@ body{overflow-x:hidden}
 
 /* Keep the job identity readable as a header while grouping the two card actions. */
 .job-card{position:relative;padding:0 11px 11px}
-.job-card-notifications{display:flex;flex-wrap:wrap;gap:5px;margin:-1px 0 8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:9px;font-weight:700}.job-card-notification{display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border-radius:999px}.job-card-notification.voice{background:color-mix(in srgb,var(--theme-info-surface) 75%,transparent);color:var(--theme-info)}.job-card-notification.email{background:color-mix(in srgb,var(--theme-warning) 18%,transparent);color:var(--theme-warning)}
+.job-card-notifications{display:flex;flex-wrap:wrap;gap:5px;margin:-1px 0 8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:9px;font-weight:700}.job-card-notification{display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border-radius:999px}.job-card-notification.voice{background:color-mix(in srgb,var(--theme-info-surface) 75%,transparent);color:var(--theme-info)}.job-card-notification.email{background:color-mix(in srgb,var(--theme-warning) 18%,transparent);color:var(--theme-warning)}.job-card-voice-assignment{flex-basis:100%;overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}
 .job-card-top{min-height:46px;margin-bottom:8px;padding:10px 48px 9px 0;border-bottom:1px solid var(--line);align-items:flex-start}
 .job-card-top>b{line-height:1.3}
 .job-card-top>b[data-job-number]::before{content:attr(data-job-number);display:inline-block;margin-right:6px;color:var(--accent);font-weight:800;letter-spacing:.03em}
