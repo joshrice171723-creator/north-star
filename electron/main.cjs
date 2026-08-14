@@ -144,14 +144,18 @@ function googleVoiceViewBounds() {
 }
 function setGoogleVoiceViewVisible(visible) {
   googleVoiceViewVisible = Boolean(visible);
+  // Electron supports one BrowserView attachment per BrowserWindow. Swap the
+  // existing Academy view instead of adding BrowserView to contentView, which
+  // causes a native argument-conversion crash in current Electron builds.
+  if (mainWindow && googleVoiceView && academyView) mainWindow.setBrowserView(googleVoiceViewVisible ? googleVoiceView : academyView);
   googleVoiceViewBounds();
+  if (!googleVoiceViewVisible) academyBounds();
   return googleVoiceViewVisible;
 }
 function createGoogleVoiceView() {
   googleVoiceView = new BrowserView({
     webPreferences: { partition: googleVoicePartition, contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  mainWindow.contentView.addChildView(googleVoiceView);
   googleVoiceView.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const origin = new URL(url).origin;
