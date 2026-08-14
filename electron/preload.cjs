@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,importJobFromUrl: (url) => ipcRenderer.invoke('coach:jobs:import-url', url)
   ,listJobDetailEmails: (jobId) => ipcRenderer.invoke('jobs:detail:emails:list', jobId)
   ,listJobDetailActivity: (jobId) => ipcRenderer.invoke('jobs:detail:activity:list', jobId)
+  ,markJobDetailActivitySeen: (jobId) => ipcRenderer.invoke('jobs:detail:activity:seen', jobId)
   ,listJobFollowUps: (jobId) => ipcRenderer.invoke('jobs:detail:follow-ups:list', jobId)
   ,createJobFollowUp: (input) => ipcRenderer.invoke('jobs:detail:follow-ups:create', input)
   ,completeJobFollowUp: (id, completed) => ipcRenderer.invoke('jobs:detail:follow-ups:complete', { id, completed: Boolean(completed) })
