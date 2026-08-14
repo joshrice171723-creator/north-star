@@ -201,6 +201,24 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const dueCount = jobs.filter((job) => stageIndex(job.stage) >= stageIndex('applied') && job.followUpDate && job.followUpDate <= today && !['accepted', 'rejected'].includes(job.stage)).length;
 
   useEffect(() => {
+    // Keep the notification badge in the existing card layout without making
+    // the board markup depend on optional fields from older job records.
+    document.querySelectorAll('.job-card-notifications').forEach((node) => node.remove());
+    jobs.forEach((job) => {
+      if (!(job.unreadVoiceActivityCount > 0 || job.unreadEmailCount > 0)) return;
+      const card = [...document.querySelectorAll('.job-card')].find((entry) => entry.querySelector('.job-card-top > b')?.textContent === job.roleTitle && entry.querySelector('strong')?.textContent === job.company);
+      const top = card?.querySelector('.job-card-top');
+      if (!top) return;
+      const badge = document.createElement('div');
+      badge.className = 'job-card-notifications';
+      badge.setAttribute('aria-label', `${job.unreadVoiceActivityCount || 0} new Voice message or call${job.unreadVoiceActivityCount === 1 ? '' : 's'}, ${job.unreadEmailCount || 0} new email${job.unreadEmailCount === 1 ? '' : 's'}`);
+      badge.innerHTML = `${job.unreadVoiceActivityCount > 0 ? `<span class="job-card-notification voice">${job.unreadVoiceActivityCount} new Voice</span>` : ''}${job.unreadEmailCount > 0 ? `<span class="job-card-notification email">${job.unreadEmailCount} new email${job.unreadEmailCount === 1 ? '' : 's'}</span>` : ''}`;
+      top.insertAdjacentElement('afterend', badge);
+    });
+    return () => document.querySelectorAll('.job-card-notifications').forEach((node) => node.remove());
+  }, [jobs]);
+
+  useEffect(() => {
     // Rebind after the detail view replaces the board nodes so returning to the pipeline keeps job titles clickable.
     const titles = [...document.querySelectorAll('.jobs-board .job-card-top > b')];
     const listeners = titles.map((title) => {
