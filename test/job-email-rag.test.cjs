@@ -28,3 +28,8 @@ test('normalizes Gmail headers and plain-text body', () => {
   assert.equal(message.isJobRelated, true);
   assert.match(message.body, /Application interview update/);
 });
+
+test('normalizes a nested HTML Gmail body when plain text is unavailable', () => {
+  const message = normalizeGmailMessage({ id: 'nested', threadId: 'thread', payload: { headers: [{ name: 'Subject', value: 'Application update' }, { name: 'From', value: 'updates@example.com' }], parts: [{ mimeType: 'multipart/alternative', parts: [{ mimeType: 'text/html', body: { data: Buffer.from('<p>Your application is moving forward.</p>').toString('base64url') } }] }] } });
+  assert.match(message.body, /Your application is moving forward/);
+});
