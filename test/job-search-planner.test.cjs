@@ -1,7 +1,13 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createSearchPlan, refineProviderQuery, parsePlannerResponse, parseSearchBriefResponse, fallbackPlan } = require('../electron/job-search-planner.cjs');
+const { createSearchPlan, refineProviderQuery, parsePlannerResponse, parseSearchBriefResponse, refinementForPlanner, fallbackPlan } = require('../electron/job-search-planner.cjs');
 const { filterJobs } = require('../electron/job-search.cjs');
+
+test('refinement planner context accepts only known feedback and keeps only safe aggregate counts', () => {
+  const result = refinementForPlanner({ action: 'more_remote', report: { providers: [{ provider: 'remotive', status: 'success', retrieved: 12, filtered: 4, submitted: 8, selected: 3, displayed: 3, credentials: 'never include' }] } });
+  assert.deepEqual(result, { action: 'more_remote', providers: [{ provider: 'remotive', status: 'success', retrieved: 12, filtered: 4, submitted: 8, selected: 3, displayed: 3 }] });
+  assert.equal(refinementForPlanner({ action: 'arbitrary instructions' }), null);
+});
 
 test('planner accepts structured AI output and preserves user exclusions', () => {
   const plan = parsePlannerResponse({ ok: true, message: { content: JSON.stringify({ interpretation: 'AI architecture work', jobTypes: ['AI Solutions Architect', 'AI Automation Architect'], searchQueries: ['AI solutions architect', 'AI automation architect'], preferredIndustries: ['technology'], excludedTerms: ['aviation'], locationStrategy: 'near target location' }) } }, { excludedKeywords: ['government'] });

@@ -781,7 +781,16 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
   ipcMain.handle('jobs:source:save', (_event, input) => saveJobSourceCredentials(input));
   ipcMain.handle('jobs:source:clear', () => clearJobSourceCredentials());
-  ipcMain.handle('jobs:source:test', async () => { const credentials = readJobSourceCredentials(); const results = []; if (credentials.usajobsEmail && credentials.usajobsApiKey) results.push({ provider: 'USAJOBS', ...(await testUsaJobs(credentials)) }); if (credentials.adzunaAppId && credentials.adzunaApiKey) results.push({ provider: 'Adzuna', ...(await testAdzuna(credentials)) }); return results.length === 1 ? results[0] : { ok: results.every((result) => result.ok), results }; });
+  ipcMain.handle('jobs:source:test', async () => {
+    const source = jobSourceStatus();
+    if (source.decryptionFailed || !source.secureStorageAvailable) return { ok: false, results: [{ provider: 'Saved credentials', ok: false, code: 'credential_unavailable', message: source.warning || 'Saved credentials could not be decrypted in this Electron process. Restart the app before testing again.' }] };
+    const credentials = readJobSourceCredentials(); const results = [];
+    if (credentials.usajobsEmail && credentials.usajobsApiKey) results.push({ provider: 'USAJOBS', ...(await testUsaJobs(credentials)) });
+    else results.push({ provider: 'USAJOBS', ok: false, code: 'not_configured', message: 'USAJOBS email and API key are not both configured in this Electron process.' });
+    if (credentials.adzunaAppId && credentials.adzunaApiKey) results.push({ provider: 'Adzuna', ...(await testAdzuna(credentials)) });
+    else results.push({ provider: 'Adzuna', ok: false, code: 'not_configured', message: 'Adzuna app ID and API key are not both configured in this Electron process.' });
+    return { ok: results.every((result) => result.ok), results };
+  });
   ipcMain.handle('jobs:search:attempts', (_event, runId) => coachDatabase.listJobSearchAttempts(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
@@ -806,7 +815,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:detail:calendar:create', (event, input) => { assertTrustedRenderer(event); return coachDatabase.jobs.calendar.create(validateJobCalendarEvent(input)); });
   ipcMain.handle('jobs:detail:email:interpret', async (event, input) => { assertTrustedRenderer(event); return interpretJobEmail(input || {}); });
   setAuditPersistence((entry) => coachDatabase.recordApiCall(entry));
-  ipcMain.handle('jobs:search', async () => {
+  ipcMain.handle('jobs:search', async (_event, input = {}) => {
     const profile = coachDatabase.profiles.getCurrent();
     const resume = coachDatabase.resumes.getMaster();
     if (!profile?.targetRoles?.length && !profile?.targetLocations?.length && !profile?.interests?.length) return { ok: false, needsProfile: true, error: 'Add a target role, location, or interest to your profile first.' };
@@ -815,10 +824,11 @@ function registerDatabaseIpc() {
     let plan;
     try {
       plan = process.env.HERMES_AI_SEARCH_PLANNING !== 'false'
-        ? await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'planning' }) })
+        ? await createSearchPlan({ profile, resume, targetIntent: profile.targetRoles?.[0], refinement: input?.refinement, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'planning' }) })
         : fallbackPlan(profile, resume);
     } catch (cause) {
       const warning = cause?.message || 'AI search planning failed.';
+      coachDatabase.recordJobSearchAttempt({ runId, provider: 'openrouter', laneId: 'search-planner', query: 'AI provider plan', request: { stage: 'planning' }, errorCode: cause?.code || 'search_planning_failed', errorMessage: warning, errorDetail: 'No provider request was sent because the AI planner did not produce a valid plan.', preview: [] });
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', warning });
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);

@@ -79,7 +79,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,applicationBrowserForward: () => ipcRenderer.invoke('jobs:browser:forward')
   ,applicationBrowserReload: () => ipcRenderer.invoke('jobs:browser:reload')
   ,clearApplicationBrowserSession: () => ipcRenderer.invoke('jobs:browser:clear-session')
-  ,searchJobs: () => ipcRenderer.invoke('jobs:search')
+  ,searchJobs: (input) => ipcRenderer.invoke('jobs:search', input)
   ,onJobSearchProgress: (listener) => { const handler = (_event, progress) => listener(progress); ipcRenderer.on('jobs:search:progress', handler); return () => ipcRenderer.removeListener('jobs:search:progress', handler); }
   ,getJobSource: () => ipcRenderer.invoke('jobs:source:get')
   ,saveJobSource: (input) => ipcRenderer.invoke('jobs:source:save', input)
@@ -99,4 +99,3 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
   ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
 });
-
