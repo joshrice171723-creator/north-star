@@ -81,3 +81,6 @@ body{overflow-x:hidden}
 .job-card>.delete-job svg{width:13px;height:13px}
 .job-card>.delete-job:hover{background:var(--surface-soft);color:var(--text)}
 .job-match-scores{display:grid;margin:8px 0 10px;padding-left:20px;color:var(--muted);font-size:10px;line-height:1.6;text-align:left}.job-match-scores li{display:flex;justify-content:space-between;gap:18px}.job-match-scores b{color:var(--text);font-weight:600}.job-match-scores span{color:var(--accent);font-weight:700;white-space:nowrap}
+
+/* Keep editable job data readable on every dark theme; native controls otherwise fall back to black text. */
+.job-field input,.job-field textarea,.job-field select{padding:8px 9px;border:1px solid var(--line-strong);border-radius:7px;background:var(--theme-control);color:var(--text);font:inherit;font-size:11px}.job-field input::placeholder,.job-field textarea::placeholder{color:var(--muted);opacity:.85}.job-field option{background:var(--theme-bg);color:var(--theme-text)}
