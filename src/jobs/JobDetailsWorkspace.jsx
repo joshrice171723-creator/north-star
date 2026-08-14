@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, CalendarPlus, Check, ExternalLink, FileText, Plus, Sparkles, X } from 'lucide-react';
+import { CalendarPlus, Check, ExternalLink, FileText, Plus, Sparkles, X } from 'lucide-react';
 import { sanitizeJobDescription } from './jobDescription';
 import ApplicationDocuments from './ApplicationDocuments.jsx';
 import InterviewQuestions from './InterviewQuestions.jsx';
@@ -36,7 +36,7 @@ export default function JobDetailsWorkspace({ job, application, documents = [], 
   const visibleDocuments = application?.status === 'submitted' ? documents.filter((document) => document.isSelected) : documents;
 
   return <section className="jobs-view job-details-workspace">
-    <header className="job-detail-header"><div className="job-detail-heading"><button className="back-link" onClick={onBack}><ArrowLeft size={15} /> Job search</button><span className="eyebrow">ROLE DETAILS</span><h2>{job.roleTitle}</h2><p>{job.company} <span>·</span> {job.location || 'Location not listed'} <span>·</span> {stageLabel(job.stage)}</p></div><div className="jobs-actions"><button className="secondary" onClick={onEdit}>Edit role</button>{job.url && <a className="secondary" href={job.url} target="_blank" rel="noreferrer">Open listing <ExternalLink size={14} /></a>}<button className="primary" onClick={onOpenApplicationAssistant}>Open application assistant</button></div></header>
+    <header className="job-detail-header"><div className="job-detail-heading"><span className="eyebrow">ROLE DETAILS</span><h2>{job.roleTitle}</h2><p>{job.company} <span>·</span> {job.location || 'Location not listed'} <span>·</span> {stageLabel(job.stage)}</p></div><div className="jobs-actions"><button className="secondary" onClick={onEdit}>Edit role</button>{job.url && <a className="secondary" href={job.url} target="_blank" rel="noreferrer">Open listing <ExternalLink size={14} /></a>}<button className="primary" onClick={onOpenApplicationAssistant}>Open application assistant</button></div></header>
     {message && <div className="job-search-status">{message}</div>}
     <div className="job-detail-layout">
       <main className="job-detail-main">
