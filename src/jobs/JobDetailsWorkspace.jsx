@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { CalendarPlus, Check, ExternalLink, FileText, Plus, Sparkles, X } from 'lucide-react';
 import { sanitizeJobDescription } from './jobDescription';
 import ApplicationDocuments from './ApplicationDocuments.jsx';
+import ApplicationBrowserPanel from './ApplicationBrowserPanel.jsx';
 import InterviewQuestions from './InterviewQuestions.jsx';
 import './roleDetailsApplication.css';
+import { getApplicationLayout } from './applicationLayout.mjs';
 
 const JOB_STAGES = [['target', 'Target'], ['researching', 'Researching'], ['ready', 'Ready to apply'], ['applied', 'Applied'], ['screen', 'Recruiter screen'], ['interviewing', 'Interviewing'], ['final', 'Final round'], ['offer', 'Offer'], ['accepted', 'Accepted'], ['rejected', 'Rejected / withdrawn']];
 const stageLabel = (stage) => JOB_STAGES.find(([value]) => value === stage)?.[1] || stage;
@@ -23,20 +25,24 @@ function ResumePreviewModal({ document, onClose }) {
   return <div className="modal" role="dialog" aria-modal="true" aria-label="Resume preview" onClick={onClose}><section className="resume-preview-modal" onClick={(event) => event.stopPropagation()}><div className="job-modal-head"><div><span className="eyebrow">RESUME USED</span><h2>Resume v{document.version}</h2><p>Read-only copy submitted for this application.</p></div><button className="close" onClick={onClose} aria-label="Close resume preview"><X size={18} /></button></div><pre className="resume-preview-content">{document.plainText || 'No readable resume text is available.'}</pre></section></div>;
 }
 
-export default function JobDetailsWorkspace({ job, application, documents = [], onBack, onEdit, onStartApplication, onOpenApplicationAssistant, onStageChange, onOpenAiSettings }) {
+export default function JobDetailsWorkspace({ job, application, documents = [], onBack, onEdit, onStartApplication, onOpenApplicationAssistant, applicationAssistantOpen = false, onCloseApplicationAssistant, onRefresh, onStageChange, onOpenAiSettings }) {
   const [emails, setEmails] = useState([]); const [activity, setActivity] = useState([]); const [followUps, setFollowUps] = useState([]); const [calendarEvents, setCalendarEvents] = useState([]);
   const [followUp, setFollowUp] = useState(emptyFollowUp); const [calendarEvent, setCalendarEvent] = useState(emptyEvent); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const [interpretation, setInterpretation] = useState(null); const [resumeModal, setResumeModal] = useState(null);
   const [resumeLocked, setResumeLocked] = useState(documents.some((document) => document.documentType === 'resume' && document.isSelected));
+  const [browserOpen, setBrowserOpen] = useState(applicationAssistantOpen); const [layout, setLayout] = useState(() => getApplicationLayout(window.innerWidth));
   const load = async () => { const [nextEmails, nextActivity, nextFollowUps, nextEvents] = await Promise.all([window.desktopShell.listJobDetailEmails(job.id), window.desktopShell.listJobDetailActivity(job.id), window.desktopShell.listJobFollowUps(job.id), window.desktopShell.listJobCalendarEvents(job.id)]); setEmails(nextEmails || []); setActivity(nextActivity || []); setFollowUps(nextFollowUps || []); setCalendarEvents(nextEvents || []); };
   useEffect(() => { load().catch((cause) => setMessage(cause?.message || 'Could not load job details.')); }, [job.id]);
+  useEffect(() => setBrowserOpen(applicationAssistantOpen), [applicationAssistantOpen]);
+  useEffect(() => { const resize = () => setLayout((current) => getApplicationLayout(window.innerWidth, current.browserWidth)); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
   const createFollowUp = async (draft = followUp, sourceEmailId = null) => { if (!draft.title.trim()) return; setBusy(true); try { await window.desktopShell.createJobFollowUp({ jobId: job.id, title: draft.title.trim(), dueDate: draft.dueDate || null, sourceEmailId }); setFollowUp(emptyFollowUp()); setInterpretation(null); await load(); setMessage('Follow-up task created.'); } catch (cause) { setMessage(cause?.message || 'Could not create follow-up.'); } finally { setBusy(false); } };
   const createCalendarEvent = async () => { if (!calendarEvent.title.trim() || !calendarEvent.startsAt || !calendarEvent.endsAt) return; setBusy(true); try { await window.desktopShell.createJobCalendarEvent({ ...calendarEvent, jobId: job.id, title: calendarEvent.title.trim() }); setCalendarEvent(emptyEvent()); await load(); setMessage('Calendar event added to this job.'); } catch (cause) { setMessage(cause?.message || 'Could not add calendar event.'); } finally { setBusy(false); } };
   const interpretEmail = async (email) => { setBusy(true); setInterpretation(null); try { const result = await window.desktopShell.interpretJobEmail({ jobId: job.id, emailId: email.id }); setInterpretation({ ...result, emailId: email.id }); await load(); } catch (cause) { const errorMessage = cause?.message || 'Could not interpret this email.'; setMessage(errorMessage); if (/OPENROUTER_API_KEY is not configured/i.test(errorMessage)) onOpenAiSettings?.(); } finally { setBusy(false); } };
   const applyRecommendation = async () => { if (!interpretation) return; setBusy(true); try { if (interpretation.recommendedStage && interpretation.recommendedStage !== job.stage) await onStageChange(interpretation.recommendedStage); if (interpretation.followUpTitle) await createFollowUp({ title: interpretation.followUpTitle, dueDate: interpretation.followUpDate || '' }, interpretation.emailId); else { setInterpretation(null); await load(); } } finally { setBusy(false); } };
   const visibleDocuments = application?.status === 'submitted' ? documents.filter((document) => document.isSelected) : documents;
 
-  return <section className="jobs-view job-details-workspace">
+  return <section className={`jobs-view job-details-workspace${browserOpen ? ' assistant-open' : ''}`} style={browserOpen ? { '--application-browser-width': `${layout.browserWidth}px`, '--application-assistant-width': `${layout.assistantWidth}px` } : undefined}>
     <header className="job-detail-header"><div className="job-detail-heading"><span className="eyebrow">ROLE DETAILS</span><h2>{job.roleTitle}</h2><p>{job.company} <span>·</span> {job.location || 'Location not listed'} <span>·</span> {stageLabel(job.stage)}</p></div><div className="jobs-actions"><button className="secondary" onClick={onEdit}>Edit role</button>{job.url && <a className="secondary" href={job.url} target="_blank" rel="noreferrer">Open listing <ExternalLink size={14} /></a>}<button className="primary" onClick={onOpenApplicationAssistant}>Open application assistant</button></div></header>
+    {browserOpen && application && <><div className="application-browser-splitter" style={{ right: layout.browserWidth + layout.assistantWidth }} role="separator" aria-label="Resize employer page" /><ApplicationBrowserPanel applicationId={application.id} browserWidth={layout.browserWidth} browserLeft={layout.browserLeft} onClose={() => { setBrowserOpen(false); onCloseApplicationAssistant?.(); }} onSubmission={async () => { await onRefresh?.(); await load(); }} /></>}
     {message && <div className="job-search-status">{message}</div>}
     <div className="job-detail-layout">
       <main className="job-detail-main">
