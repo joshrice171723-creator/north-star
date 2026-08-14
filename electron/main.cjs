@@ -35,6 +35,7 @@ const academyOrigin = new URL(academyUrl).origin;
 let mainWindow;
 let academyView;
 let googleVoiceView;
+let googleVoiceViewAttached = false;
 let academyVisible = true;
 let googleVoiceViewVisible = false;
 let academyLayout = null;
@@ -144,16 +145,21 @@ function googleVoiceViewBounds() {
 }
 function setGoogleVoiceViewVisible(visible) {
   googleVoiceViewVisible = Boolean(visible);
-  // Electron supports one BrowserView attachment per BrowserWindow. Swap the
-  // existing Academy view instead of adding BrowserView to contentView, which
-  // causes a native argument-conversion crash in current Electron builds.
-  if (mainWindow && googleVoiceView && academyView) mainWindow.setBrowserView(googleVoiceViewVisible ? googleVoiceView : academyView);
+  if (mainWindow && googleVoiceView) {
+    if (googleVoiceViewVisible && !googleVoiceViewAttached) {
+      mainWindow.contentView.addChildView(googleVoiceView);
+      googleVoiceViewAttached = true;
+    } else if (!googleVoiceViewVisible && googleVoiceViewAttached) {
+      mainWindow.contentView.removeChildView(googleVoiceView);
+      googleVoiceViewAttached = false;
+    }
+  }
   googleVoiceViewBounds();
   if (!googleVoiceViewVisible) academyBounds();
   return googleVoiceViewVisible;
 }
 function createGoogleVoiceView() {
-  googleVoiceView = new BrowserView({
+  googleVoiceView = new electron.WebContentsView({
     webPreferences: { partition: googleVoicePartition, contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   googleVoiceView.webContents.setWindowOpenHandler(({ url }) => {
@@ -908,7 +914,7 @@ function createWindow() {
     // hidden Google Voice session cannot receive events after the app quits.
     if (!isQuitting && readGoogleVoiceSettings().enabled) { event.preventDefault(); mainWindow.hide(); }
   });
-  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; googleVoiceView = null; });
+  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; googleVoiceView = null; googleVoiceViewAttached = false; });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
