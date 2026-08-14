@@ -49,13 +49,14 @@ test('provider filter accepts common USAJOBS AI and technical title variants', (
 });
 
 test('planner uses nested AI output and preserves all provider queries', async () => {
-  const plan = await createSearchPlan({ profile: { targetRoles: ['AI FDW'] }, resume: { rawText: 'cloud architecture and automation' }, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ searchBrief: { interpretation: 'AI architecture', jobFamilies: ['AI Architect'], searchQueries: ['AI architect'], exclusions: ['aviation'] }, providerQueries: { usajobs: [{ laneId: 'usa-1', type: 'position-title', positionTitle: 'Computer Scientist' }], adzuna: [{ laneId: 'adzuna-1', what: 'AI architect', where: 'Dallas, TX' }], remotive: [{ laneId: 'remotive-1', search: 'AI architect', limit: 50 }], arbeitnow: [{ laneId: 'arbeitnow-1', searchTerms: ['AI architect'], maxPages: 1 }] } }) } }) });
+  const plan = await createSearchPlan({ profile: { targetRoles: ['AI FDW'] }, resume: { rawText: 'cloud architecture and automation' }, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ searchBrief: { interpretation: 'AI architecture', jobFamilies: ['AI Architect'], searchQueries: ['AI architect'], exclusions: ['aviation'] }, providerQueries: { usajobs: [{ laneId: 'usa-1', type: 'position-title', positionTitle: 'Computer Scientist' }], adzuna: [{ laneId: 'adzuna-1', what: 'AI architect', where: 'Dallas, TX' }], remotive: [{ laneId: 'remotive-1', search: 'AI architect', limit: 50 }], arbeitnow: [{ laneId: 'arbeitnow-1', searchTerms: ['AI architect'], maxPages: 1 }], dice: [{ laneId: 'dice-1', keyword: 'AI architect' }] } }) } }) });
   assert.equal(plan.source, 'ai');
   assert.deepEqual(plan.searchQueries, ['AI architect']);
   assert.equal(plan.providerQueries.usajobs[0].positionTitle, 'Computer Scientist');
   assert.equal(plan.adzunaQueries[0].what, 'AI architect');
   assert.equal(plan.publicQueries.remotive[0].search, 'AI architect');
   assert.deepEqual(plan.publicQueries.arbeitnow[0].searchTerms, ['AI architect']);
+  assert.equal(plan.publicQueries.dice[0].keyword, 'AI architect');
 });
 
 test('planner accepts object content and a short wrapper sentence', () => {
@@ -122,6 +123,7 @@ test('planner retries once after truncated JSON and accepts the repaired plan', 
     adzuna: [{ what: 'AI Engineer' }],
     remotive: [{ search: 'AI Engineer' }],
     arbeitnow: [{ searchTerms: ['AI Engineer'] }],
+    dice: [{ keyword: 'AI Engineer' }],
   } };
   const plan = await createSearchPlan({ profile: { targetRoles: ['AI Engineer'] }, openRouter: async () => {
     calls += 1;

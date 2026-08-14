@@ -198,17 +198,17 @@ test('network failure is retryable and safe', async () => {
   } finally { global.fetch = originalFetch; }
 });
 
-test('retrieval starts all four providers before waiting and reports every provider', async () => {
+test('retrieval starts all five providers before waiting and reports every provider', async () => {
   const originalFetch = global.fetch; const started = []; const releases = []; let released = false;
   global.fetch = async (url) => { started.push(String(url)); if (!released) await new Promise((resolve) => releases.push(resolve)); if (String(url).includes('usajobs')) return { ok: true, status: 200, json: async () => ({ SearchResult: { SearchResultItems: [], SearchResultCountAll: 0 } }) }; if (String(url).includes('adzuna')) return { ok: true, status: 200, json: async () => ({ results: [], count: 0 }) }; if (String(url).includes('remotive')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) }; return { ok: true, status: 200, json: async () => ({ data: [] }) }; };
   try {
-    const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {}); const plan = { ...aiSearchPlan(brief, true), publicQueries: { remotive: [{ laneId: 'r', search: 'AI engineer' }], arbeitnow: [{ laneId: 'a', searchTerms: ['AI'] }] } };
+    const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {}); const plan = { ...aiSearchPlan(brief, true), publicQueries: { remotive: [{ laneId: 'r', search: 'AI engineer' }], arbeitnow: [{ laneId: 'a', searchTerms: ['AI'] }], dice: [{ laneId: 'd', keyword: 'AI engineer' }] } };
     const pending = searchJobs({ profile: {}, credentials: { usajobsEmail: 'x@y.com', usajobsApiKey: 'x', adzunaAppId: 'x', adzunaApiKey: 'x' }, plan });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.ok(started.some((url) => url.includes('usajobs'))); assert.ok(started.some((url) => url.includes('adzuna'))); assert.ok(started.some((url) => url.includes('remotive'))); assert.ok(started.some((url) => url.includes('arbeitnow')));
+    assert.ok(started.some((url) => url.includes('usajobs'))); assert.ok(started.some((url) => url.includes('adzuna'))); assert.ok(started.some((url) => url.includes('remotive'))); assert.ok(started.some((url) => url.includes('arbeitnow'))); assert.ok(started.some((url) => url.includes('mcp.dice.com')));
     released = true; while (releases.length) releases.shift()();
     const result = await pending;
-    assert.deepEqual(result.providerResults.map((entry) => entry.provider), ['usajobs', 'adzuna', 'remotive', 'arbeitnow']);
+    assert.deepEqual(result.providerResults.map((entry) => entry.provider), ['usajobs', 'adzuna', 'remotive', 'arbeitnow', 'dice']);
   } finally { global.fetch = originalFetch; }
 });
 

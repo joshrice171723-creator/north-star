@@ -11,6 +11,7 @@ const MAX_PROVIDER_REQUESTS = 5;
 const MIN_DETERMINISTIC_SCORE = 40;
 const { searchAdzuna } = require('./adzuna-provider.cjs');
 const { searchRemotive, searchArbeitnow } = require('./public-job-providers.cjs');
+const { searchDice, diceParams } = require('./dice-provider.cjs');
 const timeoutFetch = async (url, options = {}, timeoutMs = 15000) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { return await fetch(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); } };
 const text = (value, max = 50000) => String(value ?? '').trim().slice(0, max);
 const list = (value, max = 30) => (Array.isArray(value) ? value : []).map((entry) => text(entry, 160)).filter(Boolean).slice(0, max);
@@ -90,12 +91,12 @@ function expandSearchAliases(value) { return normalizeMatchText(value).replace(/
 function calculateRetrievalScore(job, brief = {}) { if (matchesHardExclusion(job, brief.exclusions || brief.excludedTerms)) return -1; const title = expandSearchAliases(job.title); const body = expandSearchAliases(`${job.description} ${job.duties} ${job.qualifications} ${(job.requirements || []).join(' ')}`); const families = list(brief.jobFamilies || brief.jobTypes || brief.searchQueries, 12).map(expandSearchAliases); const must = list(brief.mustHaveSkills, 12).map(expandSearchAliases); const nice = list(brief.niceToHaveSkills, 12).map(expandSearchAliases); const domainHit = /\b(artificial intelligence|machine learning|generative ai|natural language processing|software|computer|data)\b/.test(title); const technicalTitle = /\b(engineer|scientist|architect|specialist|developer|researcher|analyst|technologist|programmer|computer|software|data|systems)\b/.test(title); const descriptionDomainHit = /\b(artificial intelligence|machine learning|generative ai|natural language processing|software|computer|data)\b/.test(body); const titleScore = Math.max(families.reduce((best, family) => Math.max(best, family && title.includes(family) ? 39 : family.split(' ').filter((word) => word.length > 2 && title.includes(word)).length >= 2 ? 28 : 0), 0), technicalTitle && domainHit && descriptionDomainHit ? 28 : 0); const skillScore = Math.min(22, must.filter((skill) => skill && body.includes(skill)).length * 9 + nice.filter((skill) => skill && body.includes(skill)).length * 4); const hasCoreSignal = titleScore > 0 || skillScore > 0 || (technicalTitle && domainHit && descriptionDomainHit); if (!hasCoreSignal) return 0; const locationScore = !brief.locations?.length || brief.remotePreference === 'remote' || brief.locations.some((loc) => normalizeMatchText(job.location).includes(normalizeMatchText(loc.raw || loc.city || loc.state))) ? 17 : 0; const seniorityScore = !brief.seniority?.length || brief.seniority.some((level) => normalizeMatchText(`${job.title} ${job.lowGrade} ${job.highGrade}`).includes(level)) ? 11 : 0; return Math.min(100, titleScore + skillScore + locationScore + seniorityScore); }
 function filterJobs(jobs, plan = {}) { return jobs.filter((job) => calculateRetrievalScore(job, plan) >= 40); }
 function scoreJobs(jobs, brief) { return jobs.map((job) => ({ job, retrievalScore: calculateRetrievalScore(job, brief) })).filter((entry) => entry.retrievalScore >= 40).sort((a, b) => b.retrievalScore - a.retrievalScore || String(a.job.title).localeCompare(String(b.job.title))); }
-const PROVIDERS = ['usajobs', 'adzuna', 'remotive', 'arbeitnow'];
-const PROVIDER_LABELS = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow' };
+const PROVIDERS = ['usajobs', 'adzuna', 'remotive', 'arbeitnow', 'dice'];
+const PROVIDER_LABELS = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow', dice: 'Dice' };
 // New providers must opt into this shared contract. Query-capable sources are
 // given distinct variants until they collect 20 qualified jobs; feed-only
 // sources are fetched once and report an honest shortfall, never fake retries.
-const PROVIDER_CAPABILITIES = { usajobs: { queryCapable: true }, adzuna: { queryCapable: true }, remotive: { queryCapable: true }, arbeitnow: { queryCapable: false, paginated: true } };
+const PROVIDER_CAPABILITIES = { usajobs: { queryCapable: true }, adzuna: { queryCapable: true }, remotive: { queryCapable: true }, arbeitnow: { queryCapable: false, paginated: true }, dice: { queryCapable: true } };
 function providerEnvelope(provider, result = {}) {
   const jobs = Array.isArray(result.jobs) ? result.jobs : [];
   const error = result.error || null;
@@ -219,12 +220,13 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
     const planned = provider === 'usajobs' ? lanes : provider === 'adzuna' ? adzunaLanes : publicQueries[provider];
     return [provider, plannedProviderLanes(provider, planned)];
   }));
-  // Start all four provider pipelines together; each pipeline owns its pagination bound.
+  // Start all configured provider pipelines together; each pipeline owns its pagination bound.
   await Promise.allSettled([
     paged('usajobs', adaptiveLanes.usajobs, searchUsaJobs, (lane, page) => Object.fromEntries(buildUsaJobsParams(lane, baseScope, page, brief)), Boolean(credentials?.usajobsApiKey && credentials?.usajobsEmail)),
     paged('adzuna', adaptiveLanes.adzuna, searchAdzuna, (lane, page) => { const params = require('./adzuna-provider.cjs').buildAdzunaParams(lane, baseScope, page, brief); return Object.fromEntries([...params].filter(([key]) => !['app_id', 'app_key'].includes(key))); }, Boolean(credentials?.adzunaAppId && credentials?.adzunaApiKey)),
     paged('remotive', adaptiveLanes.remotive, searchRemotive, null, true, MAX_PROVIDER_REQUESTS),
     paged('arbeitnow', adaptiveLanes.arbeitnow, searchArbeitnow, null, true, MAX_PROVIDER_REQUESTS),
+    paged('dice', adaptiveLanes.dice, searchDice, (lane, page) => diceParams(lane, baseScope, page, brief), true, MAX_PROVIDER_REQUESTS),
   ]);
   const envelopes = PROVIDERS.map((provider) => { const providerResults = results.filter((_, index) => attempts[index].provider === provider); const jobs = dedupeJobs(providerResults.flatMap((result) => Array.isArray(result.jobs) ? result.jobs : [])); const error = providerResults.find((result) => result.error)?.error || null; return providerEnvelope(provider, { jobs, error, diagnostics: { requests: providerResults.length } }); });
   const fetched = dedupeJobs(envelopes.flatMap((envelope) => envelope.jobs));
