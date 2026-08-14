@@ -16,6 +16,7 @@ const asList = (value) => (Array.isArray(value) ? value : []).flatMap((entry) =>
 const normalizeProfileLists = (value = {}) => Object.fromEntries(PROFILE_LIST_FIELDS.map((key) => [key, asList(value[key])]));
 const profileValue = (value) => asList(value).join(', ');
 const matchRank = (entry) => Number(entry?.fitScore ?? -1);
+const displayPhoneNumber = (value) => { const digits = String(value || '').replace(/\D/g, ''); return digits.length === 10 ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}` : String(value || '').trim(); };
 const mergeRankedMatches = (existing, incoming) => {
   const merged = new Map(existing.map((entry) => [String(entry.job.externalId), entry]));
   incoming.forEach((entry) => {
@@ -211,7 +212,8 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       if (title) title.dataset.jobNumber = `#${index + 1}`;
     });
     jobs.forEach((job) => {
-      if (!(job.unreadVoiceActivityCount > 0 || job.unreadEmailCount > 0)) return;
+      const voiceAssignment = [job.googleVoiceContactName, displayPhoneNumber(job.googleVoicePhoneNumber)].filter(Boolean).join(' · ');
+      if (!(job.unreadVoiceActivityCount > 0 || job.unreadEmailCount > 0 || voiceAssignment)) return;
       const card = [...document.querySelectorAll('.job-card')].find((entry) => entry.querySelector('.job-card-top > b')?.textContent === job.roleTitle && entry.querySelector('strong')?.textContent === job.company);
       const top = card?.querySelector('.job-card-top');
       if (!top) return;
@@ -219,6 +221,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       badge.className = 'job-card-notifications';
       badge.setAttribute('aria-label', `${job.unreadVoiceActivityCount || 0} new Voice message or call${job.unreadVoiceActivityCount === 1 ? '' : 's'}, ${job.unreadEmailCount || 0} new email${job.unreadEmailCount === 1 ? '' : 's'}`);
       badge.innerHTML = `${job.unreadVoiceActivityCount > 0 ? `<span class="job-card-notification voice">${job.unreadVoiceActivityCount} new Voice</span>` : ''}${job.unreadEmailCount > 0 ? `<span class="job-card-notification email">${job.unreadEmailCount} new email${job.unreadEmailCount === 1 ? '' : 's'}</span>` : ''}`;
+      if (voiceAssignment) { const assignment = document.createElement('span'); assignment.className = 'job-card-voice-assignment'; assignment.textContent = voiceAssignment; badge.append(assignment); }
       top.insertAdjacentElement('afterend', badge);
     });
     return () => document.querySelectorAll('.job-card-notifications').forEach((node) => node.remove());
