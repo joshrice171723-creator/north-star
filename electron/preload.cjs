@@ -107,4 +107,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,blockJobEmailSender: (input) => ipcRenderer.invoke('email:sender:block', input)
   ,unblockJobEmailSender: (input) => ipcRenderer.invoke('email:sender:unblock', input)
   ,listBlockedJobEmailSenders: () => ipcRenderer.invoke('email:sender:blocked:list')
+  ,getGoogleVoiceStatus: () => ipcRenderer.invoke('google-voice:get')
+  ,setGoogleVoiceEnabled: (enabled) => ipcRenderer.invoke('google-voice:set-enabled', Boolean(enabled))
+  ,openGoogleVoice: () => ipcRenderer.invoke('google-voice:open')
+  ,testGoogleVoiceNotification: () => ipcRenderer.invoke('google-voice:test-notification')
 });
