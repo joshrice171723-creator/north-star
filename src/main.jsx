@@ -343,6 +343,7 @@ function App() {
   const [theme, setTheme] = useState(() => THEMES[savedState?.theme] ? savedState.theme : 'graphite');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [followThroughNotice, setFollowThroughNotice] = useState(null);
+  const [googleVoiceNotification, setGoogleVoiceNotification] = useState(null);
   const appRef = useRef(null);
   const splitterRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -376,6 +377,10 @@ function App() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme })); } catch { /* local persistence is best-effort */ }
   }, [modules, activeLesson, view, expanded, notes, practiceResults, activeDrillId, academyOpen, theme]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    const unsubscribe = window.desktopShell?.onGoogleVoiceNotification?.((notification) => setGoogleVoiceNotification(notification));
+    return () => unsubscribe?.();
+  }, []);
   useEffect(() => {
     const crumb = document.querySelector('.crumb');
     const jobSearch = crumb?.querySelector('b');
@@ -607,7 +612,13 @@ function App() {
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); document.body.classList.remove('is-resizing'); };
   }, [dragging, syncAcademyBounds]);
 
+  const openGoogleVoiceFromNotification = () => {
+    setGoogleVoiceNotification(null);
+    setView('google-voice');
+    window.desktopShell?.setGoogleVoiceVisible?.(true);
+  };
   return <div className="app" ref={appRef} data-theme={theme}>
+    {googleVoiceNotification && <div className="google-voice-toast" role="status" onClick={openGoogleVoiceFromNotification}><PhoneCall size={18}/><span><b>{googleVoiceNotification.title || 'Google Voice'}</b><small>{googleVoiceNotification.body || 'New call or message'}</small></span><button type="button" aria-label="Dismiss Google Voice notification" onClick={(event) => { event.stopPropagation(); setGoogleVoiceNotification(null); }}><X size={15}/></button></div>}
     <aside className="sidebar">
       <div className="brand"><div className="brand-icon" aria-hidden="true"><Star className="brand-star" size={19} fill="currentColor" strokeWidth={1.8}/></div><div><b>North Star</b><small>Command center</small></div></div>
       <div className="nav-label">COMMAND CENTER</div>
