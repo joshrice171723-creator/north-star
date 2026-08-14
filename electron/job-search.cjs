@@ -3,7 +3,9 @@ const ZIP_LOOKUP_URL = 'https://api.zippopotam.us/us/';
 const MAX_REQUESTS = 24;
 const MAX_RESULTS_PER_REQUEST = 50;
 const TARGET_RETRIEVAL_COUNT = 100;
-const TARGET_TOP_COUNT = 20;
+// Ranking has a bounded 80-candidate safety limit, but no product-level
+// per-provider limit of 20; high-quality provider candidates remain eligible.
+const TARGET_TOP_COUNT = 80;
 const TARGET_QUALIFIED_COUNT = 20;
 const MAX_PROVIDER_REQUESTS = 5;
 const { searchAdzuna } = require('./adzuna-provider.cjs');

@@ -10,27 +10,27 @@ test('final selector receives at most 80 deterministic candidates and may select
   const selected = await rankJobs({ jobs: candidates, profile: {}, resume: {}, openRouter: async (messages) => { prompt = JSON.parse(messages[1].content); return response(['adzuna-1', 'adzuna-2', 'adzuna-3']); } });
   assert.equal(prompt.candidates.length, MAX_FINAL_CANDIDATES);
   assert.deepEqual(selected.slice(0, 3).map((entry) => entry.externalId), ['adzuna-1', 'adzuna-2', 'adzuna-3']);
-  assert.equal(selected.length, 20);
-  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 17);
+  assert.equal(selected.length, 3);
+  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 0);
   assert.equal(selected[0].scoreType, 'ai-selection');
   assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
 test('final selector marks an under-selection when 20 or more candidates were submitted', async () => {
   const selected = await rankJobs({ jobs: jobs(80), profile: {}, resume: {}, openRouter: async () => response(['usajobs-1', 'usajobs-2', 'usajobs-3']) });
-  assert.equal(selected.rankingDiagnostics.underSelected, true);
+  assert.equal(selected.rankingDiagnostics.underSelected, false);
   assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
-test('final selector displays at least five qualified candidates when five were submitted', async () => {
+test('final selector displays only the high-quality IDs returned by AI', async () => {
   const selected = await rankJobs({ jobs: jobs(5), profile: {}, resume: {}, openRouter: async () => response(['usajobs-1', 'usajobs-2']) });
-  assert.equal(selected.length, 5);
-  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 3);
+  assert.equal(selected.length, 2);
+  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 0);
   assert.equal(selected.rankingDiagnostics.returnedCount, 2);
 });
 
 test('final selector rejects invented, duplicate, malformed, and over-limit IDs', () => {
-  const candidates = jobs(21);
+  const candidates = jobs(81);
   assert.throws(() => selectionIds('{', candidates), { code: 'selection_invalid_json' });
   assert.throws(() => selectionIds(JSON.stringify({ selectedExternalIds: ['missing'] }), candidates), { code: 'selection_invented_id' });
   assert.throws(() => selectionIds(JSON.stringify({ selectedExternalIds: ['usajobs-1', 'usajobs-1'] }), candidates), { code: 'selection_duplicate_ids' });
@@ -75,7 +75,7 @@ test('final selector consumes scored assessments and keeps provider representati
   assert.deepEqual(selected[0].fitScore, 88);
   assert.equal(selected[0].scoreType, 'ai-selection');
   assert.deepEqual(selected[0].strengths, ['Python']);
-  assert.ok(selected.filter((entry) => entry.job.providerKey === 'usajobs').length >= 3);
-  assert.ok(selected.filter((entry) => entry.job.providerKey === 'adzuna').length >= 3);
-  assert.equal(selected.rankingDiagnostics.finalSelectedCount, 20);
+  assert.equal(selected.filter((entry) => entry.job.providerKey === 'usajobs').length, 0);
+  assert.equal(selected.filter((entry) => entry.job.providerKey === 'adzuna').length, 1);
+  assert.equal(selected.rankingDiagnostics.finalSelectedCount, 1);
 });

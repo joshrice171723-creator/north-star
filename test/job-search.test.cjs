@@ -212,10 +212,10 @@ test('retrieval starts all four providers before waiting and reports every provi
   } finally { global.fetch = originalFetch; }
 });
 
-test('deterministic provider selection keeps at most 20 eligible jobs per provider', () => {
+test('deterministic provider selection keeps high-quality jobs eligible beyond 20 per provider', () => {
   const candidate = (providerKey, id) => ({ providerKey, externalId: `${providerKey}-${id}`, title: 'Machine Learning Engineer', description: 'machine learning', requirements: [] });
   const result = selectTopJobsPerProvider([...Array.from({ length: 25 }, (_, index) => candidate('usajobs', index)), ...Array.from({ length: 3 }, (_, index) => candidate('remotive', index)), { ...candidate('adzuna', 'excluded'), title: 'Aviation AI Engineer', description: 'aviation' }], { exclusions: ['aviation'], jobFamilies: ['Machine Learning Engineer'] });
-  assert.equal(result.jobs.filter((job) => job.providerKey === 'usajobs').length, 20);
+  assert.equal(result.jobs.filter((job) => job.providerKey === 'usajobs').length, 25);
   assert.equal(result.jobs.filter((job) => job.providerKey === 'remotive').length, 3);
   assert.equal(result.providerStats.adzuna.hardFiltered, 1);
   assert.ok(result.jobs.every((job) => job.scoreType === 'deterministic'));

@@ -1,6 +1,7 @@
 const MAX_FINAL_CANDIDATES = 80;
-const MAX_SELECTED = 20;
-const MIN_DISPLAYED = 5;
+// There is no product-level 20-result ceiling. Keep the bounded candidate
+// prompt limit as a safety guard for latency and model context size.
+const MAX_SELECTED = MAX_FINAL_CANDIDATES;
 const RANKING_CALL_TIMEOUT_MS = 50_000;
 const MAX_RANKING_PROMPT_CHARS = 120_000;
 const MAX_PROFILE_LIST_ITEMS = 12;
@@ -17,7 +18,7 @@ function resumeForRanking(resume = {}) { return { rawText: text(resume.rawText, 
 function jobForRanking(job = {}) { return { externalId: text(job.externalId, 200), providerKey: text(job.providerKey, 40), title: text(job.title, 240), company: text(job.company || job.agency, 180), location: text(job.location, 180), remoteType: text(job.remoteType, 40), description: text(job.description, 900), duties: text(job.duties, 600), qualifications: text(job.qualifications, 600), requirements: Array.isArray(job.requirements) ? job.requirements.map((entry) => text(entry, 180)).filter(Boolean).slice(0, 6) : [], clearanceRequired: text(job.clearanceRequired || job.securityClearance, 120), deterministicScore: Number.isFinite(Number(job.retrievalScore)) ? Number(job.retrievalScore) : null }; }
 function assertPromptSize(messages) { const characters = messages.reduce((total, message) => total + String(message.content || '').length, 0); if (characters > MAX_RANKING_PROMPT_CHARS) { const error = new Error(`Final selection prompt exceeded the ${MAX_RANKING_PROMPT_CHARS.toLocaleString()} character safety limit.`); error.code = 'selection_prompt_too_large'; throw error; } return messages; }
 function selectionMessages(profile, resume, jobs) {
-  const target = jobs.length >= MAX_SELECTED ? `Select exactly ${MAX_SELECTED} jobs.` : jobs.length >= MIN_DISPLAYED ? `Select at least ${MIN_DISPLAYED} and up to ${jobs.length} suitable jobs.` : `Select every suitable job, up to ${jobs.length}.`;
+  const target = `Select as many suitable jobs as you can justify, up to ${Math.min(MAX_SELECTED, jobs.length)}. Return fewer when the remaining listings are not high-quality fits.`;
   const availableProviders = PROVIDERS.filter((provider) => jobs.some((job) => job.providerKey === provider));
   const diversity = availableProviders.length > 1 ? `Prefer a balanced set across the available providers. Include at least 3 jobs from each provider that has 3 or more credible candidates when possible; never select a poor match just to satisfy a quota.` : '';
   return assertPromptSize([{ role: 'system', content: `You are the final job-search evaluator. Return JSON only in exactly this shape: {"selections":[{"externalId":"provider-id","fitScore":0,"fitTier":"strong match|good match|possible match","strengths":["evidence"],"gaps":["evidence or limitation"],"unknowns":["missing information"],"reasoning":"brief evidence-based comparison"}]}. ${target} ${diversity} Select only supplied externalIds, never invent or repeat IDs. Score each selected job from 0 to 100 based on the candidate's title, duties, qualifications, skills, location, seniority, work authorization, and the supplied profile/resume. The score is fit to this candidate, not probability of being hired. Do not use provider reputation or deterministic scores as a substitute for reading the listing. Return one scored selection object for every selected ID.` }, { role: 'user', content: JSON.stringify({ profile: profileForRanking(profile), resume: resumeForRanking(resume), candidates: jobs.map(jobForRanking) }) }]);
@@ -26,7 +27,7 @@ function selectionIds(content, candidates) {
   let parsed; try { parsed = JSON.parse(String(content || '')); } catch { const error = new Error('Final AI selection returned malformed JSON.'); error.code = 'selection_invalid_json'; throw error; }
   const ids = Array.isArray(parsed?.selections) ? parsed.selections.map((entry) => entry?.externalId) : parsed?.selectedExternalIds;
   if (!Array.isArray(ids)) { const error = new Error('Final AI selection did not include selectedExternalIds.'); error.code = 'selection_invalid_shape'; throw error; }
-  if (ids.length > MAX_SELECTED) { const error = new Error('Final AI selection returned more than 20 jobs.'); error.code = 'selection_over_limit'; throw error; }
+  if (ids.length > MAX_SELECTED) { const error = new Error(`Final AI selection returned more than ${MAX_SELECTED} jobs.`); error.code = 'selection_over_limit'; throw error; }
   const valid = new Set(candidates.map((job) => String(job.externalId)));
   const normalized = ids.map((id) => String(id));
   if (new Set(normalized).size !== normalized.length) { const error = new Error('Final AI selection included duplicate IDs.'); error.code = 'selection_duplicate_ids'; throw error; }
@@ -77,41 +78,7 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
     const byId = new Map(candidates.map((job) => [String(job.externalId), job]));
     const selected = ids.map((id) => { const job = byId.get(id); const assessment = details.get(id) || {}; return { job, externalId: id, ...assessment, fitScore: assessment.fitScore ?? (Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null), scoreType: 'ai-selection', fitTier: assessment.fitTier || 'AI-evaluated match', strengths: assessment.strengths || [], gaps: assessment.gaps || [], unknowns: assessment.unknowns || [], reasoning: assessment.reasoning || 'Selected by the final AI comparison from the supplied listing evidence.' }; });
     const aiSelectedCount = selected.length;
-    const selectedIds = new Set(ids);
-    // When multiple providers have credible candidates, prevent a single large
-    // source from consuming the whole visible result set.
-    const availableProviders = PROVIDERS.filter((provider) => candidates.some((job) => job.providerKey === provider));
-    const providerCap = availableProviders.length > 1 ? 8 : MAX_SELECTED;
-    if (availableProviders.length > 1) {
-      const counts = new Map();
-      const balanced = selected.filter((entry) => { const provider = entry.job?.providerKey; const count = counts.get(provider) || 0; if (count >= providerCap) return false; counts.set(provider, count + 1); return true; });
-      selected.length = 0; selected.push(...balanced); selectedIds.clear(); balanced.forEach((entry) => selectedIds.add(String(entry.externalId)));
-    }
-    // The model is asked for diversity, but enforce it locally so one source
-    // cannot consume the entire result set when other providers have credible
-    // candidates. These additions remain visibly labeled as deterministic.
-    const minimumPerProvider = 3;
-    for (const provider of PROVIDERS) {
-      const available = candidates.filter((job) => job.providerKey === provider && !selectedIds.has(String(job.externalId)));
-      const current = selected.filter((entry) => entry.job?.providerKey === provider).length;
-      const needed = Math.max(0, Math.min(minimumPerProvider, candidates.filter((job) => job.providerKey === provider).length) - current);
-      for (const job of available.slice(0, needed)) { selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Provider diversity backfill', strengths: [], gaps: ['The final AI returned too few selections from this provider.'], unknowns: [], reasoning: 'Added to keep the result set representative across available job sources.' }); selectedIds.add(String(job.externalId)); }
-    }
-    if (candidates.length >= MAX_SELECTED && selected.length < MAX_SELECTED) {
-      for (const job of candidates) {
-        if (selected.length >= MAX_SELECTED) break;
-        if (availableProviders.length > 1 && (selected.filter((entry) => entry.job?.providerKey === job.providerKey).length >= providerCap)) continue;
-        if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic backfill', strengths: [], gaps: ['The final AI returned fewer than 20 selections.'], unknowns: [], reasoning: 'Added from the remaining deterministic candidates to meet the requested 20-result target.' });
-      }
-    }
-    if (candidates.length >= MIN_DISPLAYED && selected.length < MIN_DISPLAYED) {
-      for (const job of candidates) {
-        if (selected.length >= MIN_DISPLAYED) break;
-        if (availableProviders.length > 1 && (selected.filter((entry) => entry.job?.providerKey === job.providerKey).length >= providerCap)) continue;
-        if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic minimum-fit backfill', strengths: [], gaps: ['The final AI selected fewer than five jobs; this qualified candidate was added to meet the minimum display target.'], unknowns: [], reasoning: 'Added from the remaining qualified candidates after the final AI returned fewer than five selections.' });
-      }
-    }
-    diagnostics.assessedCount = candidates.length; diagnostics.returnedCount = aiSelectedCount; diagnostics.finalSelectedCount = selected.length; diagnostics.displayedCount = selected.length; diagnostics.underSelected = candidates.length >= MAX_SELECTED && aiSelectedCount < MAX_SELECTED; diagnostics.durationMs = Date.now() - started; diagnostics.providerCounts = providerCounts(candidates, selected, selected.slice(0, aiSelectedCount));
+    diagnostics.assessedCount = candidates.length; diagnostics.returnedCount = aiSelectedCount; diagnostics.finalSelectedCount = selected.length; diagnostics.displayedCount = selected.length; diagnostics.underSelected = false; diagnostics.durationMs = Date.now() - started; diagnostics.providerCounts = providerCounts(candidates, selected, selected);
     await onBatch?.({ ...diagnostics, batchNumber: diagnostics.repairAttempted ? 2 : 1, callNumber: diagnostics.repairAttempted ? 2 : 1, status: 'success', finishedAt: new Date().toISOString() });
     Object.defineProperty(selected, 'rankingDiagnostics', { value: diagnostics, enumerable: false });
     return selected;
@@ -122,4 +89,4 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
     throw cause;
   }
 }
-module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_SELECTED, MIN_DISPLAYED, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
+module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_SELECTED, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
