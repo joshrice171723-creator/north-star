@@ -8,6 +8,7 @@ const TARGET_RETRIEVAL_COUNT = 100;
 const TARGET_TOP_COUNT = 80;
 const TARGET_QUALIFIED_COUNT = 20;
 const MAX_PROVIDER_REQUESTS = 5;
+const MIN_DETERMINISTIC_SCORE = 40;
 const { searchAdzuna } = require('./adzuna-provider.cjs');
 const { searchRemotive, searchArbeitnow } = require('./public-job-providers.cjs');
 const timeoutFetch = async (url, options = {}, timeoutMs = 15000) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { return await fetch(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); } };
@@ -118,13 +119,11 @@ function locationEligibility(job, brief = {}) {
   }) ? null : 'wrong_location';
 }
 function qualificationReason(job, brief = {}) {
-  if (!text(job.title, 300)) return 'missing_title';
-  if (matchesHardExclusion(job, brief.exclusions || brief.excludedTerms || [])) return 'excluded_keyword';
-  const locationReason = locationEligibility(job, brief); if (locationReason) return locationReason;
   const score = calculateRetrievalScore(job, brief);
-  // A job must have a family/title signal, a declared skill signal, or a
-  // concrete technical title plus supporting description before it reaches AI.
-  return score > 0 ? null : 'query_mismatch';
+  // The deterministic score is the only gate before the final AI. This keeps
+  // provider-specific title, location, and exclusion heuristics from silently
+  // removing listings that the AI may be able to evaluate from their evidence.
+  return score >= MIN_DETERMINISTIC_SCORE ? null : 'deterministic_score_below_minimum';
 }
 function selectTopJobsPerProvider(jobs, plan = {}, { limitPerProvider = TARGET_TOP_COUNT } = {}) {
   const brief = plan.searchBrief || plan;
@@ -192,11 +191,21 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
        const noProviderResults = PROVIDER_CAPABILITIES[provider]?.paginated ? !result.rawResultCount : !result.resultCount;
        if (result.error || noProviderResults || (PROVIDER_CAPABILITIES[provider]?.paginated && result.hasNextPage === false) || (!PROVIDER_CAPABILITIES[provider]?.paginated && Number.isFinite(result.totalAvailable) && page * MAX_RESULTS_PER_REQUEST >= result.totalAvailable)) break;
       }
-      if (qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS && PROVIDER_CAPABILITIES[provider]?.queryCapable && typeof refineQuery === 'function') {
-        let nextLane = null;
-        try { nextLane = await refineQuery({ provider, brief, attemptedLanes: laneQueue, outcome: { query: lane.positionTitle || lane.keyword || lane.what || lane.search || '', rawRetrieved: laneRaw, newlyQualified: qualified.size - laneQualifiedStart, qualifiedCount: qualified.size, requestCount: requestsMade } }); } catch { nextLane = null; }
-        const nextKey = nextLane && text(nextLane.search || nextLane.what || nextLane.positionTitle || nextLane.keyword || (nextLane.searchTerms || []).join(' '), 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-        if (nextKey && !attemptedQueries.has(JSON.stringify({ lane: nextLane.positionTitle || nextLane.keyword || nextLane.what || nextLane.search || nextLane.searchTerms || '', page: 1, location: baseScope.locationName || '' }))) laneQueue.push(nextLane);
+    if (qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS && PROVIDER_CAPABILITIES[provider]?.queryCapable && typeof refineQuery === 'function') {
+      let nextLane = null;
+      const refinementContext = { provider, brief, attemptedLanes: laneQueue, outcome: { query: lane.positionTitle || lane.keyword || lane.what || lane.search || '', rawRetrieved: laneRaw, newlyQualified: qualified.size - laneQualifiedStart, qualifiedCount: qualified.size, requestCount: requestsMade, diagnosticAttempt: true, failureReason: laneRaw === 0 ? 'provider_returned_zero_matches' : 'zero_jobs_reached_deterministic_threshold', requiredChange: provider === 'usajobs' ? 'Use a materially different position-title query before trying keyword-support again; do not repeat a failed Keyword query.' : 'Use a materially different query and explain what signal was missing from the prior query.' } };
+      try { nextLane = await refineQuery(refinementContext); } catch { nextLane = null; }
+      const nextKey = nextLane && text(nextLane.search || nextLane.what || nextLane.positionTitle || nextLane.keyword || (nextLane.searchTerms || []).join(' '), 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const nextAttemptKey = nextLane && JSON.stringify({ lane: nextLane.positionTitle || nextLane.keyword || nextLane.what || nextLane.search || nextLane.searchTerms || '', page: 1, location: baseScope.locationName || '' });
+      if (nextKey && !attemptedQueries.has(nextAttemptKey)) laneQueue.push(nextLane);
+      else if (requestsMade < MAX_PROVIDER_REQUESTS) {
+        // A failed or duplicate refinement gets one explicit diagnostic retry so
+        // a bad Keyword lane cannot end the provider search prematurely.
+        try { nextLane = await refineQuery({ ...refinementContext, outcome: { ...refinementContext.outcome, diagnosticRetry: true, requiredChange: 'The prior refinement was empty or duplicated. Diagnose the failure and return a new valid query with different wording and a different search mode.' } }); } catch { nextLane = null; }
+        const retryKey = nextLane && text(nextLane.search || nextLane.what || nextLane.positionTitle || nextLane.keyword || (nextLane.searchTerms || []).join(' '), 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const retryAttemptKey = nextLane && JSON.stringify({ lane: nextLane.positionTitle || nextLane.keyword || nextLane.what || nextLane.search || nextLane.searchTerms || '', page: 1, location: baseScope.locationName || '' });
+        if (retryKey && !attemptedQueries.has(retryAttemptKey)) laneQueue.push(nextLane);
+      }
       }
       if (qualified.size >= TARGET_QUALIFIED_COUNT || requestsMade >= MAX_PROVIDER_REQUESTS) break;
     }
@@ -211,7 +220,7 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
   await Promise.allSettled([
     paged('usajobs', adaptiveLanes.usajobs, searchUsaJobs, (lane, page) => Object.fromEntries(buildUsaJobsParams(lane, baseScope, page, brief)), Boolean(credentials?.usajobsApiKey && credentials?.usajobsEmail)),
     paged('adzuna', adaptiveLanes.adzuna, searchAdzuna, (lane, page) => { const params = require('./adzuna-provider.cjs').buildAdzunaParams(lane, baseScope, page, brief); return Object.fromEntries([...params].filter(([key]) => !['app_id', 'app_key'].includes(key))); }, Boolean(credentials?.adzunaAppId && credentials?.adzunaApiKey)),
-    paged('remotive', adaptiveLanes.remotive, searchRemotive, null, true, 1),
+    paged('remotive', adaptiveLanes.remotive, searchRemotive, null, true, MAX_PROVIDER_REQUESTS),
     paged('arbeitnow', adaptiveLanes.arbeitnow, searchArbeitnow, null, true, MAX_PROVIDER_REQUESTS),
   ]);
   const envelopes = PROVIDERS.map((provider) => { const providerResults = results.filter((_, index) => attempts[index].provider === provider); const jobs = dedupeJobs(providerResults.flatMap((result) => Array.isArray(result.jobs) ? result.jobs : [])); const error = providerResults.find((result) => result.error)?.error || null; return providerEnvelope(provider, { jobs, error, diagnostics: { requests: providerResults.length } }); });
@@ -224,4 +233,4 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
   const errors = results.map((result) => result.error).filter(Boolean); const warning = errors.length ? `${errors.length} job-source requests failed or did not return results; available results are still shown.` : jobs.length ? '' : fetched.length ? `Job sources returned ${fetched.length} listings.` : 'No job sources returned listings.';
   return { jobs, providerResults: envelopes, fetchedCount: fetched.length, filteredCount: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.hardFiltered, 0), counts: { requests: attempts.length, retrieved: sourceStats.reduce((sum, source) => sum + source.retrievedRaw, 0), unique: fetched.length, filtered: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.hardFiltered, 0), eligible: Object.values(selection.providerStats).reduce((sum, stat) => sum + stat.eligible, 0), deterministicTop: jobs.length, aiSubmitted: jobs.length }, sourceStats, attemptsDiagnostics, diagnostics: diagnostics || { attempts: attemptsDiagnostics }, warning, error: errors.length && !jobs.length ? { code: 'provider_error', message: warning, retryable: true } : null }; }
 async function testUsaJobs(credentials) { const result = await searchUsaJobs({ credentials, lane: { laneId: 'connection-test', type: 'position-title', positionTitle: 'Computer Scientist', filters: {} }, scope: { locationName: '' }, page: 1, brief: {} }); if (result.error) return { ok: false, ...result.error }; return { ok: true, status: 200, count: result.resultCount }; }
-module.exports = { searchJobs, searchUsaJobs, testUsaJobs, filterJobs, matchesExcluded: matchesHardExclusion, matchesHardExclusion, calculateRetrievalScore, qualificationReason, plannedProviderLanes, PROVIDER_CAPABILITIES, MAX_PROVIDER_REQUESTS, buildUsaJobsParams, normalizeUsaJobsItem, dedupeJobs, selectTopJobsPerProvider, recoveryUsaJobsLanes, PROVIDERS };
+module.exports = { searchJobs, searchUsaJobs, testUsaJobs, filterJobs, matchesExcluded: matchesHardExclusion, matchesHardExclusion, calculateRetrievalScore, qualificationReason, plannedProviderLanes, PROVIDER_CAPABILITIES, MAX_PROVIDER_REQUESTS, MIN_DETERMINISTIC_SCORE, buildUsaJobsParams, normalizeUsaJobsItem, dedupeJobs, selectTopJobsPerProvider, recoveryUsaJobsLanes, PROVIDERS };
