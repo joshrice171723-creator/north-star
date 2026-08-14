@@ -29,6 +29,18 @@ test('assigned Google Voice activity updates one job and deduplicates polling', 
     const second = db.jobs.activity.ingestGoogleVoiceActivity({ phoneNumber: '+1 214 555 0199', title: 'New message', content: 'Can we talk tomorrow?', activityType: 'message' });
     assert.equal(second.duplicate, true);
     assert.equal(db.jobs.activity.list('voice-job').filter((item) => item.activityType === 'google_voice_conversation').length, 2);
+    const email = db.email.upsert({ provider: 'gmail', externalId: 'voice-job-email', from: 'recruiter@example.com', subject: 'Next steps', isJobRelated: true });
+    db.email.link({ emailId: email.id, jobId: 'voice-job' });
+    assert.deepEqual({
+      voice: db.jobs.list().find((job) => job.id === 'voice-job').unreadVoiceActivityCount,
+      email: db.jobs.list().find((job) => job.id === 'voice-job').unreadEmailCount,
+    }, { voice: 1, email: 1 });
+    db.jobs.activity.markSeen('voice-job');
+    db.email.markJobSeen('voice-job');
+    assert.deepEqual({
+      voice: db.jobs.list().find((job) => job.id === 'voice-job').unreadVoiceActivityCount,
+      email: db.jobs.list().find((job) => job.id === 'voice-job').unreadEmailCount,
+    }, { voice: 0, email: 0 });
     assert.equal(db.jobs.list().find((job) => job.id === 'voice-job').updatedAt > assigned.createdAt, true);
   } finally {
     db.close();
