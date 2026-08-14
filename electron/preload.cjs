@@ -110,5 +110,6 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,getGoogleVoiceStatus: () => ipcRenderer.invoke('google-voice:get')
   ,setGoogleVoiceEnabled: (enabled) => ipcRenderer.invoke('google-voice:set-enabled', Boolean(enabled))
   ,openGoogleVoice: () => ipcRenderer.invoke('google-voice:open')
+  ,setGoogleVoiceVisible: (visible) => ipcRenderer.invoke('google-voice:set-visible', Boolean(visible))
   ,testGoogleVoiceNotification: () => ipcRenderer.invoke('google-voice:test-notification')
 });
