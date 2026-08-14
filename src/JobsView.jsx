@@ -204,6 +204,12 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
     // Keep the notification badge in the existing card layout without making
     // the board markup depend on optional fields from older job records.
     document.querySelectorAll('.job-card-notifications').forEach((node) => node.remove());
+    document.querySelectorAll('.job-card-top > b').forEach((title) => { delete title.dataset.jobNumber; });
+    jobs.forEach((job, index) => {
+      const card = [...document.querySelectorAll('.job-card')].find((entry) => entry.querySelector('.job-card-top > b')?.textContent === job.roleTitle && entry.querySelector('strong')?.textContent === job.company);
+      const title = card?.querySelector('.job-card-top > b');
+      if (title) title.dataset.jobNumber = `#${index + 1}`;
+    });
     jobs.forEach((job) => {
       if (!(job.unreadVoiceActivityCount > 0 || job.unreadEmailCount > 0)) return;
       const card = [...document.querySelectorAll('.job-card')].find((entry) => entry.querySelector('.job-card-top > b')?.textContent === job.roleTitle && entry.querySelector('strong')?.textContent === job.company);
