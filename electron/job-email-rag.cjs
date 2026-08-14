@@ -54,9 +54,17 @@ function header(payload, name) {
 }
 
 function extractGmailText(payload) {
-  const parts = Array.isArray(payload?.parts) ? payload.parts : [];
-  const textPart = parts.find((part) => part.mimeType === 'text/plain' && part.body?.data) || payload;
-  return decodeBase64Url(textPart?.body?.data || '');
+  // Gmail nests multipart/alternative and multipart/related bodies, so only
+  // inspecting the first level can incorrectly produce an empty email body.
+  const candidates = [];
+  const visit = (part) => {
+    if (!part || typeof part !== 'object') return;
+    if (part.body?.data && (part.mimeType === 'text/plain' || part.mimeType === 'text/html')) candidates.push(part);
+    (Array.isArray(part.parts) ? part.parts : []).forEach(visit);
+  };
+  visit(payload);
+  const textPart = candidates.find((part) => part.mimeType === 'text/plain') || candidates.find((part) => part.mimeType === 'text/html');
+  return decodeBase64Url(textPart?.body?.data || payload?.body?.data || '');
 }
 
 function normalizeGmailMessage(message, options = {}) {
