@@ -20,12 +20,14 @@ test('phone numbers normalize across Google Voice display formats', () => {
 test('assigned Google Voice activity updates one job and deduplicates polling', () => {
   const { userDataPath, db } = create();
   try {
-    db.jobs.create({ id: 'voice-job', company: 'Acme', roleTitle: 'Engineer' });
+    db.jobs.create({ id: 'voice-job', company: 'Acme', roleTitle: 'Engineer', contactName: 'Jordan Lee' });
     const assigned = db.jobs.activity.assignGoogleVoiceConversation('voice-job', { phoneNumber: '+1 214 555 0199', title: 'Hiring manager', content: 'I assigned this conversation.' });
     assert.equal(assigned.metadata.phoneNumber, '2145550199');
+    assert.equal(assigned.metadata.contactName, 'Jordan Lee');
     const first = db.jobs.activity.ingestGoogleVoiceActivity({ phoneNumber: '(214) 555-0199', title: 'New message', content: 'Can we talk tomorrow?', activityType: 'message' });
     assert.equal(first.matched, true);
     assert.equal(first.activities.length, 1);
+    assert.equal(first.activities[0].metadata.contactName, 'Jordan Lee');
     const second = db.jobs.activity.ingestGoogleVoiceActivity({ phoneNumber: '+1 214 555 0199', title: 'New message', content: 'Can we talk tomorrow?', activityType: 'message' });
     assert.equal(second.duplicate, true);
     assert.equal(db.jobs.activity.list('voice-job').filter((item) => item.activityType === 'google_voice_conversation').length, 2);
