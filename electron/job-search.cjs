@@ -171,7 +171,7 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
   async function paged(provider, providerLanes, search, requestFor, configured = true, maxPages = Math.ceil(TARGET_RETRIEVAL_COUNT / MAX_RESULTS_PER_REQUEST)) {
     if (!configured) { record(provider, { laneId: `${provider}-not-configured`, type: 'skipped' }, baseScope, { jobs: [], resultCount: 0, diagnostics: {}, error: { code: 'not_configured', message: `${provider} credentials are not configured.`, retryable: false } }); return; }
     if (!providerLanes.length) { record(provider, { laneId: `${provider}-no-lane`, type: 'skipped' }, baseScope, { jobs: [], resultCount: 0, diagnostics: {}, error: { code: 'no_valid_lane', message: `No valid ${provider} lane was available.`, retryable: false } }); return; }
-    const collected = []; const seen = new Set(); const qualified = new Set(); const attemptedQueries = new Set(); const responseFingerprints = new Set(); const laneQueue = [...providerLanes]; let requestsMade = 0; let providerExhausted = false;
+    const collected = []; const seen = new Set(); const qualified = new Set(); const attemptedQueries = new Set(); const laneQueue = [...providerLanes]; let requestsMade = 0;
     for (const lane of laneQueue) {
       let laneRaw = 0; let laneQualifiedStart = qualified.size;
       for (let page = 1; page <= maxPages && qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS; page += 1) {
@@ -187,13 +187,9 @@ async function searchJobs({ profile = {}, credentials, plan = {}, diagnostics = 
       record(provider, lane, baseScope, result, requestFor ? () => requestFor(lane, page) : null);
       laneRaw += Number(result.resultCount) || 0;
       for (const job of result.jobs || []) { const key = `${job.providerKey}:${job.externalId || job.canonicalUrl}`; if (job.externalId && !seen.has(key)) { seen.add(key); collected.push(job); if (!qualificationReason(job, brief)) qualified.add(key); } }
-       const repeatedResponse = Boolean(result.responseFingerprint && responseFingerprints.has(result.responseFingerprint));
-       if (result.responseFingerprint) responseFingerprints.add(result.responseFingerprint);
-       if (repeatedResponse) providerExhausted = true;
        const noProviderResults = PROVIDER_CAPABILITIES[provider]?.paginated ? !result.rawResultCount : !result.resultCount;
-       if (result.error || repeatedResponse || noProviderResults || (PROVIDER_CAPABILITIES[provider]?.paginated && result.hasNextPage === false) || (!PROVIDER_CAPABILITIES[provider]?.paginated && Number.isFinite(result.totalAvailable) && page * MAX_RESULTS_PER_REQUEST >= result.totalAvailable)) break;
+       if (result.error || noProviderResults || (PROVIDER_CAPABILITIES[provider]?.paginated && result.hasNextPage === false) || (!PROVIDER_CAPABILITIES[provider]?.paginated && Number.isFinite(result.totalAvailable) && page * MAX_RESULTS_PER_REQUEST >= result.totalAvailable)) break;
       }
-      if (providerExhausted) break;
       if (qualified.size < TARGET_QUALIFIED_COUNT && requestsMade < MAX_PROVIDER_REQUESTS && PROVIDER_CAPABILITIES[provider]?.queryCapable && typeof refineQuery === 'function') {
         let nextLane = null;
         try { nextLane = await refineQuery({ provider, brief, attemptedLanes: laneQueue, outcome: { query: lane.positionTitle || lane.keyword || lane.what || lane.search || '', rawRetrieved: laneRaw, newlyQualified: qualified.size - laneQualifiedStart, qualifiedCount: qualified.size, requestCount: requestsMade } }); } catch { nextLane = null; }

@@ -22,6 +22,13 @@ test('final selector marks an under-selection when 20 or more candidates were su
   assert.equal(selected.rankingDiagnostics.returnedCount, 3);
 });
 
+test('final selector displays at least five qualified candidates when five were submitted', async () => {
+  const selected = await rankJobs({ jobs: jobs(5), profile: {}, resume: {}, openRouter: async () => response(['usajobs-1', 'usajobs-2']) });
+  assert.equal(selected.length, 5);
+  assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 3);
+  assert.equal(selected.rankingDiagnostics.returnedCount, 2);
+});
+
 test('final selector rejects invented, duplicate, malformed, and over-limit IDs', () => {
   const candidates = jobs(21);
   assert.throws(() => selectionIds('{', candidates), { code: 'selection_invalid_json' });

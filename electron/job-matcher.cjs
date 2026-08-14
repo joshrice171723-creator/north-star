@@ -1,5 +1,6 @@
 const MAX_FINAL_CANDIDATES = 80;
 const MAX_SELECTED = 20;
+const MIN_DISPLAYED = 5;
 const RANKING_CALL_TIMEOUT_MS = 50_000;
 const MAX_RANKING_PROMPT_CHARS = 120_000;
 const MAX_PROFILE_LIST_ITEMS = 12;
@@ -16,7 +17,7 @@ function resumeForRanking(resume = {}) { return { rawText: text(resume.rawText, 
 function jobForRanking(job = {}) { return { externalId: text(job.externalId, 200), providerKey: text(job.providerKey, 40), title: text(job.title, 240), company: text(job.company || job.agency, 180), location: text(job.location, 180), remoteType: text(job.remoteType, 40), description: text(job.description, 900), duties: text(job.duties, 600), qualifications: text(job.qualifications, 600), requirements: Array.isArray(job.requirements) ? job.requirements.map((entry) => text(entry, 180)).filter(Boolean).slice(0, 6) : [], clearanceRequired: text(job.clearanceRequired || job.securityClearance, 120), deterministicScore: Number.isFinite(Number(job.retrievalScore)) ? Number(job.retrievalScore) : null }; }
 function assertPromptSize(messages) { const characters = messages.reduce((total, message) => total + String(message.content || '').length, 0); if (characters > MAX_RANKING_PROMPT_CHARS) { const error = new Error(`Final selection prompt exceeded the ${MAX_RANKING_PROMPT_CHARS.toLocaleString()} character safety limit.`); error.code = 'selection_prompt_too_large'; throw error; } return messages; }
 function selectionMessages(profile, resume, jobs) {
-  const target = jobs.length >= MAX_SELECTED ? `Select exactly ${MAX_SELECTED} jobs.` : `Select every suitable job, up to ${jobs.length}.`;
+  const target = jobs.length >= MAX_SELECTED ? `Select exactly ${MAX_SELECTED} jobs.` : jobs.length >= MIN_DISPLAYED ? `Select at least ${MIN_DISPLAYED} and up to ${jobs.length} suitable jobs.` : `Select every suitable job, up to ${jobs.length}.`;
   const availableProviders = PROVIDERS.filter((provider) => jobs.some((job) => job.providerKey === provider));
   const diversity = availableProviders.length > 1 ? `Prefer a balanced set across the available providers. Include at least 3 jobs from each provider that has 3 or more credible candidates when possible; never select a poor match just to satisfy a quota.` : '';
   return assertPromptSize([{ role: 'system', content: `You are the final job-search evaluator. Return JSON only in exactly this shape: {"selections":[{"externalId":"provider-id","fitScore":0,"fitTier":"strong match|good match|possible match","strengths":["evidence"],"gaps":["evidence or limitation"],"unknowns":["missing information"],"reasoning":"brief evidence-based comparison"}]}. ${target} ${diversity} Select only supplied externalIds, never invent or repeat IDs. Score each selected job from 0 to 100 based on the candidate's title, duties, qualifications, skills, location, seniority, work authorization, and the supplied profile/resume. The score is fit to this candidate, not probability of being hired. Do not use provider reputation or deterministic scores as a substitute for reading the listing. Return one scored selection object for every selected ID.` }, { role: 'user', content: JSON.stringify({ profile: profileForRanking(profile), resume: resumeForRanking(resume), candidates: jobs.map(jobForRanking) }) }]);
@@ -93,6 +94,12 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
         if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic backfill', strengths: [], gaps: ['The final AI returned fewer than 20 selections.'], unknowns: [], reasoning: 'Added from the remaining deterministic candidates to meet the requested 20-result target.' });
       }
     }
+    if (candidates.length >= MIN_DISPLAYED && selected.length < MIN_DISPLAYED) {
+      for (const job of candidates) {
+        if (selected.length >= MIN_DISPLAYED) break;
+        if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic minimum-fit backfill', strengths: [], gaps: ['The final AI selected fewer than five jobs; this qualified candidate was added to meet the minimum display target.'], unknowns: [], reasoning: 'Added from the remaining qualified candidates after the final AI returned fewer than five selections.' });
+      }
+    }
     diagnostics.assessedCount = candidates.length; diagnostics.returnedCount = aiSelectedCount; diagnostics.finalSelectedCount = selected.length; diagnostics.displayedCount = selected.length; diagnostics.underSelected = candidates.length >= MAX_SELECTED && aiSelectedCount < MAX_SELECTED; diagnostics.durationMs = Date.now() - started; diagnostics.providerCounts = providerCounts(candidates, selected, selected.slice(0, aiSelectedCount));
     await onBatch?.({ ...diagnostics, batchNumber: diagnostics.repairAttempted ? 2 : 1, callNumber: diagnostics.repairAttempted ? 2 : 1, status: 'success', finishedAt: new Date().toISOString() });
     Object.defineProperty(selected, 'rankingDiagnostics', { value: diagnostics, enumerable: false });
@@ -104,4 +111,4 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
     throw cause;
   }
 }
-module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_SELECTED, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
+module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_SELECTED, MIN_DISPLAYED, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
