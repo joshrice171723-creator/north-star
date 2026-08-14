@@ -138,6 +138,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [applications, setApplications] = useState([]);
   const [applicationDocuments, setApplicationDocuments] = useState({});
   const [detailJob, setDetailJob] = useState(null);
+  // Breadcrumb navigation unmounts the workspace first, so scrolling waits until the board is rendered again.
   const pendingSearchNavigation = useRef(null);
   const rankingProgress = useRef(new Map());
   useEffect(() => { const handler = (event) => { if (event.detail?.application) setApplicationWorkspace(event.detail); }; window.addEventListener('application-started', handler); return () => window.removeEventListener('application-started', handler); }, []);
