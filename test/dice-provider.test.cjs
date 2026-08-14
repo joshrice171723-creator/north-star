@@ -6,8 +6,8 @@ test('Dice MCP initializes then searches with documented filters and normalizes 
   const originalFetch = global.fetch; const requests = [];
   global.fetch = async (url, options) => {
     requests.push({ url, body: JSON.parse(options.body), headers: options.headers });
-    if (requests.length === 1) return { ok: true, status: 200, headers: { get: (name) => name === 'mcp-session-id' ? 'dice-session' : null }, json: async () => ({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26' } }) };
-    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: JSON.stringify({ data: [{ id: 'dice-1', title: 'Machine Learning Engineer', summary: 'Build Python machine learning systems.', companyName: 'Dice Example', jobLocation: { displayName: 'Remote' }, detailsPageUrl: 'https://www.dice.com/job-detail/dice-1', employmentType: 'FULLTIME', workplaceTypes: ['Remote'], postedDate: '2026-08-13T00:00:00Z' }], meta: { totalResults: 1 } }) }] } }) };
+    if (requests.length === 1) return { ok: true, status: 200, headers: { get: (name) => name === 'mcp-session-id' ? 'dice-session' : name === 'content-type' ? 'text/event-stream' : null }, text: async () => `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26' } })}\n\n` };
+    return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, text: async () => `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: JSON.stringify({ data: [{ id: 'dice-1', title: 'Machine Learning Engineer', summary: 'Build Python machine learning systems.', companyName: 'Dice Example', jobLocation: { displayName: 'Remote' }, detailsPageUrl: 'https://www.dice.com/job-detail/dice-1', employmentType: 'FULLTIME', workplaceTypes: ['Remote'], postedDate: '2026-08-13T00:00:00Z' }], meta: { totalResults: 1 } }) }] } })}\n\n` };
   };
   try {
     const result = await searchDice({ lane: { laneId: 'dice-test', keyword: 'machine learning engineer', postedDate: 'SEVEN' }, scope: { locationName: 'Dallas, TX' }, brief: { remotePreference: 'remote', radiusMiles: 25 } });
@@ -18,5 +18,5 @@ test('Dice MCP initializes then searches with documented filters and normalizes 
 });
 
 test('Dice parameters keep values inside the documented search_jobs contract', () => {
-  assert.deepEqual(diceParams({ keyword: 'data engineer', employmentTypes: ['FULLTIME'], willingToSponsor: true }, { locationName: 'Austin, TX' }, 2, { radiusMiles: 20 }), { keyword: 'data engineer', jobs_per_page: 50, page_number: 2, location: 'Austin, TX', radius: 20, radius_unit: 'miles', employment_types: ['FULLTIME'], willing_to_sponsor: true });
+  assert.deepEqual(diceParams({ keyword: 'data engineer', employmentTypes: ['FULLTIME'], willingToSponsor: true }, { locationName: 'Austin, TX' }, 2, { radiusMiles: 20 }), { keyword: 'data engineer', jobs_per_page: 50, page_number: 2, location: 'Austin, TX', radius: 20, radius_unit: 'mi', employment_types: ['FULLTIME'], willing_to_sponsor: true });
 });

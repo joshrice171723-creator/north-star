@@ -7,7 +7,9 @@ function diceParams(lane = {}, scope = {}, page = 1, brief = {}) {
   const keyword = text(lane.keyword || lane.search || brief.jobFamilies?.[0] || brief.targetIntent || 'technology', 120);
   const params = { keyword, jobs_per_page: Math.max(1, Math.min(100, Number(lane.jobsPerPage || lane.jobs_per_page) || 50)), page_number: Math.max(1, Number(page) || 1) };
   const location = text(lane.location || scope.locationName, 160); if (location) params.location = location;
-  const radius = Number(lane.radius || brief.radiusMiles); if (Number.isFinite(radius) && radius >= 1) { params.radius = Math.min(100, radius); params.radius_unit = 'miles'; }
+  // Dice's public documentation lists "miles", but the live MCP schema
+  // validates the abbreviated enum value "mi" (or "km") only.
+  const radius = Number(lane.radius || brief.radiusMiles); if (Number.isFinite(radius) && radius >= 1) { params.radius = Math.min(100, radius); params.radius_unit = 'mi'; }
   const remote = String(lane.workplaceType || brief.remotePreference || '').toLowerCase(); if (remote === 'remote') params.workplace_types = ['Remote']; else if (remote === 'hybrid') params.workplace_types = ['Hybrid'];
   if (Array.isArray(lane.employmentTypes) && lane.employmentTypes.length) params.employment_types = lane.employmentTypes;
   if (['ONE', 'THREE', 'SEVEN'].includes(lane.postedDate)) params.posted_date = lane.postedDate;
@@ -23,7 +25,14 @@ function normalize(item, evidence = {}) {
 }
 
 async function readMcpJson(response) {
-  const body = await response.json();
+  // Dice's Streamable HTTP endpoint currently returns JSON-RPC messages as
+  // SSE frames, even when the request also accepts application/json.
+  const isEventStream = /text\/event-stream/i.test(response.headers?.get?.('content-type') || '');
+  const raw = isEventStream ? await response.text() : null;
+  const payload = isEventStream
+    ? raw.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).find(Boolean)
+    : null;
+  const body = payload ? JSON.parse(payload) : await response.json();
   if (body?.result) return body.result;
   return body;
 }
