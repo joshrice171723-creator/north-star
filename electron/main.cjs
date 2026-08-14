@@ -368,6 +368,16 @@ async function interpretJobEmail(input = {}) {
   coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted “${email.subject || 'Untitled email'}”.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
   return interpretation;
 }
+async function generateInterviewQuestions(input = {}) {
+  const jobId = validateJobDetailId(input.jobId); const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId); if (!job) throw new Error('Saved job not found.');
+  const response = await openRouterChat([
+    { role: 'system', content: 'Generate five concise, thoughtful questions a candidate should ask an interviewer about the role. Return JSON only: {"questions":[{"questionText":"","provenance":["ai_generated"]}]}. Ground every question in the supplied job details; do not invent company facts, benefits, or processes.' },
+    { role: 'user', content: JSON.stringify({ company: job.company, roleTitle: job.roleTitle, location: job.location, description: String(job.description || '').slice(0, 12000), notes: String(job.notes || '').slice(0, 4000) }) }
+  ], { auditPurpose: 'interview_question_generation', response_format: { type: 'json_object' }, max_tokens: 900 });
+  if (!response?.ok) throw new Error(response?.error || 'Could not generate interview questions.');
+  let parsed; try { parsed = JSON.parse(response.message?.content || '{}'); } catch { throw new Error('The AI response was not valid JSON.'); }
+  return (Array.isArray(parsed.questions) ? parsed.questions : []).slice(0, 8).map((question) => ({ questionText: String(question.questionText || '').trim().slice(0, 2000), provenance: ['ai_generated'] })).filter((question) => question.questionText);
+}
 const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progress', 'needs_user_input', 'ready_for_review', 'ready_to_submit', 'submitted', 'withdrawn', 'blocked']);
 const validateApplicationId = (value) => validateCoachId(value, 'application id');
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
@@ -771,6 +781,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
+  ipcMain.handle('jobs:interview:questions:generate', async (event, input) => { assertTrustedRenderer(event); return generateInterviewQuestions(input); });
   // The remote WebContentsView is controlled only by this narrow local-renderer API.
   ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const result = await applicationBrowser.open({ applicationId: input.applicationId }); applicationBrowser.setBounds(input?.bounds); return result; });
   ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });

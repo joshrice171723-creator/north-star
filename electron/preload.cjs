@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,listJobApplicationEvents: (id) => ipcRenderer.invoke('jobs:applications:events:list', id)
   ,listJobApplicationAnswers: (id) => ipcRenderer.invoke('jobs:applications:answers:list', id)
   ,saveJobApplicationAnswer: (input) => ipcRenderer.invoke('jobs:applications:answers:save', input)
+  ,generateInterviewQuestions: (input) => ipcRenderer.invoke('jobs:interview:questions:generate', input)
   ,confirmJobApplicationSubmission: (input) => ipcRenderer.invoke('jobs:applications:confirm-submission', input)
   ,generateApplicationDocument: (input) => ipcRenderer.invoke('jobs:documents:generate', input)
   ,listApplicationDocuments: (input) => ipcRenderer.invoke('jobs:documents:list', input)
