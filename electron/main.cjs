@@ -177,6 +177,7 @@ function createGoogleVoiceView() {
       if (origin !== 'https://voice.google.com' && origin !== 'https://accounts.google.com') event.preventDefault();
     } catch { event.preventDefault(); }
   });
+  googleVoiceView.webContents.on('context-menu', (_event, params) => showGoogleVoiceContextMenu(params));
   googleVoiceView.webContents.loadURL(googleVoiceUrl);
   googleVoiceViewBounds();
 }
@@ -857,6 +858,34 @@ function showAcademyContextMenu(params) {
     { label: 'Open link in current view', enabled: Boolean(academyLink), click: () => navigateAcademy(academyLink) },
   ]);
 
+  menu.popup({ window: mainWindow });
+}
+
+async function captureGoogleVoiceConversation(job) {
+  if (!googleVoiceView?.webContents || googleVoiceView.webContents.isDestroyed()) throw new Error('Google Voice is not open.');
+  const page = await googleVoiceView.webContents.executeJavaScript(`(() => {
+    const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const selected = clean(window.getSelection?.()?.toString());
+    const content = (selected.length >= 20 ? selected : clean(document.body?.innerText)).slice(0, 20000);
+    return { sourceUrl: location.href, title: clean(document.title) || 'Google Voice conversation', content };
+  })()`, true);
+  return coachDatabase.jobs.activity.recordGoogleVoiceConversation(job.id, page);
+}
+
+function showGoogleVoiceContextMenu(params) {
+  const jobs = coachDatabase?.jobs?.list?.() || [];
+  const assignmentItems = jobs.length
+    ? jobs.slice(0, 50).map((job) => ({ label: `${job.roleTitle || job.title || 'Untitled role'} · ${job.company || 'Unknown company'}`, click: () => captureGoogleVoiceConversation(job).catch((error) => showGoogleVoiceNotification('Google Voice', error.message || 'Could not assign the conversation.')) }))
+    : [{ label: 'No active jobs available', enabled: false }];
+  const menu = Menu.buildFromTemplate([
+    { label: 'Assign conversation to job', submenu: assignmentItems },
+    { type: 'separator' },
+    { label: 'Back', role: 'goBack', enabled: googleVoiceView.webContents.canGoBack() },
+    { label: 'Forward', role: 'goForward', enabled: googleVoiceView.webContents.canGoForward() },
+    { label: 'Reload', role: 'reload' },
+    { type: 'separator' },
+    { label: 'Copy', role: 'copy', enabled: Boolean(params.selectionText?.trim()) }
+  ]);
   menu.popup({ window: mainWindow });
 }
 
