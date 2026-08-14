@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BriefcaseBusiness, Check, ExternalLink, FileText, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import ApplicationWorkspace from './jobs/ApplicationWorkspace.jsx';
+import CombinedWorkspacePrototype from './jobs/CombinedWorkspacePrototype.jsx';
 import JobDetailsWorkspace from './jobs/JobDetailsWorkspace.jsx';
 
 export const JOB_STAGES = [['target', 'Target'], ['researching', 'Researching'], ['ready', 'Ready to apply'], ['applied', 'Applied'], ['screen', 'Recruiter screen'], ['interviewing', 'Interviewing'], ['final', 'Final round'], ['offer', 'Offer'], ['accepted', 'Accepted'], ['rejected', 'Rejected / withdrawn']];
@@ -135,6 +136,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [aiKey, setAiKey] = useState(''); const [aiStatus, setAiStatus] = useState({ configured: false }); const [aiMessage, setAiMessage] = useState('');
   const [sourceTesting, setSourceTesting] = useState(false);
   const [applicationWorkspace, setApplicationWorkspace] = useState(null);
+  const [combinedPrototypeJob, setCombinedPrototypeJob] = useState(null);
   const [applications, setApplications] = useState([]);
   const [applicationDocuments, setApplicationDocuments] = useState({});
   const [detailJob, setDetailJob] = useState(null);
@@ -185,6 +187,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const startMatchApplication = async (entry) => { const saved = await saveMatch(entry); if (saved) await openApplication(saved); };
   const refreshApplication = async () => { if (!applicationWorkspace) return; await onRefresh(); const application = await window.desktopShell?.getJobApplication?.(applicationWorkspace.application.id); if (application) { setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setApplicationWorkspace((current) => ({ ...current, application })); } };
   const changeDetailStage = async (stage) => { if (!detailJob) return; try { const saved = await window.desktopShell?.updateJob?.({ ...detailJob, stage }); setDetailJob(saved); await onRefresh(); } catch (cause) { setError(cause?.message || 'Could not update the application stage.'); } };
+  const openCombinedPrototype = (job) => setCombinedPrototypeJob(job);
   const saveSource = async () => { try { const result = await window.desktopShell?.saveJobSource?.(sourceForm); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage(result?.warning || 'Job-source credentials saved securely on this computer.'); } catch (cause) { setSourceMessage(cause?.message || 'Could not save job-source credentials.'); } };
   const testSource = async () => { setSourceTesting(true); try { const result = await window.desktopShell?.testJobSource?.(); const results = result?.results || [result]; setSourceMessage(results.map((entry) => `${entry.provider || 'Source'}: ${entry.ok ? `connected (${entry.count || 0} results)` : entry.message || 'failed'}`).join(' · ')); } catch (cause) { setSourceMessage(cause?.message || 'Could not test job sources.'); } finally { setSourceTesting(false); } };
   const clearSource = async () => { const result = await window.desktopShell?.clearJobSource?.(); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage('Job-source credentials cleared from this computer.'); };
@@ -210,6 +213,29 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   }, [jobs, detailJob]);
 
   useEffect(() => {
+    const cards = [...document.querySelectorAll('.jobs-board .job-card-top')];
+    const added = cards.map((top) => {
+      if (top.querySelector('.combined-prototype-trigger')) return null;
+      const button = document.createElement('button');
+      button.className = 'combined-prototype-trigger';
+      button.type = 'button';
+      button.title = 'Test combined workspace';
+      button.setAttribute('aria-label', 'Test combined workspace');
+      button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 9h4"/><path d="M8 3h8"/><path d="M8 3v4l-2 3v8a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-8l-2-3V3"/><path d="M8 15h8"/></svg>';
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const roleTitle = top.querySelector('b')?.textContent || '';
+        const company = top.closest('.job-card')?.querySelector('strong')?.textContent || '';
+        const job = jobs.find((entry) => entry.roleTitle === roleTitle && entry.company === company);
+        if (job) openCombinedPrototype(job);
+      });
+      top.appendChild(button);
+      return button;
+    }).filter(Boolean);
+    return () => added.forEach((button) => button.remove());
+  }, [jobs, openCombinedPrototype]);
+
+  useEffect(() => {
     const navigation = pendingSearchNavigation.current;
     if (!navigation || applicationWorkspace || detailJob) return;
     pendingSearchNavigation.current = null;
@@ -223,6 +249,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   }, [applicationWorkspace, detailJob, jobs]);
 
   if (applicationWorkspace) return <ApplicationWorkspace application={applicationWorkspace.application} job={applicationWorkspace.job} focusDocumentType={applicationWorkspace.focusDocumentType} onBack={() => { setApplicationWorkspace(null); loadDocumentSummaries().catch(() => {}); }} onRefresh={refreshApplication} />;
+  if (combinedPrototypeJob) { const currentJob = jobs.find((job) => job.id === combinedPrototypeJob.id) || combinedPrototypeJob; const application = applications.find((entry) => entry.jobId === currentJob.id); return <CombinedWorkspacePrototype job={currentJob} application={application} documents={applicationDocuments[application?.id] || []} onBack={() => setCombinedPrototypeJob(null)} onStartApplication={() => openApplication(currentJob)} />; }
   if (detailJob) {
     const currentJob = jobs.find((job) => job.id === detailJob.id) || detailJob;
     const application = applications.find((entry) => entry.jobId === currentJob.id);
