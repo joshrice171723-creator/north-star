@@ -11,12 +11,12 @@ test('Dice MCP initializes then searches with documented filters and normalizes 
   };
   try {
     const result = await searchDice({ lane: { laneId: 'dice-test', keyword: 'machine learning engineer', postedDate: 'SEVEN' }, scope: { locationName: 'Dallas, TX' }, brief: { remotePreference: 'remote', radiusMiles: 25 } });
-    assert.equal(requests.length, 2); assert.equal(requests[0].url, DICE_MCP_URL); assert.equal(requests[0].body.method, 'initialize'); assert.equal(requests[1].body.method, 'tools/call'); assert.equal(requests[1].body.params.name, 'search_jobs');
-    assert.deepEqual(requests[1].body.params.arguments.workplace_types, ['Remote']); assert.equal(requests[1].headers['mcp-session-id'], 'dice-session');
+    assert.equal(requests.length, 3); assert.equal(requests[0].url, DICE_MCP_URL); assert.equal(requests[0].body.method, 'initialize'); assert.equal(requests[1].body.method, 'notifications/initialized'); assert.equal(requests[2].body.method, 'tools/call'); assert.equal(requests[2].body.params.name, 'search_jobs');
+    assert.deepEqual(requests[2].body.params.arguments.workplace_types, ['Remote']); assert.equal(requests[2].headers['mcp-session-id'], 'dice-session');
     assert.equal(result.jobs[0].providerKey, 'dice'); assert.equal(result.jobs[0].applicationUrl, 'https://www.dice.com/job-detail/dice-1'); assert.equal(result.totalAvailable, 1);
   } finally { global.fetch = originalFetch; }
 });
 
 test('Dice parameters keep values inside the documented search_jobs contract', () => {
-  assert.deepEqual(diceParams({ keyword: 'data engineer', employmentTypes: ['FULLTIME'], willingToSponsor: true }, { locationName: 'Austin, TX' }, 2, { radiusMiles: 20 }), { keyword: 'data engineer', jobs_per_page: 50, page_number: 2, location: 'Austin, TX', radius: 20, radius_unit: 'mi', employment_types: ['FULLTIME'], willing_to_sponsor: true });
+  assert.deepEqual(diceParams({ keyword: 'data engineer', employmentTypes: ['Full-time'], willingToSponsor: true }, { locationName: 'Austin, TX' }, 2, { radiusMiles: 20 }), { keyword: 'data engineer', jobs_per_page: 50, page_number: 2, location: 'Austin, TX', radius: 20, radius_unit: 'mi', employment_types: ['FULLTIME'], willing_to_sponsor: true });
 });
