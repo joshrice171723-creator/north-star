@@ -67,6 +67,9 @@ function googleVoiceStatus() {
   return { enabled: settings.enabled, running: Boolean(googleVoiceWindow && !googleVoiceWindow.isDestroyed()), signedIn: Boolean(googleVoiceWindow?.webContents?.getURL()?.includes('voice.google.com')) };
 }
 function showGoogleVoiceNotification(title, body) {
+  // Mirror the OS alert into the renderer so an open app window has an
+  // actionable notification instead of requiring the user to find the tray icon.
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('google-voice:notification', { title, body, receivedAt: new Date().toISOString() });
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title, body, silent: false });
   notification.on('click', () => openGoogleVoiceWindow());
