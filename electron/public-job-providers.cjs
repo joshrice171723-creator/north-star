@@ -6,10 +6,29 @@ function laneQuery(lane = {}, brief = {}) { return text(lane.search || (Array.is
 function matches(query, job) {
   const ignored = new Set(['and', 'for', 'find', 'full', 'time', 'roles', 'role', 'with', 'near', 'associated', 'stated', 'where', 'show', 'jobs', 'job']);
   const terms = String(query || '').toLowerCase().match(/[a-z0-9]+/g)?.filter((term) => term.length > 2 && !ignored.has(term)) || [];
+  const title = String(job.title || '').toLowerCase();
   const haystack = `${job.title || ''} ${job.description || ''} ${job.category || ''}`.toLowerCase();
   if (!terms.length) return true;
   const required = terms.length >= 3 ? 2 : terms.length;
-  return terms.filter((term) => haystack.includes(term)).length >= required;
+  // Public feeds can match unrelated prose in a long description (for
+  // example, a marketing role mentioning an engineering team). A role search
+  // must have its core terms in the title before description keywords count.
+  return terms.filter((term) => title.includes(term)).length >= required
+    && terms.filter((term) => haystack.includes(term)).length >= required;
+}
+function matchesRequestedLocation(item, scope = {}, brief = {}) {
+  const requested = text(scope.locationName || '', 160).toLowerCase();
+  if (!requested) return true;
+  const location = text(item.location || item.candidate_required_location || item.locations || item.city || '', 240).toLowerCase();
+  const remote = /\bremote\b|\banywhere\b/.test(location);
+  // Arbeitnow is a largely European feed and has no provider-side location
+  // filter. Generic "Remote" listings do not establish U.S. work eligibility
+  // for a Dallas-targeted search, so retain them only when remote was chosen.
+  if (remote) return String(brief.remotePreference || '').toLowerCase() === 'remote';
+  const words = requested.match(/[a-z0-9]+/g) || [];
+  const city = words.find((word) => word.length > 2);
+  const state = words.find((word) => word.length === 2);
+  return Boolean((city && location.includes(city)) || (state && new RegExp(`\\b${state}\\b`).test(location)) || location.includes(requested));
 }
 function normalize(item, provider, evidence = {}) {
   const location = text(item.location || item.candidate_required_location || item.locations || item.city || 'Remote', 240);
@@ -24,7 +43,7 @@ async function searchRemotive({ lane = {}, scope = {}, brief = {} }) {
 
 async function searchArbeitnow({ lane = {}, scope = {}, page = 1, brief = {} }) {
   const query = laneQuery(lane, brief); const endpoint = `https://www.arbeitnow.com/api/job-board-api?page=${Math.max(1, Number(page) || 1)}`; const started = Date.now(); const diagnostics = { provider: 'arbeitnow', httpStatus: null, query, location: scope.locationName || '', request: { url: endpoint, page: Math.max(1, Number(page) || 1), localFilter: query, localLocation: scope.locationName || '' }, resultCount: 0, durationMs: 0 };
-  try { const response = await timeoutFetch(endpoint); diagnostics.httpStatus = response.status; const body = await response.json(); if (!response.ok) return { jobs: [], resultCount: 0, rawResultCount: 0, totalAvailable: 0, diagnostics: { ...diagnostics, durationMs: Date.now() - started }, error: { code: 'provider_error', message: `Arbeitnow returned HTTP ${response.status}.`, retryable: true } }; const feed = list(body?.data); const rawExternalIds = feed.map((item) => String(item.id || item.slug || item.url || '')).filter(Boolean); const items = feed.filter((item) => matches(query, { title: item.title, description: item.description, category: item.tags })); const jobs = items.map((item) => normalize(item, 'arbeitnow', { ...lane, query, locationScope: scope.locationName })); const hasNextPage = Boolean(body?.links?.next || body?.meta?.next_page || (feed.length >= 100)); return { jobs, resultCount: jobs.length, rawResultCount: feed.length, rawExternalIds, totalAvailable: items.length, hasNextPage, diagnostics: { ...diagnostics, resultCount: jobs.length, feedCount: feed.length, durationMs: Date.now() - started }, error: null }; } catch (cause) { return { jobs: [], resultCount: 0, rawResultCount: 0, totalAvailable: 0, diagnostics: { ...diagnostics, durationMs: Date.now() - started }, error: { code: cause?.name === 'AbortError' ? 'timeout' : 'network', message: 'Could not reach Arbeitnow.', retryable: true } }; }
+  try { const response = await timeoutFetch(endpoint); diagnostics.httpStatus = response.status; const body = await response.json(); if (!response.ok) return { jobs: [], resultCount: 0, rawResultCount: 0, totalAvailable: 0, diagnostics: { ...diagnostics, durationMs: Date.now() - started }, error: { code: 'provider_error', message: `Arbeitnow returned HTTP ${response.status}.`, retryable: true } }; const feed = list(body?.data); const rawExternalIds = feed.map((item) => String(item.id || item.slug || item.url || '')).filter(Boolean); const items = feed.filter((item) => matches(query, { title: item.title, description: item.description, category: item.tags }) && matchesRequestedLocation(item, scope, brief)); const jobs = items.map((item) => normalize(item, 'arbeitnow', { ...lane, query, locationScope: scope.locationName })); const hasNextPage = Boolean(body?.links?.next || body?.meta?.next_page || (feed.length >= 100)); return { jobs, resultCount: jobs.length, rawResultCount: feed.length, rawExternalIds, totalAvailable: items.length, hasNextPage, diagnostics: { ...diagnostics, resultCount: jobs.length, feedCount: feed.length, durationMs: Date.now() - started }, error: null }; } catch (cause) { return { jobs: [], resultCount: 0, rawResultCount: 0, totalAvailable: 0, diagnostics: { ...diagnostics, durationMs: Date.now() - started }, error: { code: cause?.name === 'AbortError' ? 'timeout' : 'network', message: 'Could not reach Arbeitnow.', retryable: true } }; }
 }
 
-module.exports = { searchRemotive, searchArbeitnow };
+module.exports = { matches, matchesRequestedLocation, searchRemotive, searchArbeitnow };
