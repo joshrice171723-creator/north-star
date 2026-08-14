@@ -80,3 +80,4 @@ body{overflow-x:hidden}
 .job-card>.delete-job{position:absolute;top:9px;right:8px;display:grid;place-items:center;width:20px;height:20px;margin:0;padding:3px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:0}
 .job-card>.delete-job svg{width:13px;height:13px}
 .job-card>.delete-job:hover{background:var(--surface-soft);color:var(--text)}
+.job-match-scores{display:grid;margin:8px 0 10px;padding-left:20px;color:var(--muted);font-size:10px;line-height:1.6;text-align:left}.job-match-scores li{display:flex;justify-content:space-between;gap:18px}.job-match-scores b{color:var(--text);font-weight:600}.job-match-scores span{color:var(--accent);font-weight:700;white-space:nowrap}
