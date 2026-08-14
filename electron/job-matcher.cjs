@@ -57,6 +57,23 @@ function selectionDetails(content, candidates) {
     }];
   }));
 }
+function assertSelectionAssessments(content, ids) {
+  if (!ids.length) return;
+  let parsed; try { parsed = JSON.parse(String(content || '')); } catch { return; }
+  const entries = Array.isArray(parsed?.selections) ? parsed.selections : [];
+  const byId = new Map(entries.map((entry) => [String(entry?.externalId), entry]));
+  for (const id of ids) {
+    const entry = byId.get(id);
+    const requirementsMatchScore = Number(entry?.requirementsMatchScore ?? entry?.fitScore);
+    const candidateMatchScore = Number(entry?.candidateMatchScore ?? entry?.fitScore);
+    // A list of IDs without score/evidence looks valid at the JSON level, but
+    // cannot be safely presented as an AI assessment. Repair it instead of
+    // silently converting it into an empty selection and triggering fallback.
+    if (!entry || !Number.isFinite(requirementsMatchScore) || !Number.isFinite(candidateMatchScore) || requirementsMatchScore < MIN_AI_FIT_SCORE || requirementsMatchScore > 100 || candidateMatchScore < MIN_AI_FIT_SCORE || candidateMatchScore > 100 || !text(entry.fitTier, 60) || !Array.isArray(entry.strengths) || !Array.isArray(entry.gaps) || !Array.isArray(entry.unknowns) || !text(entry.reasoning, 700)) {
+      const error = new Error('Final AI selection omitted a required scored assessment.'); error.code = 'selection_invalid_assessment'; throw error;
+    }
+  }
+}
 function repairMessages(content, candidates) {
   return assertPromptSize([{ role: 'system', content: `Repair the supplied final job-selection response. Return JSON only with {"selections":[...]}. Keep only valid, unique supplied externalIds. Every selection requires externalId, requirementsMatchScore (${MIN_AI_FIT_SCORE}-100), candidateMatchScore (${MIN_AI_FIT_SCORE}-100), fitTier, strengths, gaps, unknowns, and reasoning. Keep every evidence item under 120 characters, use at most two strengths and two gaps, one unknown, and a 240-character reasoning. Remove every selection where either score is below the minimum. Finish the complete JSON object and do not add commentary.` }, { role: 'user', content: JSON.stringify({ invalidResponse: text(content, 12000), candidateIds: candidates.map((job) => String(job.externalId)) }) }]);
 }
@@ -66,6 +83,7 @@ function chunk(items, size) { return Array.from({ length: Math.ceil(items.length
 function outputTokenBudget(candidateCount) { return Math.max(1800, Math.min(5000, candidateCount * OUTPUT_TOKENS_PER_ASSESSMENT)); }
 function assessedSelections(content, candidates) {
   const ids = selectionIds(content, candidates);
+  assertSelectionAssessments(content, ids);
   const details = selectionDetails(content, candidates);
   const byId = new Map(candidates.map((job) => [String(job.externalId), job]));
   return ids.map((id) => {
@@ -102,7 +120,7 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
       catch (initialError) {
         // A single compact repair is safe for malformed or truncated JSON. A
         // transport failure is not retried because it is not repairable here.
-        if (!['selection_invalid_json', 'selection_invalid_shape', 'selection_duplicate_ids', 'selection_invented_id', 'selection_over_limit'].includes(initialError.code)) throw initialError;
+        if (!['selection_invalid_json', 'selection_invalid_shape', 'selection_duplicate_ids', 'selection_invented_id', 'selection_over_limit', 'selection_invalid_assessment'].includes(initialError.code)) throw initialError;
         diagnostics.repairAttempted = true;
         diagnostics.selectionCallCount += 1;
         await onBatch?.({ ...diagnostics, submittedCount: batch.length, promptCharacters, maxTokens, batchNumber, callNumber: batchNumber, status: 'started', repairAttempted: true });

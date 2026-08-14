@@ -63,6 +63,20 @@ test('final selector repairs one malformed response and preserves AI score prove
   assert.equal(selected.rankingDiagnostics.selectionCallCount, 2);
 });
 
+test('final selector repairs an ID-only response instead of treating it as no qualifying AI match', async () => {
+  let calls = 0;
+  const selected = await rankJobs({ jobs: jobs(2), profile: {}, resume: {}, openRouter: async () => {
+    calls += 1;
+    return calls === 1
+      ? { ok: true, message: { content: JSON.stringify({ selectedExternalIds: ['usajobs-1'] }) } }
+      : response(['usajobs-1'], 86);
+  } });
+  assert.equal(calls, 2);
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].fitScore, 86);
+  assert.equal(selected.rankingDiagnostics.repairAttempted, true);
+});
+
 test('AI projection is bounded and excludes provider diagnostics', () => {
   const projected = jobForRanking(jobs(1)[0]);
   assert.equal('diagnostics' in projected, false);
