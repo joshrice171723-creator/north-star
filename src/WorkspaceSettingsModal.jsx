@@ -11,24 +11,27 @@ export default function WorkspaceSettingsModal({ theme, themes, onThemeChange, o
   const [gmailOAuth, setGmailOAuth] = useState({ clientId: '', clientSecret: '' });
   const [gmailOAuthStatus, setGmailOAuthStatus] = useState({ configured: false });
   const [gmailStatus, setGmailStatus] = useState({ configured: false });
+  const [blockedSenders, setBlockedSenders] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    const [nextAi, nextSources, nextGmailOAuth, nextGmail] = await Promise.all([
+    const [nextAi, nextSources, nextGmailOAuth, nextGmail, nextBlockedSenders] = await Promise.all([
       window.desktopShell?.getOpenRouterStatus?.(), window.desktopShell?.getJobSource?.(),
-      window.desktopShell?.getGmailOAuthSettings?.(), window.desktopShell?.getEmailSource?.()
+      window.desktopShell?.getGmailOAuthSettings?.(), window.desktopShell?.getEmailSource?.(), window.desktopShell?.listBlockedJobEmailSenders?.()
     ]);
     if (nextAi) setAiStatus(nextAi);
     if (nextSources) { setSourceStatus(nextSources); setSources((current) => ({ ...current, usajobsEmail: nextSources.email || '' })); }
     if (nextGmailOAuth) setGmailOAuthStatus(nextGmailOAuth);
     if (nextGmail) setGmailStatus(nextGmail);
+    setBlockedSenders(nextBlockedSenders || []);
   };
   useEffect(() => { load().catch((cause) => setMessage(cause?.message || 'Could not load settings.')); }, []);
   const saveOpenRouter = async () => { setBusy(true); try { const status = await window.desktopShell?.saveOpenRouterApiKey?.(aiKey); setAiStatus(status || {}); setAiKey(''); setMessage('OpenRouter key saved securely.'); } catch (cause) { setMessage(cause?.message || 'Could not save the OpenRouter key.'); } finally { setBusy(false); } };
   const saveSources = async () => { setBusy(true); try { const status = await window.desktopShell?.saveJobSource?.(sources); setSourceStatus(status || {}); setSources((current) => ({ ...emptySources(), usajobsEmail: status?.email || current.usajobsEmail })); setMessage('Job-source credentials saved securely.'); } catch (cause) { setMessage(cause?.message || 'Could not save job-source credentials.'); } finally { setBusy(false); } };
   const saveGmailOAuth = async () => { setBusy(true); try { const status = await window.desktopShell?.saveGmailOAuthSettings?.(gmailOAuth); setGmailOAuthStatus(status || {}); setGmailOAuth({ clientId: '', clientSecret: '' }); setMessage('Google OAuth settings saved securely.'); } catch (cause) { setMessage(cause?.message || 'Could not save Google OAuth settings.'); } finally { setBusy(false); } };
   const connectGmail = async () => { setBusy(true); try { const status = await window.desktopShell?.connectGmail?.(); setGmailStatus(status || {}); setMessage('Gmail connected for read-only job-email sync.'); } catch (cause) { setMessage(cause?.message || 'Could not connect Gmail.'); } finally { setBusy(false); } };
+  const unblockSender = async (sender) => { setBusy(true); try { await window.desktopShell?.unblockJobEmailSender?.({ senderKey: sender.senderKey }); setBlockedSenders((current) => current.filter((entry) => entry.senderKey !== sender.senderKey)); setMessage(`${sender.sender} restored to the email monitor.`); } catch (cause) { setMessage(cause?.message || 'Could not restore sender.'); } finally { setBusy(false); } };
   const clear = async (action, label) => { setBusy(true); try { const status = await action(); await load(); setMessage(`${label} cleared from this computer.`); return status; } catch (cause) { setMessage(cause?.message || `Could not clear ${label.toLowerCase()}.`); } finally { setBusy(false); } };
   return <div className="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={onClose}>
     <section className="theme-modal workspace-settings-modal" onClick={(event) => event.stopPropagation()}>
@@ -39,5 +42,6 @@ export default function WorkspaceSettingsModal({ theme, themes, onThemeChange, o
       <section className="settings-group"><span className="eyebrow">APPEARANCE</span><h3>Workspace theme</h3><div className="theme-options" role="radiogroup" aria-label="Color themes">{Object.entries(themes).map(([id, option]) => <button key={id} type="button" role="radio" aria-checked={theme === id} className={`theme-option${theme === id ? ' selected' : ''}`} onClick={() => onThemeChange(id)}><span className="theme-swatches">{option.colors.map((color) => <i key={color} style={{ backgroundColor: color }}/>)}</span><span className="theme-option-copy"><b>{option.name}</b><small>{option.description}</small></span>{theme === id && <Check size={16}/>}</button>)}</div></section>
       {message && <small className="job-source-message">{message}</small>}<div className="theme-modal-foot"><span>Saved credentials remain on this computer only.</span><button className="primary" type="button" onClick={onClose}>Done <Check size={14}/></button></div>
     </section>
+      <section className="settings-group"><span className="eyebrow">EMAIL CONTROLS</span><h3>Blocked senders</h3><p>Blocked senders stay out of the monitor. Restore one here if you change your mind.</p>{blockedSenders.length ? <div className="email-blocked-list">{blockedSenders.map((sender) => <span key={sender.senderKey}>{sender.sender}<button className="secondary" disabled={busy} onClick={() => unblockSender(sender)}>Restore</button></span>)}</div> : <small>No senders are blocked.</small>}</section>
   </div>;
 }
