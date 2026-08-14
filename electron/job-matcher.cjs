@@ -78,6 +78,15 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
     const selected = ids.map((id) => { const job = byId.get(id); const assessment = details.get(id) || {}; return { job, externalId: id, ...assessment, fitScore: assessment.fitScore ?? (Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null), scoreType: 'ai-selection', fitTier: assessment.fitTier || 'AI-evaluated match', strengths: assessment.strengths || [], gaps: assessment.gaps || [], unknowns: assessment.unknowns || [], reasoning: assessment.reasoning || 'Selected by the final AI comparison from the supplied listing evidence.' }; });
     const aiSelectedCount = selected.length;
     const selectedIds = new Set(ids);
+    // When multiple providers have credible candidates, prevent a single large
+    // source from consuming the whole visible result set.
+    const availableProviders = PROVIDERS.filter((provider) => candidates.some((job) => job.providerKey === provider));
+    const providerCap = availableProviders.length > 1 ? 8 : MAX_SELECTED;
+    if (availableProviders.length > 1) {
+      const counts = new Map();
+      const balanced = selected.filter((entry) => { const provider = entry.job?.providerKey; const count = counts.get(provider) || 0; if (count >= providerCap) return false; counts.set(provider, count + 1); return true; });
+      selected.length = 0; selected.push(...balanced); selectedIds.clear(); balanced.forEach((entry) => selectedIds.add(String(entry.externalId)));
+    }
     // The model is asked for diversity, but enforce it locally so one source
     // cannot consume the entire result set when other providers have credible
     // candidates. These additions remain visibly labeled as deterministic.
@@ -91,12 +100,14 @@ async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCal
     if (candidates.length >= MAX_SELECTED && selected.length < MAX_SELECTED) {
       for (const job of candidates) {
         if (selected.length >= MAX_SELECTED) break;
+        if (availableProviders.length > 1 && (selected.filter((entry) => entry.job?.providerKey === job.providerKey).length >= providerCap)) continue;
         if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic backfill', strengths: [], gaps: ['The final AI returned fewer than 20 selections.'], unknowns: [], reasoning: 'Added from the remaining deterministic candidates to meet the requested 20-result target.' });
       }
     }
     if (candidates.length >= MIN_DISPLAYED && selected.length < MIN_DISPLAYED) {
       for (const job of candidates) {
         if (selected.length >= MIN_DISPLAYED) break;
+        if (availableProviders.length > 1 && (selected.filter((entry) => entry.job?.providerKey === job.providerKey).length >= providerCap)) continue;
         if (!selectedIds.has(String(job.externalId))) selected.push({ job, externalId: String(job.externalId), fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic-backfill', fitTier: 'Deterministic minimum-fit backfill', strengths: [], gaps: ['The final AI selected fewer than five jobs; this qualified candidate was added to meet the minimum display target.'], unknowns: [], reasoning: 'Added from the remaining qualified candidates after the final AI returned fewer than five selections.' });
       }
     }
