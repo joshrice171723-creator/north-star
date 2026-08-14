@@ -11,6 +11,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
+const { extractPhoneNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
@@ -92,7 +93,10 @@ async function inspectGoogleVoice() {
         .map((node) => text(node.getAttribute('aria-label') || node.getAttribute('title')))
         .filter((value) => value && /call|message|text|voicemail|ring|incoming|missed|new/i.test(value))
         .slice(0, 80);
-      return { title: text(document.title), labels, body: text(document.body?.innerText).slice(0, 12000) };
+      const body = text(document.body?.innerText).slice(0, 12000);
+      const phoneNumber = (body.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
+      const signal = [...labels, text(document.title), body].join(' ');
+      return { title: text(document.title), labels, body, phoneNumber, activityType: /call|ringing|voicemail/i.test(signal) ? 'call' : 'message' };
     })()`, true);
     const normalized = JSON.stringify(snapshot);
     if (!googleVoiceSnapshot) { googleVoiceSnapshot = normalized; return; }
@@ -101,7 +105,19 @@ async function inspectGoogleVoice() {
     const signal = [...(snapshot.labels || []), snapshot.title, snapshot.body].join(' ');
     if (/new message|incoming call|missed call|new voicemail|ringing|unread/i.test(signal)) {
       const label = (snapshot.labels || []).find((value) => /new message|incoming|missed call|voicemail|ringing|unread/i.test(value));
-      showGoogleVoiceNotification('Google Voice', label || 'You have a new Google Voice call or message.');
+      const phoneNumber = extractPhoneNumber(snapshot.phoneNumber || snapshot.body);
+      const result = coachDatabase?.jobs?.activity?.ingestGoogleVoiceActivity?.({
+        sourceUrl: googleVoiceWindow.webContents.getURL(),
+        title: label || snapshot.title || 'Google Voice activity',
+        content: snapshot.body,
+        phoneNumber,
+        activityType: snapshot.activityType,
+      });
+      if (result?.matched && !result.duplicate) {
+        showGoogleVoiceNotification('Google Voice · Job updated', `${label || 'New activity'} was added to the assigned job timeline.`);
+      } else {
+        showGoogleVoiceNotification('Google Voice', label || 'You have a new Google Voice call or message.');
+      }
     }
   } catch { /* Google Voice can briefly replace its document during navigation. */ }
 }
@@ -867,9 +883,10 @@ async function captureGoogleVoiceConversation(job) {
     const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
     const selected = clean(window.getSelection?.()?.toString());
     const content = (selected.length >= 20 ? selected : clean(document.body?.innerText)).slice(0, 20000);
-    return { sourceUrl: location.href, title: clean(document.title) || 'Google Voice conversation', content };
+    const phoneNumber = (content.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
+    return { sourceUrl: location.href, title: clean(document.title) || 'Google Voice conversation', content, phoneNumber };
   })()`, true);
-  return coachDatabase.jobs.activity.recordGoogleVoiceConversation(job.id, page);
+  return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, page);
 }
 
 function showGoogleVoiceContextMenu(params) {
