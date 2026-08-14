@@ -191,7 +191,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const dueCount = jobs.filter((job) => job.followUpDate && job.followUpDate <= today && !['accepted', 'rejected'].includes(job.stage)).length;
 
   useEffect(() => {
-    // The legacy board is rendered as compact JSX on one line; bind only its title text so card controls keep their existing behavior.
+    // Rebind after the detail view replaces the board nodes so returning to the pipeline keeps job titles clickable.
     const titles = [...document.querySelectorAll('.jobs-board .job-card-top > b')];
     const listeners = titles.map((title) => {
       const openDetails = () => {
@@ -205,7 +205,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       return [title, openDetails];
     });
     return () => listeners.forEach(([title, listener]) => { title.classList.remove('job-card-title'); title.removeEventListener('click', listener); });
-  }, [jobs]);
+  }, [jobs, detailJob]);
 
   if (applicationWorkspace) return <ApplicationWorkspace application={applicationWorkspace.application} job={applicationWorkspace.job} focusDocumentType={applicationWorkspace.focusDocumentType} onBack={() => { setApplicationWorkspace(null); loadDocumentSummaries().catch(() => {}); }} onRefresh={refreshApplication} />;
   if (detailJob) { const currentJob = jobs.find((job) => job.id === detailJob.id) || detailJob; const application = applications.find((entry) => entry.jobId === currentJob.id); return <JobDetailsWorkspace job={currentJob} application={application} documents={applicationDocuments[application?.id] || []} onBack={() => setDetailJob(null)} onEdit={() => { setModalJob(currentJob); setDetailJob(null); }} onStartApplication={() => openApplication(currentJob)} onStageChange={changeDetailStage} onOpenAiSettings={() => { setDetailJob(null); setProfileOpen(true); setAiMessage('Add an OpenRouter API key to enable Ask AI.'); }} />; }
