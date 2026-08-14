@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
+import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView from './JobsView.jsx';
 import GroupedEmailMonitorPanel from './jobs/EmailMonitorPanel.jsx';
 import WorkspaceSettingsModal from './WorkspaceSettingsModal.jsx';
@@ -316,7 +316,7 @@ function App() {
   const [roadmapStatus, setRoadmapStatus] = useState({ state: 'loading', message: 'Loading the local roadmap…' });
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [activeLesson, setActiveLesson] = useState(() => savedState?.activeLesson || 'platform-design');
-  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects', 'jobs', 'follow-through'].includes(savedState?.view) ? savedState.view : 'today');
+  const [view, setView] = useState(() => ['today', 'overview', 'curriculum', 'practice', 'command-center', 'projects', 'jobs', 'follow-through', 'google-voice'].includes(savedState?.view) ? savedState.view : 'today');
   const [expanded, setExpanded] = useState(() => ({ ...defaultExpanded, ...(savedState?.expanded || {}) }));
   const [notes, setNotes] = useState(() => savedState?.notes || '');
   const [practiceResults, setPracticeResults] = useState(() => savedState?.practiceResults || {});
@@ -586,8 +586,10 @@ function App() {
   const setNotesOpen = (open) => { setShowNotes(open); };
   const toggleAcademy = () => setAcademyOpen((open) => !open);
   useEffect(() => {
+    const googleVoiceVisible = view === 'google-voice';
+    window.desktopShell?.setGoogleVoiceVisible?.(googleVoiceVisible);
     window.desktopShell?.setAcademyVisible?.(view === 'curriculum' && academyOpen && !showNotes);
-    const visible = view === 'curriculum' && academyOpen;
+    const visible = view === 'curriculum' && academyOpen && !googleVoiceVisible;
     appRef.current?.style.setProperty('--academy-width', visible ? (appRef.current.style.getPropertyValue('--academy-width') && appRef.current.style.getPropertyValue('--academy-width') !== '0px' ? appRef.current.style.getPropertyValue('--academy-width') : '44%') : '0px');
     if (!visible) window.desktopShell?.setAcademyBounds?.({ x: window.innerWidth, width: 0 });
   }, [view, academyOpen, showNotes]);
@@ -616,6 +618,7 @@ function App() {
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><Target size={17}/> Projects <em>{roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><FileText size={17}/> Archive <em>{roadmap.projects.filter((project) => project.kind === 'project' && project.archived).length}</em></button>
         <button className={view === 'jobs' ? 'nav active' : 'nav'} onClick={() => setView('jobs')}><BriefcaseBusiness size={17}/> Job search <em>{jobs.filter((job) => !['accepted', 'rejected'].includes(job.stage)).length}</em></button>
+        <button className={view === 'google-voice' ? 'nav active' : 'nav'} onClick={() => setView('google-voice')}><PhoneCall size={17}/> Google Voice</button>
         <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}><LayoutDashboard size={17}/> Readiness</button>
       </nav>
       <div className="nav-label nav-label-spaced">LEARNING &amp; DEVELOPMENT</div>
@@ -629,7 +632,7 @@ function App() {
     </aside>
 
     <main className="main">
-      <header><div className="crumb">{view === 'jobs' ? <><button className="crumb-link" onClick={() => setView('command-center')}>NORTH STAR</button><ChevronRight size={14}/><button className="crumb-link" onClick={() => window.dispatchEvent(new CustomEvent('job-search-navigation'))}>Job search</button>{jobDetailsOpen?.company && <><ChevronRight size={14}/><button className="crumb-link" onClick={() => window.dispatchEvent(new CustomEvent('job-detail-navigation'))}>{jobDetailsOpen.company} · {jobDetailsOpen.roleTitle}</button></>}</> : <><span>NORTH STAR</span><ChevronRight size={14}/><b>{view === 'today' ? 'Today’s Focus' : view === 'command-center' ? 'Command center' : view === 'follow-through' ? 'Follow-through' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : 'Readiness'}</b></>}</div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
+      <header><div className="crumb">{view === 'jobs' ? <><button className="crumb-link" onClick={() => setView('command-center')}>NORTH STAR</button><ChevronRight size={14}/><button className="crumb-link" onClick={() => window.dispatchEvent(new CustomEvent('job-search-navigation'))}>Job search</button>{jobDetailsOpen?.company && <><ChevronRight size={14}/><button className="crumb-link" onClick={() => window.dispatchEvent(new CustomEvent('job-detail-navigation'))}>{jobDetailsOpen.company} · {jobDetailsOpen.roleTitle}</button></>} </> : <><span>NORTH STAR</span><ChevronRight size={14}/><b>{view === 'today' ? 'Today’s Focus' : view === 'command-center' ? 'Command center' : view === 'follow-through' ? 'Follow-through' : view === 'projects' ? 'Projects' : view === 'curriculum' ? 'Learning & Development' : view === 'practice' ? 'Practice' : view === 'google-voice' ? 'Google Voice' : 'Readiness'}</b></>}</div><div className="header-actions"><div className="streak"><Target size={15}/> Grounded local workspace</div>{view === 'curriculum' && <button className="academy-toggle" onClick={toggleAcademy} aria-pressed={academyOpen}>{academyOpen ? <ChevronRight size={15}/> : <ExternalLink size={15}/>} {academyOpen ? 'Close Academy' : 'Open Academy'}</button>}</div></header>
       <div className="main-scroll">
         {['curriculum', 'overview', 'practice', 'command-center'].includes(view) && (
         <section className="hero"><div><span className="eyebrow">NORTH STAR · COMMAND CENTER</span><h1>See what matters. Choose what moves. <Star className="hero-star" size={23} fill="currentColor" strokeWidth={1.8}/></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
