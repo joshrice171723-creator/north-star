@@ -11,6 +11,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
+const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
@@ -327,6 +328,24 @@ const validateJobRecord = (input) => {
   return input;
 };
 const validateJobDetailId = (value) => validateCoachId(value, 'job id');
+async function importJobFromUrl(value) {
+  if (typeof value !== 'string' || value.length > 2000) throw new Error('Enter a valid job-listing URL.');
+  let url;
+  try { url = new URL(value.trim()); } catch { throw new Error('Enter a valid job-listing URL.'); }
+  if (!['https:', 'http:'].includes(url.protocol) || !url.hostname || /^(localhost|127\.|0\.0\.0\.0|\[::1\])$/i.test(url.hostname)) throw new Error('Use a public HTTP(S) job-listing URL.');
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { Accept: 'text/html,application/xhtml+xml' } });
+    if (!response.ok) throw new Error(`The listing returned HTTP ${response.status}.`);
+    if (!/text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type') || '')) throw new Error('That link did not return a web job listing.');
+    const imported = parseJobListing((await response.text()).slice(0, 2_000_000), response.url || url.toString());
+    if (!imported.roleTitle && !imported.company) throw new Error('We could not identify job details on that page. You can still add the opportunity manually.');
+    return imported;
+  } catch (cause) {
+    if (cause?.name === 'AbortError') throw new Error('The listing took too long to load. Add the details manually or try again.');
+    throw cause;
+  } finally { clearTimeout(timeout); }
+}
 const validateJobFollowUp = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid follow-up task.'); validateJobDetailId(input.jobId); if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) throw new Error('Invalid follow-up title.'); if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error('Invalid follow-up due date.'); if (input.sourceEmailId !== undefined && input.sourceEmailId !== null) validateCoachId(input.sourceEmailId, 'email id'); return input; };
 const validateJobCalendarEvent = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid calendar event.'); validateJobDetailId(input.jobId); if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) throw new Error('Invalid calendar event title.'); for (const field of ['startsAt', 'endsAt']) if (typeof input[field] !== 'string' || !input[field].trim() || input[field].length > 80) throw new Error(`Invalid calendar event ${field}.`); return input; };
 async function interpretJobEmail(input = {}) {
@@ -738,6 +757,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:jobs:create', (_event, input) => coachDatabase.jobs.create(validateJobRecord(input)));
   ipcMain.handle('coach:jobs:update', (_event, input) => coachDatabase.jobs.update(validateJobRecord(input)));
   ipcMain.handle('coach:jobs:delete', (_event, id) => coachDatabase.jobs.delete(validateCoachDeleteId(id, 'job')));
+  ipcMain.handle('coach:jobs:import-url', (event, url) => { assertTrustedRenderer(event); return importJobFromUrl(url); });
   ipcMain.handle('jobs:profile:get', () => coachDatabase.profiles.getCurrent());
   ipcMain.handle('jobs:profile:save', (_event, input) => coachDatabase.profiles.upsert(input));
   ipcMain.handle('jobs:resume:get', () => coachDatabase.resumes.getMaster());
