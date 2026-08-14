@@ -71,3 +71,12 @@ body{overflow-x:hidden}
 .job-document-link{display:flex;align-items:center;gap:6px;width:100%;padding:8px 0;border:0;background:transparent;color:var(--text);font:inherit;font-size:11px;text-align:left;cursor:pointer}.job-document-link:hover{color:var(--accent);text-decoration:underline}.resume-preview-modal{width:min(760px,100%);max-height:90vh;overflow:auto;padding:22px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--surface);box-shadow:0 24px 70px #00000066}.resume-preview-content{margin:20px 0 0;padding:22px;border:1px solid var(--line);border-radius:8px;background:var(--surface-raised);color:var(--text);font:13px/1.6 Georgia,serif;white-space:pre-wrap;overflow:auto}
 .job-search-refinements{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--surface-raised)}.job-search-refinements small{width:100%;color:var(--muted)}.job-search-refinements button{font-size:10px}
 .job-search-report-body>small:not(:first-child):not(:last-child){display:none}
+
+/* Keep the job identity readable as a header while grouping the two card actions. */
+.job-card{position:relative;padding:0 11px 11px}
+.job-card-top{min-height:46px;margin-bottom:8px;padding:10px 48px 9px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+.job-card-top>b{line-height:1.3}
+.job-card-top>button{position:absolute;top:9px;right:30px}
+.job-card>.delete-job{position:absolute;top:9px;right:8px;display:grid;place-items:center;width:20px;height:20px;margin:0;padding:3px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:0}
+.job-card>.delete-job svg{width:13px;height:13px}
+.job-card>.delete-job:hover{background:var(--surface-soft);color:var(--text)}
