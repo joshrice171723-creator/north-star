@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,testJobSource: () => ipcRenderer.invoke('jobs:source:test')
   ,getJobSearchAttempts: (runId) => ipcRenderer.invoke('jobs:search:attempts', runId)
   ,getEmailSource: () => ipcRenderer.invoke('email:source:get')
+  ,getGmailOAuthSettings: () => ipcRenderer.invoke('email:oauth:get')
+  ,saveGmailOAuthSettings: (input) => ipcRenderer.invoke('email:oauth:save', input)
+  ,clearGmailOAuthSettings: () => ipcRenderer.invoke('email:oauth:clear')
   ,connectGmail: () => ipcRenderer.invoke('email:source:connect')
   ,saveEmailSource: (input) => ipcRenderer.invoke('email:source:save', input)
   ,clearEmailSource: () => ipcRenderer.invoke('email:source:clear')
@@ -96,5 +99,4 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
   ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
 });
-
 

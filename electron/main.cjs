@@ -107,6 +107,30 @@ function migrateOpenRouterEnvironmentKey() {
 function clearOpenRouterApiKey() { try { fs.rmSync(openRouterCredentialsPath(), { force: true }); } catch {} return openRouterStatus(); }
 function openRouterStatus() { return { configured: Boolean(readOpenRouterApiKey()), secureStorageAvailable: safeStorage.isEncryptionAvailable(), environmentConfigured: Boolean(process.env.OPENROUTER_API_KEY) }; }
 const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
+const gmailOAuthCredentialsPath = () => path.join(app.getPath('userData'), 'gmail-oauth-client-credentials.json');
+function readStoredGmailOAuthCredentials() { try { const parsed = JSON.parse(fs.readFileSync(gmailOAuthCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
+function readGmailOAuthCredentials() {
+  const clientId = process.env.GMAIL_OAUTH_CLIENT_ID || '';
+  const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || '';
+  if (clientId) return { clientId, clientSecret, environmentConfigured: true };
+  const stored = readStoredGmailOAuthCredentials();
+  if (!stored.clientId || !safeStorage.isEncryptionAvailable()) return { clientId: '', clientSecret: '', environmentConfigured: false };
+  try { return { clientId: safeStorage.decryptString(Buffer.from(stored.clientId, 'base64')), clientSecret: stored.clientSecret ? safeStorage.decryptString(Buffer.from(stored.clientSecret, 'base64')) : '', environmentConfigured: false }; } catch { return { clientId: '', clientSecret: '', environmentConfigured: false }; }
+}
+function gmailOAuthStatus() { const credentials = readGmailOAuthCredentials(); return { configured: Boolean(credentials.clientId), environmentConfigured: credentials.environmentConfigured, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+function saveGmailOAuthCredentials(input = {}) {
+  const existing = readGmailOAuthCredentials();
+  const clientId = typeof input.clientId === 'string' ? input.clientId.trim().slice(0, 500) : '';
+  const clientSecret = typeof input.clientSecret === 'string' ? input.clientSecret.trim().slice(0, 500) : '';
+  if (!clientId && !existing.clientId) throw new Error('Enter a Google OAuth client ID.');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable. Restart the app before saving Google OAuth settings.');
+  const encrypt = (value) => value ? safeStorage.encryptString(value).toString('base64') : '';
+  const destination = gmailOAuthCredentialsPath(); const temporary = `${destination}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, JSON.stringify({ clientId: encrypt(clientId || existing.clientId), clientSecret: encrypt(clientSecret || existing.clientSecret) }), { mode: 0o600 });
+  fs.renameSync(temporary, destination);
+  return gmailOAuthStatus();
+}
+function clearGmailOAuthCredentials() { try { fs.rmSync(gmailOAuthCredentialsPath(), { force: true }); } catch {} return gmailOAuthStatus(); }
 function readEmailCredentials() {
   try {
     const stored = JSON.parse(fs.readFileSync(emailCredentialsPath(), 'utf8'));
@@ -134,9 +158,8 @@ function saveEmailCredentials(input = {}) {
 }
 function clearEmailCredentials() { try { fs.rmSync(emailCredentialsPath(), { force: true }); } catch {} return { provider: 'gmail', email: '', configured: false, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
 async function connectGmailWithGoogle() {
-  const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || '';
-  if (!clientId) throw new Error('Google sign-in is not configured. Add GMAIL_OAUTH_CLIENT_ID to the local .env, then restart the app.');
+  const { clientId, clientSecret } = readGmailOAuthCredentials();
+  if (!clientId) throw new Error('Google sign-in is not configured. Add a Google OAuth client ID in Workspace Settings.');
   const pkce = createPkcePair();
   const state = crypto.randomBytes(24).toString('hex');
   const server = http.createServer();
@@ -168,7 +191,8 @@ async function syncJobEmails() {
   let credentials = readEmailCredentials();
   if (!credentials.configured) return { ok: false, configured: false, imported: 0, message: 'Connect Gmail before syncing.' };
   const refresh = async () => {
-    const next = await refreshGmailAccessToken({ refreshToken: credentials.refreshToken, clientId: process.env.GMAIL_OAUTH_CLIENT_ID, clientSecret: process.env.GMAIL_OAUTH_CLIENT_SECRET });
+    const { clientId, clientSecret } = readGmailOAuthCredentials();
+    const next = await refreshGmailAccessToken({ refreshToken: credentials.refreshToken, clientId, clientSecret });
     credentials = { ...credentials, ...next };
     saveEmailCredentials({ email: credentials.email, accessToken: next.accessToken, expiresAt: next.expiresAt });
   };
@@ -762,6 +786,9 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
   ipcMain.handle('email:source:get', () => { const { accessToken, refreshToken, ...safe } = readEmailCredentials(); return safe; });
+  ipcMain.handle('email:oauth:get', () => gmailOAuthStatus());
+  ipcMain.handle('email:oauth:save', (_event, input) => saveGmailOAuthCredentials(input));
+  ipcMain.handle('email:oauth:clear', () => clearGmailOAuthCredentials());
   ipcMain.handle('email:source:connect', () => connectGmailWithGoogle());
   ipcMain.handle('email:source:save', (_event, input) => saveEmailCredentials(input));
   ipcMain.handle('email:source:clear', () => clearEmailCredentials());
@@ -940,4 +967,3 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => { if (emailMonitorTimer) clearInterval(emailMonitorTimer); try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };
-

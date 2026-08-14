@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView, { EmailMonitorPanel } from './JobsView.jsx';
+import WorkspaceSettingsModal from './WorkspaceSettingsModal.jsx';
 import './styles.css';
 import './theme.css';
 import { buildRoadmapHierarchy, workspaceProjects, kanbanTasksForScope } from './roadmapHierarchy.mjs';
@@ -746,7 +747,7 @@ function App() {
     {showNotes && <div className="modal" onClick={() => setNotesOpen(false)}><div className="notes" onClick={(e) => e.stopPropagation()}><button className="close" onClick={() => setNotesOpen(false)}><X size={18}/></button><span className="eyebrow">PERSONAL NOTES</span><h2>{current.title}</h2><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Capture an insight, question, or example..."/><button className="primary" onClick={() => setNotesOpen(false)}>Save note <Check size={15}/></button></div></div>}
     {deferItem && <DeferModal item={deferItem} nextAction={deferNextAction} dueDate={deferDueDate} error={deferError} saving={deferSaving} onNextActionChange={setDeferNextAction} onDueDateChange={setDeferDueDate} onCancel={cancelDefer} onSubmit={submitDefer} />}
     {coachApproval && <CoachApprovalModal task={coachApproval.task} nextAction={coachApproval.nextAction} error={coachApproval.error} saving={coachApproval.saving} onCancel={() => { if (!coachApproval.saving) setCoachApproval(null); }} onApply={applyCoachApproval} />}
-    {showThemeSettings && <ThemeModal theme={theme} onChange={setTheme} onClose={() => setShowThemeSettings(false)} />}
+    {showThemeSettings && <WorkspaceSettingsModal theme={theme} themes={THEMES} onThemeChange={setTheme} onClose={() => setShowThemeSettings(false)} />}
   </div>;
 }
 createRoot(document.getElementById('root')).render(<App />);
