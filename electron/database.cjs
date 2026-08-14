@@ -478,7 +478,12 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const sender = bounded(input.sender || input.senderKey, 500).trim();
     const senderKey = normalizeEmailSender(input.senderKey || sender);
     if (!senderKey) throw new Error('A sender is required.');
-    sqlite.prepare('INSERT INTO email_sender_blocks (sender_key, sender, created_at) VALUES (?, ?, ?) ON CONFLICT(sender_key) DO UPDATE SET sender = excluded.sender').run(senderKey, sender || senderKey, now());
+    const timestamp = now();
+    sqlite.transaction(() => {
+      sqlite.prepare('INSERT INTO email_sender_blocks (sender_key, sender, created_at) VALUES (?, ?, ?) ON CONFLICT(sender_key) DO UPDATE SET sender = excluded.sender').run(senderKey, sender || senderKey, timestamp);
+      // Blocking a sender is also a relevance decision: every existing message from that sender is marked not relevant.
+      sqlite.prepare('UPDATE email_messages SET user_excluded = 1, updated_at = ? WHERE sender_key = ?').run(timestamp, senderKey);
+    })();
     return { senderKey, sender: sender || senderKey };
   }
   function unblockEmailSender(input = {}) {

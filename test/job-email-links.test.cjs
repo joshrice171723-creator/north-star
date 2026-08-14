@@ -42,7 +42,8 @@ test('sender controls preserve seen state, group identity, and blocking across s
     assert.equal(db.email.upsert({ provider: 'gmail', externalId: 'message-3', subject: 'Updated', from: 'Recruiting <recruiter@example.com>', isJobRelated: true }).isSeen, true);
     db.email.blockSender({ sender: 'Recruiting <recruiter@example.com>' });
     assert.equal(db.email.list({ jobOnly: true }).some((entry) => entry.senderKey === 'recruiter@example.com'), false);
-    assert.equal(db.email.list({ jobOnly: true, includeBlocked: true }).length, 2);
+    assert.equal(db.email.list({ jobOnly: true, includeBlocked: true }).every((entry) => entry.isExcluded), true);
+    assert.equal(db.email.upsert({ provider: 'gmail', externalId: 'message-3', subject: 'Updated again', from: 'recruiter@example.com', isJobRelated: true }).isExcluded, true);
     db.email.unblockSender({ senderKey: 'recruiter@example.com' });
     assert.equal(db.email.list({ jobOnly: true }).length, 2);
   } finally { db.close(); fs.rmSync(userDataPath, { recursive: true, force: true }); }
