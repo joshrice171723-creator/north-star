@@ -244,6 +244,9 @@ const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-5.6-luna-pro';
 const OPENROUTER_MAX_MESSAGES = 100;
 const OPENROUTER_MAX_OUTPUT_TOKENS = 700;
+// Individual callers retain small defaults. The final job selector explicitly
+// opts into this higher ceiling so it can return one complete JSON response.
+const OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS = 20_000;
 const OPENROUTER_TIMEOUT_MS = 45_000;
 
 function validateOpenRouterMessages(messages) {
@@ -273,7 +276,7 @@ async function openRouterChat(messages, options = {}) {
         'HTTP-Referer': 'https://anthropic.skilljar.com/',
         'X-Title': 'Claude Architect Study Coach'
       },
-      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: Math.min(Number(options.max_tokens) || OPENROUTER_MAX_OUTPUT_TOKENS, 5000), ...(options.response_format ? { response_format: options.response_format } : {}) })
+      body: JSON.stringify({ model, messages: validateOpenRouterMessages(messages), temperature: 0.3, max_tokens: Math.min(Number(options.max_tokens) || OPENROUTER_MAX_OUTPUT_TOKENS, OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS), ...(options.response_format ? { response_format: options.response_format } : {}) })
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter request failed (${response.status}).` };

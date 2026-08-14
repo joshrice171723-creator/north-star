@@ -30,6 +30,12 @@ test('AI final selections are explicitly typed', () => {
   assert.match(source, /scoreType: 'ai-selection'/);
 });
 
+test('OpenRouter permits the final selector to request 20k output tokens', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  assert.match(source, /OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS = 20_000/);
+  assert.match(source, /Math\.min\(Number\(options\.max_tokens\).*OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS/);
+});
+
 test('frontend does not mix retrieval fallbacks into successful AI results', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'JobsView.jsx'), 'utf8');
   assert.match(source, /\['available', 'under_selected'\]\.includes\(result\.ranking\?\.status\)/);
