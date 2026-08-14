@@ -895,7 +895,7 @@ async function captureGoogleVoiceConversation(job) {
 function showGoogleVoiceContextMenu(params) {
   const jobs = coachDatabase?.jobs?.list?.() || [];
   const assignmentItems = jobs.length
-    ? jobs.slice(0, 50).map((job) => ({ label: `${job.roleTitle || job.title || 'Untitled role'} · ${job.company || 'Unknown company'}`, click: () => captureGoogleVoiceConversation(job).catch((error) => showGoogleVoiceNotification('Google Voice', error.message || 'Could not assign the conversation.')) }))
+    ? jobs.slice(0, 50).map((job, index) => ({ label: `#${index + 1} · ${job.roleTitle || job.title || 'Untitled role'} · ${job.company || 'Unknown company'}`, click: () => captureGoogleVoiceConversation(job).catch((error) => showGoogleVoiceNotification('Google Voice', error.message || 'Could not assign the conversation.')) }))
     : [{ label: 'No active jobs available', enabled: false }];
   const menu = Menu.buildFromTemplate([
     { label: 'Assign conversation to job', submenu: assignmentItems },
