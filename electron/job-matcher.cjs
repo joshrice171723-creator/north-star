@@ -1,4 +1,9 @@
 const MAX_FINAL_CANDIDATES = 80;
+// A single response containing detailed evidence for dozens of jobs is prone
+// to hit a model's output limit and end in truncated JSON. Keep the final
+// comparison bounded to a size that can always return complete assessments.
+const MAX_ASSESSMENT_BATCH_SIZE = 15;
+const OUTPUT_TOKENS_PER_ASSESSMENT = 300;
 // There is no product-level 20-result ceiling. Keep the bounded candidate
 // prompt limit as a safety guard for latency and model context size.
 const MAX_SELECTED = MAX_FINAL_CANDIDATES;
@@ -23,7 +28,7 @@ function selectionMessages(profile, resume, jobs) {
   const availableProviders = PROVIDERS.filter((provider) => jobs.some((job) => job.providerKey === provider));
   const remotePreference = `Remote listings are always eligible when they are otherwise a fit. Treat remote work as a positive preference and give a remote listing a modest priority advantage over an otherwise comparable onsite listing; do not reject a stronger onsite fit solely because it is onsite.`;
   const diversity = availableProviders.length > 1 ? `Prefer a balanced set across the available providers. Include at least 3 jobs from each provider that has 3 or more credible candidates when possible; never select a poor match just to satisfy a quota.` : '';
-  return assertPromptSize([{ role: 'system', content: `You are the final job-search evaluator. Return JSON only in exactly this shape: {"selections":[{"externalId":"provider-id","requirementsMatchScore":0,"candidateMatchScore":0,"fitTier":"strong match|good match|possible match","strengths":["evidence"],"gaps":["evidence or limitation"],"unknowns":["missing information"],"reasoning":"brief evidence-based comparison"}]}. ${target} ${diversity} ${remotePreference} Select only supplied externalIds, never invent or repeat IDs. Return two independent 0-to-100 scores: requirementsMatchScore measures how well this job matches the candidate's stated preferences and requirements (role, location, industry, salary, remote preference, authorization, and exclusions); candidateMatchScore measures how well the candidate's resume and experience match the job's duties, qualifications, skills, seniority, and clearance requirements. Do not combine the scores. Select only jobs where both scores are at least ${MIN_AI_FIT_SCORE}; omit weaker jobs. Do not use provider reputation or deterministic scores as a substitute for reading the listing. Return one scored selection object for every selected ID.` }, { role: 'user', content: JSON.stringify({ profile: profileForRanking(profile), resume: resumeForRanking(resume), candidates: jobs.map(jobForRanking) }) }]);
+  return assertPromptSize([{ role: 'system', content: `You are the final job-search evaluator. Return JSON only in exactly this shape: {"selections":[{"externalId":"provider-id","requirementsMatchScore":0,"candidateMatchScore":0,"fitTier":"strong match|good match|possible match","strengths":["evidence"],"gaps":["evidence or limitation"],"unknowns":["missing information"],"reasoning":"brief evidence-based comparison"}]}. ${target} ${diversity} ${remotePreference} Select only supplied externalIds, never invent or repeat IDs. Return two independent 0-to-100 scores: requirementsMatchScore measures how well this job matches the candidate's stated preferences and requirements (role, location, industry, salary, remote preference, authorization, and exclusions); candidateMatchScore measures how well the candidate's resume and experience match the job's duties, qualifications, skills, seniority, and clearance requirements. Do not combine the scores. Select only jobs where both scores are at least ${MIN_AI_FIT_SCORE}; omit weaker jobs. Do not use provider reputation or deterministic scores as a substitute for reading the listing. Return one scored selection object for every selected ID. Keep every evidence item under 120 characters, use at most two strengths and two gaps, one unknown, and a 240-character reasoning. Finish the complete JSON object; never add markdown or commentary.` }, { role: 'user', content: JSON.stringify({ profile: profileForRanking(profile), resume: resumeForRanking(resume), candidates: jobs.map(jobForRanking) }) }]);
 }
 function selectionIds(content, candidates) {
   let parsed; try { parsed = JSON.parse(String(content || '')); } catch { const error = new Error('Final AI selection returned malformed JSON.'); error.code = 'selection_invalid_json'; throw error; }
@@ -53,44 +58,85 @@ function selectionDetails(content, candidates) {
   }));
 }
 function repairMessages(content, candidates) {
-  return assertPromptSize([{ role: 'system', content: `Repair the supplied final job-selection response. Return JSON only with {"selections":[...]}. Keep only valid, unique supplied externalIds. Every selection requires externalId, requirementsMatchScore (${MIN_AI_FIT_SCORE}-100), candidateMatchScore (${MIN_AI_FIT_SCORE}-100), fitTier, strengths, gaps, unknowns, and reasoning. Remove every selection where either score is below the minimum. Do not add commentary.` }, { role: 'user', content: JSON.stringify({ invalidResponse: text(content, 12000), candidateIds: candidates.map((job) => String(job.externalId)) }) }]);
+  return assertPromptSize([{ role: 'system', content: `Repair the supplied final job-selection response. Return JSON only with {"selections":[...]}. Keep only valid, unique supplied externalIds. Every selection requires externalId, requirementsMatchScore (${MIN_AI_FIT_SCORE}-100), candidateMatchScore (${MIN_AI_FIT_SCORE}-100), fitTier, strengths, gaps, unknowns, and reasoning. Keep every evidence item under 120 characters, use at most two strengths and two gaps, one unknown, and a 240-character reasoning. Remove every selection where either score is below the minimum. Finish the complete JSON object and do not add commentary.` }, { role: 'user', content: JSON.stringify({ invalidResponse: text(content, 12000), candidateIds: candidates.map((job) => String(job.externalId)) }) }]);
 }
-function providerCounts(candidates, selected = [], aiSelected = selected) { return Object.fromEntries(PROVIDERS.map((provider) => [provider, { submitted: candidates.filter((job) => job.providerKey === provider).length, assessed: candidates.filter((job) => job.providerKey === provider).length, returned: selected.filter((entry) => entry.job?.providerKey === provider).length, aiReturned: aiSelected.filter((entry) => entry.job?.providerKey === provider).length }])); }
+function providerCounts(candidates, assessed = [], selected = []) { return Object.fromEntries(PROVIDERS.map((provider) => [provider, { submitted: candidates.filter((job) => job.providerKey === provider).length, assessed: assessed.filter((job) => job.providerKey === provider).length, returned: selected.filter((entry) => entry.job?.providerKey === provider).length, aiReturned: selected.filter((entry) => entry.job?.providerKey === provider).length }])); }
 function settleWithin(promise, timeoutMs) { let timer; const timeout = new Promise((_, reject) => { timer = setTimeout(() => { const error = new Error('Final AI selection did not settle before the local timeout. Deterministic candidates will be shown instead.'); error.code = 'selection_timeout'; reject(error); }, timeoutMs); }); return Promise.race([Promise.resolve().then(() => promise), timeout]).finally(() => clearTimeout(timer)); }
+function chunk(items, size) { return Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size)); }
+function outputTokenBudget(candidateCount) { return Math.max(1800, Math.min(5000, candidateCount * OUTPUT_TOKENS_PER_ASSESSMENT)); }
+function assessedSelections(content, candidates) {
+  const ids = selectionIds(content, candidates);
+  const details = selectionDetails(content, candidates);
+  const byId = new Map(candidates.map((job) => [String(job.externalId), job]));
+  return ids.map((id) => {
+    const job = byId.get(id);
+    const assessment = details.get(id) || {};
+    return { job, externalId: id, ...assessment, fitScore: assessment.requirementsMatchScore ?? null, scoreType: 'ai-selection', fitTier: assessment.fitTier || 'AI-evaluated match', strengths: assessment.strengths || [], gaps: assessment.gaps || [], unknowns: assessment.unknowns || [], reasoning: assessment.reasoning || 'Selected by the final AI comparison from the supplied listing evidence.' };
+  }).filter((entry) => Number(entry.requirementsMatchScore) >= MIN_AI_FIT_SCORE && Number(entry.candidateMatchScore) >= MIN_AI_FIT_SCORE);
+}
 async function rankJobs({ jobs, profile, resume, openRouter, onBatch, rankingCallTimeoutMs = RANKING_CALL_TIMEOUT_MS }) {
   const candidates = (Array.isArray(jobs) ? jobs : []).slice(0, MAX_FINAL_CANDIDATES);
   if (!candidates.length) return [];
   if (typeof openRouter !== 'function') throw new Error('Final AI job selection is unavailable.');
-  const started = Date.now(); const messages = selectionMessages(profile, resume, candidates); const diagnostics = { submittedCount: candidates.length, candidateCount: candidates.length, batchCount: 0, totalCalls: 1, assessedCount: 0, returnedCount: 0, selectionCallCount: 1, repairAttempted: false, providerCounts: providerCounts(candidates, [], []), promptCharacters: messages.reduce((sum, message) => sum + String(message.content || '').length, 0), maxTokens: Math.max(1600, Math.min(4800, candidates.length * 180)), durationMs: 0 };
-  await onBatch?.({ ...diagnostics, batchNumber: 1, callNumber: 1, status: 'started' });
+  const batches = chunk(candidates, MAX_ASSESSMENT_BATCH_SIZE);
+  const started = Date.now(); const diagnostics = { submittedCount: candidates.length, candidateCount: candidates.length, batchCount: batches.length, totalCalls: batches.length, assessedCount: 0, returnedCount: 0, selectionCallCount: 0, repairAttempted: false, providerCounts: providerCounts(candidates), promptCharacters: 0, maxTokens: 0, durationMs: 0 };
+  const assessed = [];
+  const selected = [];
+  let activeBatch = null;
   try {
-    let response = await settleWithin(openRouter(messages, { max_tokens: diagnostics.maxTokens, response_format: { type: 'json_object' } }), rankingCallTimeoutMs);
-    if (!response?.ok) { const error = new Error(response?.error || 'Final AI selection request failed.'); error.code = 'selection_request_failed'; throw error; }
-    let content = response.message?.content; let ids;
-    try { ids = selectionIds(content, candidates); }
-    catch (initialError) {
-      // A single compact repair is safe for truncation and malformed JSON. A
-      // transport failure is not retried here because it is not repairable.
-      if (!['selection_invalid_json', 'selection_invalid_shape', 'selection_duplicate_ids', 'selection_invented_id', 'selection_over_limit'].includes(initialError.code)) throw initialError;
-      diagnostics.repairAttempted = true; diagnostics.totalCalls = 2; diagnostics.selectionCallCount = 2;
-      await onBatch?.({ ...diagnostics, batchNumber: 2, callNumber: 2, status: 'started' });
-      response = await settleWithin(openRouter(repairMessages(content, candidates), { max_tokens: diagnostics.maxTokens, response_format: { type: 'json_object' } }), rankingCallTimeoutMs);
-      if (!response?.ok) { const error = new Error(response?.error || 'Final AI selection repair request failed.'); error.code = 'selection_repair_failed'; throw error; }
-      content = response.message?.content; ids = selectionIds(content, candidates);
+    for (const [index, batch] of batches.entries()) {
+      const batchNumber = index + 1;
+      const messages = selectionMessages(profile, resume, batch);
+      const promptCharacters = messages.reduce((sum, message) => sum + String(message.content || '').length, 0);
+      const maxTokens = outputTokenBudget(batch.length);
+      activeBatch = { batchNumber, submittedCount: batch.length, promptCharacters, maxTokens };
+      diagnostics.promptCharacters += promptCharacters;
+      diagnostics.maxTokens = Math.max(diagnostics.maxTokens, maxTokens);
+      diagnostics.selectionCallCount += 1;
+      await onBatch?.({ ...diagnostics, submittedCount: batch.length, promptCharacters, maxTokens, batchNumber, callNumber: batchNumber, status: 'started' });
+      let response = await settleWithin(openRouter(messages, { max_tokens: maxTokens, response_format: { type: 'json_object' } }), rankingCallTimeoutMs);
+      if (!response?.ok) { const error = new Error(response?.error || 'Final AI selection request failed.'); error.code = 'selection_request_failed'; throw error; }
+      let content = response.message?.content;
+      let batchSelected;
+      try { batchSelected = assessedSelections(content, batch); }
+      catch (initialError) {
+        // A single compact repair is safe for malformed or truncated JSON. A
+        // transport failure is not retried because it is not repairable here.
+        if (!['selection_invalid_json', 'selection_invalid_shape', 'selection_duplicate_ids', 'selection_invented_id', 'selection_over_limit'].includes(initialError.code)) throw initialError;
+        diagnostics.repairAttempted = true;
+        diagnostics.selectionCallCount += 1;
+        await onBatch?.({ ...diagnostics, submittedCount: batch.length, promptCharacters, maxTokens, batchNumber, callNumber: batchNumber, status: 'started', repairAttempted: true });
+        response = await settleWithin(openRouter(repairMessages(content, batch), { max_tokens: maxTokens, response_format: { type: 'json_object' } }), rankingCallTimeoutMs);
+        if (!response?.ok) { const error = new Error(response?.error || 'Final AI selection repair request failed.'); error.code = 'selection_repair_failed'; throw error; }
+        content = response.message?.content;
+        batchSelected = assessedSelections(content, batch);
+      }
+      assessed.push(...batch);
+      selected.push(...batchSelected);
+      diagnostics.assessedCount = assessed.length;
+      diagnostics.returnedCount = selected.length;
+      diagnostics.finalSelectedCount = selected.length;
+      diagnostics.displayedCount = selected.length;
+      diagnostics.providerCounts = providerCounts(candidates, assessed, selected);
+      await onBatch?.({ ...diagnostics, submittedCount: batch.length, promptCharacters, maxTokens, batchNumber, callNumber: batchNumber, status: 'success', responseLength: String(content || '').length, finishedAt: new Date().toISOString() });
     }
-    const details = selectionDetails(content, candidates);
-    const byId = new Map(candidates.map((job) => [String(job.externalId), job]));
-    const selected = ids.map((id) => { const job = byId.get(id); const assessment = details.get(id) || {}; return { job, externalId: id, ...assessment, fitScore: assessment.requirementsMatchScore ?? null, scoreType: 'ai-selection', fitTier: assessment.fitTier || 'AI-evaluated match', strengths: assessment.strengths || [], gaps: assessment.gaps || [], unknowns: assessment.unknowns || [], reasoning: assessment.reasoning || 'Selected by the final AI comparison from the supplied listing evidence.' }; }).filter((entry) => Number(entry.requirementsMatchScore) >= MIN_AI_FIT_SCORE && Number(entry.candidateMatchScore) >= MIN_AI_FIT_SCORE);
-    const aiSelectedCount = selected.length;
-    diagnostics.assessedCount = candidates.length; diagnostics.returnedCount = aiSelectedCount; diagnostics.finalSelectedCount = selected.length; diagnostics.displayedCount = selected.length; diagnostics.underSelected = false; diagnostics.durationMs = Date.now() - started; diagnostics.providerCounts = providerCounts(candidates, selected, selected);
-    await onBatch?.({ ...diagnostics, batchNumber: diagnostics.repairAttempted ? 2 : 1, callNumber: diagnostics.repairAttempted ? 2 : 1, status: 'success', finishedAt: new Date().toISOString() });
+    diagnostics.underSelected = false;
+    diagnostics.durationMs = Date.now() - started;
     Object.defineProperty(selected, 'rankingDiagnostics', { value: diagnostics, enumerable: false });
     return selected;
   } catch (cause) {
+    // An incomplete multi-batch evaluation is not an AI selection. Reporting
+    // partial counts as final results would falsely imply every job was judged.
+    diagnostics.assessedCount = 0;
+    diagnostics.returnedCount = 0;
+    diagnostics.finalSelectedCount = 0;
+    diagnostics.displayedCount = 0;
+    diagnostics.providerCounts = providerCounts(candidates);
     diagnostics.durationMs = Date.now() - started;
     cause.rankingDiagnostics = diagnostics;
-    await onBatch?.({ ...diagnostics, batchNumber: 1, callNumber: 1, status: 'failed', errorCode: cause.code || 'selection_failed', errorMessage: cause.message, finishedAt: new Date().toISOString() });
+    const failedBatch = activeBatch || { batchNumber: 1, submittedCount: 0, promptCharacters: 0, maxTokens: 0 };
+    await onBatch?.({ ...diagnostics, ...failedBatch, callNumber: failedBatch.batchNumber, status: 'failed', errorCode: cause.code || 'selection_failed', errorMessage: cause.message, finishedAt: new Date().toISOString() });
     throw cause;
   }
 }
-module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_SELECTED, MIN_AI_FIT_SCORE, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
+module.exports = { rankJobs, RANKING_CALL_TIMEOUT_MS, MAX_FINAL_CANDIDATES, MAX_ASSESSMENT_BATCH_SIZE, MAX_SELECTED, MIN_AI_FIT_SCORE, jobForRanking, profileForRanking, resumeForRanking, selectionMessages, selectionIds, repairMessages, MAX_RANKING_PROMPT_CHARS };
