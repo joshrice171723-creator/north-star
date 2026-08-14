@@ -98,6 +98,12 @@ function saveOpenRouterApiKey(value) {
   fs.renameSync(temporary, destination);
   return openRouterStatus();
 }
+function migrateOpenRouterEnvironmentKey() {
+  // `.env` is convenient during development but can be replaced when another local integration is configured.
+  // Preserve an already-approved environment key in OS-backed storage so all Electron launches keep working.
+  if (!process.env.OPENROUTER_API_KEY || readStoredOpenRouterCredentials().apiKey || !safeStorage.isEncryptionAvailable()) return;
+  saveOpenRouterApiKey(process.env.OPENROUTER_API_KEY);
+}
 function clearOpenRouterApiKey() { try { fs.rmSync(openRouterCredentialsPath(), { force: true }); } catch {} return openRouterStatus(); }
 function openRouterStatus() { return { configured: Boolean(readOpenRouterApiKey()), secureStorageAvailable: safeStorage.isEncryptionAvailable(), environmentConfigured: Boolean(process.env.OPENROUTER_API_KEY) }; }
 const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
@@ -900,6 +906,7 @@ function registerDatabaseIpc() {
 }
 
 app.whenReady().then(() => {
+  migrateOpenRouterEnvironmentKey();
   coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), seedPath: roadmapSeedPath });
   registerDatabaseIpc();
   // Poll only after a token has been explicitly configured; syncing is read-only
@@ -933,5 +940,4 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => { if (emailMonitorTimer) clearInterval(emailMonitorTimer); try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };
-
 
