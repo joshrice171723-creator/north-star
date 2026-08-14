@@ -79,3 +79,11 @@ test('final selector consumes scored assessments and keeps provider representati
   assert.equal(selected.filter((entry) => entry.job.providerKey === 'adzuna').length, 1);
   assert.equal(selected.rankingDiagnostics.finalSelectedCount, 1);
 });
+
+test('final selector accounts for Dice and preserves zero-selection diagnostics', async () => {
+  const candidates = [...jobs(2, 'dice'), ...jobs(1, 'remotive')];
+  const selected = await rankJobs({ jobs: candidates, profile: {}, resume: {}, openRouter: async () => response([]) });
+  assert.equal(selected.length, 0);
+  assert.equal(selected.rankingDiagnostics.providerCounts.dice.submitted, 2);
+  assert.equal(selected.rankingDiagnostics.returnedCount, 0);
+});

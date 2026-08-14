@@ -306,6 +306,14 @@ test('Arbeitnow advances feed pages through the same five-request quality budget
   } finally { global.fetch = originalFetch; }
 });
 
+test('remote candidates remain eligible and receive a modest retrieval preference', () => {
+  const brief = { jobFamilies: ['Machine Learning Engineer'], locations: [{ raw: 'Dallas, TX' }], remotePreference: 'any' };
+  const remote = { providerKey: 'dice', externalId: 'remote', title: 'Machine Learning Engineer', description: 'Build machine learning systems.', location: 'Remote', remoteType: 'remote' };
+  const local = { ...remote, externalId: 'local', location: 'Dallas, TX', remoteType: 'onsite' };
+  assert.ok(qualificationReason(remote, brief) === null);
+  assert.equal(calculateRetrievalScore(remote, brief) > calculateRetrievalScore(local, brief), true);
+});
+
 test('Arbeitnow evaluates matching candidates from later feed pages instead of truncating before qualification', async () => {
   const originalFetch = global.fetch;
   global.fetch = async (url) => {

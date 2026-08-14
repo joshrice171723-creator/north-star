@@ -9,6 +9,8 @@ test('job search keeps deterministic candidates when final AI selection fails', 
   assert.match(source, /showing deterministic provider candidates/);
   assert.match(source, /ranked = found\.jobs\.map/);
   assert.doesNotMatch(source, /No jobs were selected/);
+  assert.match(source, /ai_returned_no_qualifying_selections/);
+  assert.match(source, /showing the best retrieved candidates/);
 });
 
 // Verify the fallback score shape used by the main-process projection.
