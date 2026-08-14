@@ -34,7 +34,9 @@ const academyUrl = 'https://anthropic.skilljar.com/';
 const academyOrigin = new URL(academyUrl).origin;
 let mainWindow;
 let academyView;
+let googleVoiceView;
 let academyVisible = true;
+let googleVoiceViewVisible = false;
 let academyLayout = null;
 let coachDatabase;
 let applicationBrowser;
@@ -122,6 +124,39 @@ function openGoogleVoiceWindow() {
   googleVoiceWindow.show();
   googleVoiceWindow.focus();
   return googleVoiceStatus();
+}
+function googleVoiceViewBounds() {
+  if (!mainWindow || !googleVoiceView) return;
+  const [width, height] = mainWindow.getContentSize();
+  googleVoiceView.setBounds(googleVoiceViewVisible
+    ? { x: 210, y: 58, width: Math.max(1, width - 210), height: Math.max(1, height - 58) }
+    : { x: 0, y: 0, width: 1, height: 1 });
+}
+function setGoogleVoiceViewVisible(visible) {
+  googleVoiceViewVisible = Boolean(visible);
+  googleVoiceViewBounds();
+  return googleVoiceViewVisible;
+}
+function createGoogleVoiceView() {
+  googleVoiceView = new BrowserView({
+    webPreferences: { partition: googleVoicePartition, contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  mainWindow.contentView.addChildView(googleVoiceView);
+  googleVoiceView.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const origin = new URL(url).origin;
+      if (origin === 'https://voice.google.com' || origin === 'https://accounts.google.com') googleVoiceView.webContents.loadURL(url);
+    } catch {}
+    return { action: 'deny' };
+  });
+  googleVoiceView.webContents.on('will-navigate', (event, url) => {
+    try {
+      const origin = new URL(url).origin;
+      if (origin !== 'https://voice.google.com' && origin !== 'https://accounts.google.com') event.preventDefault();
+    } catch { event.preventDefault(); }
+  });
+  googleVoiceView.webContents.loadURL(googleVoiceUrl);
+  googleVoiceViewBounds();
 }
 function startGoogleVoiceMonitor() {
   if (!readGoogleVoiceSettings().enabled) return googleVoiceStatus();
@@ -829,6 +864,7 @@ function createWindow() {
     }
   });
   mainWindow.setBrowserView(academyView);
+  createGoogleVoiceView();
   applicationBrowser = createApplicationBrowser({
     electron,
     getApplicationUrl: (applicationId) => coachDatabase.applications.get(applicationId)?.applicationUrl || '',
@@ -852,12 +888,13 @@ function createWindow() {
 
   academyView.webContents.loadURL(academyUrl);
   mainWindow.on('resize', academyBounds);
+  mainWindow.on('resize', googleVoiceViewBounds);
   mainWindow.on('close', (event) => {
     // Keep the Electron process alive when Voice monitoring is enabled. The
     // hidden Google Voice session cannot receive events after the app quits.
     if (!isQuitting && readGoogleVoiceSettings().enabled) { event.preventDefault(); mainWindow.hide(); }
   });
-  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; });
+  mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; googleVoiceView = null; });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
@@ -1114,6 +1151,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('google-voice:get', () => googleVoiceStatus());
   ipcMain.handle('google-voice:set-enabled', (_event, enabled) => setGoogleVoiceEnabled(Boolean(enabled)));
   ipcMain.handle('google-voice:open', () => openGoogleVoiceWindow());
+  ipcMain.handle('google-voice:set-visible', (_event, visible) => setGoogleVoiceViewVisible(visible));
   ipcMain.handle('google-voice:test-notification', () => { showGoogleVoiceNotification('Google Voice monitor', 'Desktop notifications are working.'); return { ok: true }; });
 }
 
