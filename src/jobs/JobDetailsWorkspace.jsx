@@ -13,6 +13,19 @@ const stageIndex = (stage) => JOB_STAGES.findIndex(([value]) => value === stage)
 const displayDate = (value) => value ? new Date(value).toLocaleString() : 'Date not available';
 const emptyFollowUp = () => ({ title: '', dueDate: '' });
 const emptyEvent = () => ({ title: '', startsAt: '', endsAt: '', location: '' });
+const roleContextSections = (job) => {
+  const raw = job.rawData && typeof job.rawData === 'object' ? job.rawData : {};
+  const sections = [
+    ['Summary', raw.summary || raw.jobSummary],
+    ['Duties', raw.duties || job.duties],
+    ['Qualifications', raw.qualifications || job.qualifications],
+    ['Requirements', Array.isArray(job.requirements) ? job.requirements.join('\n') : job.requirements],
+    ['Education', raw.education || job.education],
+    ['Benefits', raw.benefits || job.benefits],
+    ['Travel', raw.travel || job.travel]
+  ];
+  return sections.filter(([, value]) => String(value || '').trim());
+};
 
 function ResumeUsedSelector({ applicationId, documents, onSelected }) {
   const [resumeVersions, setResumeVersions] = useState(documents.filter((document) => document.documentType === 'resume')); const [selectedId, setSelectedId] = useState(resumeVersions.find((document) => document.isSelected)?.id || ''); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
