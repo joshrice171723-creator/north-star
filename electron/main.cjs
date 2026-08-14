@@ -1077,6 +1077,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('email:sender:blocked:list', () => coachDatabase.email.listBlockedSenders());
   ipcMain.handle('jobs:detail:emails:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.listForJob(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:activity:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.activity.list(validateJobDetailId(jobId)); });
+  ipcMain.handle('jobs:detail:activity:seen', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.activity.markSeen(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:follow-ups:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.followUps.list(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:follow-ups:create', (event, input) => { assertTrustedRenderer(event); return coachDatabase.jobs.followUps.create(validateJobFollowUp(input)); });
   ipcMain.handle('jobs:detail:follow-ups:complete', (event, input) => { assertTrustedRenderer(event); validateCoachId(input?.id, 'follow-up task id'); return coachDatabase.jobs.followUps.complete(input.id, Boolean(input.completed)); });
