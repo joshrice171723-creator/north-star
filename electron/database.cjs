@@ -495,6 +495,12 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     sqlite.prepare('UPDATE email_messages SET seen_at = COALESCE(seen_at, ?), updated_at = ? WHERE id = ?').run(timestamp, timestamp, emailId);
     return getEmail(emailId);
   }
+  function markJobEmailsSeen(jobId) {
+    requirePipelineJob(jobId);
+    const timestamp = now();
+    sqlite.prepare('UPDATE email_messages SET seen_at = COALESCE(seen_at, ?), updated_at = ? WHERE id IN (SELECT email_id FROM email_job_links WHERE job_id = ?) AND user_excluded = 0').run(timestamp, timestamp, bounded(jobId, 160));
+    return jobNotificationCounts(jobId);
+  }
   function blockEmailSender(input = {}) {
     const sender = bounded(input.sender || input.senderKey, 500).trim();
     const senderKey = normalizeEmailSender(input.senderKey || sender);
@@ -548,7 +554,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
-    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
+    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, markJobSeen: markJobEmailsSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
