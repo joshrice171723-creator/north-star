@@ -140,7 +140,9 @@ function googleVoiceViewBounds() {
   if (!mainWindow || !googleVoiceView) return;
   const [width, height] = mainWindow.getContentSize();
   googleVoiceView.setBounds(googleVoiceViewVisible
-    ? { x: 210, y: 58, width: Math.max(1, width - 210), height: Math.max(1, height - 58) }
+    // Keep the left navigation available, but let Voice cover the app header
+    // and use the complete remaining height so two scroll regions do not stack.
+    ? { x: 210, y: 0, width: Math.max(1, width - 210), height: Math.max(1, height) }
     : { x: 0, y: 0, width: 1, height: 1 });
 }
 function setGoogleVoiceViewVisible(visible) {
