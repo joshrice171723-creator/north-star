@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,saveEmailSource: (input) => ipcRenderer.invoke('email:source:save', input)
   ,clearEmailSource: () => ipcRenderer.invoke('email:source:clear')
   ,syncJobEmails: () => ipcRenderer.invoke('email:sync')
+  ,openGmailEmail: (input) => ipcRenderer.invoke('email:open-gmail', input)
   ,listJobEmails: (options) => ipcRenderer.invoke('email:list', options)
   ,searchJobEmails: (query, limit) => ipcRenderer.invoke('email:search', query, limit)
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
