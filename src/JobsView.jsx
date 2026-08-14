@@ -144,6 +144,25 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   };
   useEffect(() => { loadDocumentSummaries().catch((cause) => setError(cause?.message || 'Could not load document summaries.')); }, [applications]);
 
+  const refineSearch = async (action) => {
+    const search = window.desktopShell?.searchJobs;
+    if (typeof search !== 'function') return;
+    const report = { providers: (searchReport?.sourceStats || []).map((source) => ({ provider: source.key, status: source.status, retrieved: source.retrievedRaw ?? source.fetched, filtered: source.hardFilteredCount ?? source.filtered, submitted: source.aiSubmitted, selected: source.finalSelectedCount ?? source.aiReturned, displayed: source.displayedCount ?? source.shown })) };
+    // Keep the existing search-result path while supplying the safe refinement context through IPC.
+    window.desktopShell.searchJobs = () => search({ refinement: { action, report } });
+    try { await runSearch(); } finally { window.desktopShell.searchJobs = search; }
+  };
+  useEffect(() => {
+    if (!searchReport) return undefined;
+    const body = document.querySelector('.job-search-report-body');
+    if (!body || body.querySelector('.job-search-refinements')) return undefined;
+    const actions = [['more_remote', 'Show more remote roles'], ['higher_salary', 'Prioritize higher salary'], ['less_senior', 'Find less senior alternatives'], ['exclude_company', 'Exclude companies like this'], ['adjacent_roles', 'Search for adjacent roles'], ['must_haves_only', 'Only show jobs where I meet the must-haves']];
+    const group = document.createElement('div'); group.className = 'job-search-refinements';
+    const label = document.createElement('small'); label.textContent = 'Refine this search'; group.appendChild(label);
+    actions.forEach(([nextAction, title]) => { const button = document.createElement('button'); button.className = 'secondary'; button.type = 'button'; button.textContent = title; button.addEventListener('click', () => refineSearch(nextAction)); group.appendChild(button); });
+    body.prepend(group);
+    return () => group.remove();
+  }, [searchReport]);
   const today = new Date().toISOString().slice(0, 10);
   const visibleJobs = useMemo(() => jobs.filter((job) => (stageFilter === 'all' || job.stage === stageFilter) && `${job.company} ${job.roleTitle} ${job.location} ${job.nextAction}`.toLowerCase().includes(query.toLowerCase())), [jobs, query, stageFilter]);
   const save = async () => { if (!modalJob?.company.trim() || !modalJob?.roleTitle.trim()) { setError('Company and role title are required.'); return; } setSaving(true); setError(''); try { await (modalJob.id ? window.desktopShell?.updateJob : window.desktopShell?.createJob)({ ...modalJob, appliedAt: modalJob.appliedAt || null, followUpDate: modalJob.followUpDate || null }); await onRefresh(); setModalJob(null); } catch (cause) { setError(cause?.message || 'Could not save opportunity.'); } finally { setSaving(false); } };
@@ -186,5 +205,3 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
 }
 
 export { normalizeProfileLists, EmailMonitorPanel };
-
-
