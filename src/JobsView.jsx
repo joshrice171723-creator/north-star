@@ -42,7 +42,7 @@ function profileField(profile, setProfile, key, label) {
 const defaultStartApplication = (onSave) => async (entryToStart) => { const saved = await onSave(entryToStart); if (saved) { const application = await window.desktopShell?.startJobApplication?.({ jobId: saved.id }); if (application) window.dispatchEvent(new CustomEvent('application-started', { detail: { application, job: saved } })); } };
 function MatchCard({ entry, onSave, onStart = defaultStartApplication(onSave) }) {
   const { job, ...match } = entry;
-  const sourceLabels = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow' };
+  const sourceLabels = { usajobs: 'USAJOBS / federal jobs', adzuna: 'Adzuna', remotive: 'Remotive', arbeitnow: 'Arbeitnow', dice: 'Dice' };
   const evidence = job.searchEvidence || {};
   const isAiScore = match.scoreType === 'ai-selection';
   const scoreLabel = isAiScore ? 'AI fit score' : 'Search relevance';

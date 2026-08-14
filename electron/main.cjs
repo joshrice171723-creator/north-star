@@ -939,7 +939,15 @@ function registerDatabaseIpc() {
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('jobs:search:progress', { runId, ...batch, report: retrievalReport });
         };
         ranked = await rankJobs({ jobs: found.jobs, profile, resume, onBatch: reportRankingProgress, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'final_selection' }) });
-        rankingStatus = ranked.length ? (ranked.rankingDiagnostics?.underSelected ? 'under_selected' : 'available') : 'unavailable';
+        if (!ranked.length) {
+          // An empty but valid AI response is still a failed usable-selection
+          // outcome. Keep its zero selected count, but display the best
+          // deterministic candidates so the report and cards agree.
+          const diagnostics = ranked.rankingDiagnostics || null;
+          rankingError = { code: 'ai_returned_no_qualifying_selections', message: 'Final AI returned no qualifying selections; showing the best retrieved candidates.', diagnostics };
+          rankingStatus = 'unavailable';
+          ranked = found.jobs.slice().sort((a, b) => (Number(b.retrievalScore) || 0) - (Number(a.retrievalScore) || 0) || String(a.externalId).localeCompare(String(b.externalId))).map((job) => ({ job, externalId: job.externalId, fitScore: Number.isFinite(Number(job.retrievalScore)) ? Math.round(Number(job.retrievalScore)) : null, scoreType: 'deterministic', fitTier: 'deterministic candidate', strengths: [], gaps: ['Final AI did not return a qualifying selection; review the listing manually.'], unknowns: [], reasoning: 'Retrieved successfully. Final AI returned no qualifying selection, so this best-ranked candidate is shown for review.' }));
+        } else rankingStatus = ranked.rankingDiagnostics?.underSelected ? 'under_selected' : 'available';
       } catch (cause) {
         rankingError = { code: cause?.code || 'ai_ranking_failed', message: cause?.message || 'AI job ranking failed.', diagnostics: cause?.rankingDiagnostics || null };
         rankingStatus = 'unavailable';

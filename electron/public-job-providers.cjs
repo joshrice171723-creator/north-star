@@ -21,10 +21,10 @@ function matchesRequestedLocation(item, scope = {}, brief = {}) {
   if (!requested) return true;
   const location = text(item.location || item.candidate_required_location || item.locations || item.city || '', 240).toLowerCase();
   const remote = /\bremote\b|\banywhere\b/.test(location);
-  // Arbeitnow is a largely European feed and has no provider-side location
-  // filter. Generic "Remote" listings do not establish U.S. work eligibility
-  // for a Dallas-targeted search, so retain them only when remote was chosen.
-  if (remote) return String(brief.remotePreference || '').toLowerCase() === 'remote';
+  // Remote is a standing option in every location search. The final AI
+  // evaluator weighs it against local roles, so a city-targeted search must
+  // not discard remote listings before that comparison happens.
+  if (remote) return true;
   const words = requested.match(/[a-z0-9]+/g) || [];
   const city = words.find((word) => word.length > 2);
   const state = words.find((word) => word.length === 2);
