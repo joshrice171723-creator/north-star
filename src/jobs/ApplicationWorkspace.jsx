@@ -6,8 +6,8 @@ import ApplicationBrowserPanel from './ApplicationBrowserPanel.jsx';
 import { getApplicationLayout } from './applicationLayout.mjs';
 
 const label = (value) => String(value || 'drafting').replaceAll('_', ' ');
-export default function ApplicationWorkspace({ application, job, onBack, onRefresh, focusDocumentType = 'resume' }) {
-  const [events, setEvents] = useState([]); const [answers, setAnswers] = useState([]); const [message, setMessage] = useState(''); const [browserOpen, setBrowserOpen] = useState(false); const [layout, setLayout] = useState(() => getApplicationLayout(window.innerWidth));
+export default function ApplicationWorkspace({ application, job, onBack, onRefresh, focusDocumentType = 'resume', openAssistant = false }) {
+  const [events, setEvents] = useState([]); const [answers, setAnswers] = useState([]); const [message, setMessage] = useState(''); const [browserOpen, setBrowserOpen] = useState(openAssistant); const [layout, setLayout] = useState(() => getApplicationLayout(window.innerWidth));
   const reload = async () => { if (!application?.id) return; const [nextEvents, nextAnswers] = await Promise.all([window.desktopShell.listJobApplicationEvents?.(application.id), window.desktopShell.listJobApplicationAnswers?.(application.id)]); setEvents(nextEvents || []); setAnswers(nextAnswers || []); };
   useEffect(() => { reload().catch((cause) => setMessage(cause?.message || 'Could not load application details.')); }, [application?.id]);
   useEffect(() => { const resize = () => setLayout((current) => getApplicationLayout(window.innerWidth, current.browserWidth)); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);

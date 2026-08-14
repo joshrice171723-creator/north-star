@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BriefcaseBusiness, Check, ExternalLink, FileText, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import ApplicationWorkspace from './jobs/ApplicationWorkspace.jsx';
-import CombinedWorkspacePrototype from './jobs/CombinedWorkspacePrototype.jsx';
 import JobDetailsWorkspace from './jobs/JobDetailsWorkspace.jsx';
 
 export const JOB_STAGES = [['target', 'Target'], ['researching', 'Researching'], ['ready', 'Ready to apply'], ['applied', 'Applied'], ['screen', 'Recruiter screen'], ['interviewing', 'Interviewing'], ['final', 'Final round'], ['offer', 'Offer'], ['accepted', 'Accepted'], ['rejected', 'Rejected / withdrawn']];
@@ -136,7 +135,6 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [aiKey, setAiKey] = useState(''); const [aiStatus, setAiStatus] = useState({ configured: false }); const [aiMessage, setAiMessage] = useState('');
   const [sourceTesting, setSourceTesting] = useState(false);
   const [applicationWorkspace, setApplicationWorkspace] = useState(null);
-  const [combinedPrototypeJob, setCombinedPrototypeJob] = useState(null);
   const [applications, setApplications] = useState([]);
   const [applicationDocuments, setApplicationDocuments] = useState({});
   const [detailJob, setDetailJob] = useState(null);
@@ -183,11 +181,10 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const saveProfile = async () => { const normalized = { ...profile, ...normalizeProfileLists(profile) }; setProfile(normalized); try { const saved = await window.desktopShell?.saveJobProfile?.(normalized); await window.desktopShell?.saveMasterResume?.(resume); if (!saved) throw new Error('The profile could not be saved.'); setProfileOpen(false); setSearchMessage('Profile and resume saved locally.'); return true; } catch (cause) { setProfileOpen(true); setSearchMessage(cause?.message || 'Could not save your profile locally.'); throw cause; } };
   const runSearch = async () => { setSearchState('loading'); setError(''); setMatches([]); setSearchReport(null); setSearchMessage('Understanding your target, searching federal job titles, and evaluating fit…'); try { await saveProfile(); const result = await window.desktopShell?.searchJobs?.(); setSearchReport(result || { ok: false, error: 'The search returned no diagnostic result.' }); if (!result?.ok) { if (result?.needsProfile) setProfileOpen(true); throw new Error(errorMessage(result, 'Search failed.')); } const matchById = new Map((result.matches || []).map((match) => [String(match.externalId), match])); setSearchReport(result); const aiAvailable = ['available', 'under_selected'].includes(result.ranking?.status); setMatches(aiAvailable ? (result.matches || []).map((match) => ({ ...match, job: match.job || (result.jobs || []).find((job) => String(job.externalId) === String(match.externalId)) })).filter((entry) => entry.job) : (result.jobs || []).map((job) => ({ job, ...(matchById.get(String(job.externalId)) || { externalId: job.externalId, fitScore: job.retrievalScore ?? null, scoreType: 'retrieval', fitTier: job.retrievalScore ? 'retrieval match' : 'not scored', strengths: job.searchEvidence?.positionTitleQuery ? [`Title: ${job.searchEvidence.positionTitleQuery}`] : [], gaps: ['AI scoring was unavailable; review the announcement.'], unknowns: [], reasoning: 'Job retrieved successfully; review it manually.' }) }))); setSearchState('success'); const ranking = result.ranking?.status === 'under_selected' ? 'Final AI returned fewer than 20 selections.' : aiAvailable ? 'AI selections available.' : result.jobs?.length ? 'AI scoring unavailable; showing retrieved jobs using deterministic scores.' : ''; const interpretation = result.searchPlan?.interpretation ? ` ${result.searchPlan.interpretation}.` : ''; const counts = result.counts ? ` Retrieved ${result.counts.retrieved || 0} raw, ${result.counts.unique || 0} unique, ${result.counts.aiSubmitted || 0} sent to final AI, and ${result.counts.displayed ?? result.matches?.length ?? 0} displayed.` : ` Found ${result.jobs?.length || 0} relevant matches.`; setSearchMessage(result.error?.message || result.warning || `USAJOBS federal search complete.${interpretation}${counts} ${ranking}`); } catch (cause) { setMatches([]); setSearchState('error'); setSearchMessage(cause?.message || 'Search failed.'); } };
   const saveMatch = async ({ job, ...match }) => { const safeId = `job-${job.providerKey}-${String(job.externalId).replace(/[^A-Za-z0-9._:-]/g, '-')}`; const saved = await window.desktopShell?.createJob?.({ id: safeId, company: job.company, roleTitle: job.title, url: job.applicationUrl, canonicalUrl: job.canonicalUrl, location: job.location, employmentType: job.employmentType, source: job.providerKey, externalId: job.externalId, apiSource: job.providerKey, description: job.description, requirements: job.requirements, postedAt: job.postedAt, expiresAt: job.expiresAt, salaryMin: job.salaryMin, salaryMax: job.salaryMax, salaryCurrency: job.salaryCurrency, remoteType: job.remoteType, matchScore: match.requirementsMatchScore ?? match.fitScore, requirementsMatchScore: match.requirementsMatchScore, candidateMatchScore: match.candidateMatchScore, fitTier: match.fitTier, matchSummary: match.reasoning, notes: `Strengths: ${(match.strengths || []).join(', ')}\nGaps: ${(match.gaps || []).join(', ')}` }); await onRefresh(); setSearchMessage(`${job.title} saved to your pipeline.`); return saved; };
-  const openApplication = async (job, focusDocumentType = 'resume') => { try { const application = await window.desktopShell?.startJobApplication?.({ jobId: job.id }); if (!application) throw new Error('Could not start application.'); setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setApplicationWorkspace({ application, job, focusDocumentType }); } catch (cause) { setError(cause?.message || 'Could not start application.'); } };
+  const openApplication = async (job, focusDocumentType = 'resume', openAssistant = false) => { try { const application = await window.desktopShell?.startJobApplication?.({ jobId: job.id }); if (!application) throw new Error('Could not start application.'); setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setApplicationWorkspace({ application, job, focusDocumentType, openAssistant }); } catch (cause) { setError(cause?.message || 'Could not start application.'); } };
   const startMatchApplication = async (entry) => { const saved = await saveMatch(entry); if (saved) await openApplication(saved); };
   const refreshApplication = async () => { if (!applicationWorkspace) return; await onRefresh(); const application = await window.desktopShell?.getJobApplication?.(applicationWorkspace.application.id); if (application) { setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setApplicationWorkspace((current) => ({ ...current, application })); } };
-  const changeDetailStage = async (stage) => { if (!detailJob) return; try { const saved = await window.desktopShell?.updateJob?.({ ...detailJob, stage }); setDetailJob(saved); await onRefresh(); } catch (cause) { setError(cause?.message || 'Could not update the application stage.'); } };
-  const openCombinedPrototype = (job) => setCombinedPrototypeJob(job);
+  const changeDetailStage = async (stage) => { if (!detailJob) return; try { const saved = await window.desktopShell?.updateJob?.({ ...detailJob, stage }); setDetailJob(saved); await onRefresh(); if (stage === 'applied' && !applications.some((entry) => entry.jobId === saved.id)) { const application = await window.desktopShell?.startJobApplication?.({ jobId: saved.id }); if (application) setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); } } catch (cause) { setError(cause?.message || 'Could not update the application stage.'); } };
   const saveSource = async () => { try { const result = await window.desktopShell?.saveJobSource?.(sourceForm); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage(result?.warning || 'Job-source credentials saved securely on this computer.'); } catch (cause) { setSourceMessage(cause?.message || 'Could not save job-source credentials.'); } };
   const testSource = async () => { setSourceTesting(true); try { const result = await window.desktopShell?.testJobSource?.(); const results = result?.results || [result]; setSourceMessage(results.map((entry) => `${entry.provider || 'Source'}: ${entry.ok ? `connected (${entry.count || 0} results)` : entry.message || 'failed'}`).join(' · ')); } catch (cause) { setSourceMessage(cause?.message || 'Could not test job sources.'); } finally { setSourceTesting(false); } };
   const clearSource = async () => { const result = await window.desktopShell?.clearJobSource?.(); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage('Job-source credentials cleared from this computer.'); };
@@ -213,29 +210,6 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   }, [jobs, detailJob]);
 
   useEffect(() => {
-    const cards = [...document.querySelectorAll('.jobs-board .job-card-top')];
-    const added = cards.map((top) => {
-      if (top.querySelector('.combined-prototype-trigger')) return null;
-      const button = document.createElement('button');
-      button.className = 'combined-prototype-trigger';
-      button.type = 'button';
-      button.title = 'Test combined workspace';
-      button.setAttribute('aria-label', 'Test combined workspace');
-      button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 9h4"/><path d="M8 3h8"/><path d="M8 3v4l-2 3v8a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-8l-2-3V3"/><path d="M8 15h8"/></svg>';
-      button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const roleTitle = top.querySelector('b')?.textContent || '';
-        const company = top.closest('.job-card')?.querySelector('strong')?.textContent || '';
-        const job = jobs.find((entry) => entry.roleTitle === roleTitle && entry.company === company);
-        if (job) openCombinedPrototype(job);
-      });
-      top.appendChild(button);
-      return button;
-    }).filter(Boolean);
-    return () => added.forEach((button) => button.remove());
-  }, [jobs, openCombinedPrototype]);
-
-  useEffect(() => {
     const navigation = pendingSearchNavigation.current;
     if (!navigation || applicationWorkspace || detailJob) return;
     pendingSearchNavigation.current = null;
@@ -248,13 +222,12 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
     });
   }, [applicationWorkspace, detailJob, jobs]);
 
-  if (applicationWorkspace) return <ApplicationWorkspace application={applicationWorkspace.application} job={applicationWorkspace.job} focusDocumentType={applicationWorkspace.focusDocumentType} onBack={() => { setApplicationWorkspace(null); loadDocumentSummaries().catch(() => {}); }} onRefresh={refreshApplication} />;
-  if (combinedPrototypeJob) { const currentJob = jobs.find((job) => job.id === combinedPrototypeJob.id) || combinedPrototypeJob; const application = applications.find((entry) => entry.jobId === currentJob.id); return <CombinedWorkspacePrototype job={currentJob} application={application} documents={applicationDocuments[application?.id] || []} onBack={() => setCombinedPrototypeJob(null)} onStartApplication={() => openApplication(currentJob)} />; }
+  if (applicationWorkspace) return <ApplicationWorkspace application={applicationWorkspace.application} job={applicationWorkspace.job} focusDocumentType={applicationWorkspace.focusDocumentType} openAssistant={applicationWorkspace.openAssistant} onBack={() => { setApplicationWorkspace(null); loadDocumentSummaries().catch(() => {}); }} onRefresh={refreshApplication} />;
   if (detailJob) {
     const currentJob = jobs.find((job) => job.id === detailJob.id) || detailJob;
     const application = applications.find((entry) => entry.jobId === currentJob.id);
     // Keep the detail workspace mounted behind the modal so closing edit returns to the job the user was viewing.
-    return <><JobDetailsWorkspace job={currentJob} application={application} documents={applicationDocuments[application?.id] || []} onBack={() => setDetailJob(null)} onEdit={() => setModalJob(currentJob)} onStartApplication={() => openApplication(currentJob)} onStageChange={changeDetailStage} onOpenAiSettings={() => { setDetailJob(null); setProfileOpen(true); setAiMessage('Add an OpenRouter API key to enable Ask AI.'); }} />{modalJob && <JobModal job={modalJob} saving={saving} error={error} onChange={setModalJob} onCancel={() => setModalJob(null)} onSave={save} />}</>;
+    return <><JobDetailsWorkspace job={currentJob} application={application} documents={applicationDocuments[application?.id] || []} onBack={() => setDetailJob(null)} onEdit={() => setModalJob(currentJob)} onStartApplication={() => openApplication(currentJob)} onOpenApplicationAssistant={() => openApplication(currentJob, 'resume', true)} onStageChange={changeDetailStage} onOpenAiSettings={() => { setDetailJob(null); setProfileOpen(true); setAiMessage('Add an OpenRouter API key to enable Ask AI.'); }} />{modalJob && <JobModal job={modalJob} saving={saving} error={error} onChange={setModalJob} onCancel={() => setModalJob(null)} onSave={save} />}</>;
   }
 
   const documentSummary = (job) => { const application = applications.find((entry) => entry.jobId === job.id); if (!application) return <button className="secondary" onClick={() => openApplication(job)}>Start application</button>; const documents = applicationDocuments[application.id] || []; return <><small>Application: {application.status.replaceAll('_', ' ')}</small>{['resume', 'cover_letter'].map((documentType) => { const document = documents.find((entry) => entry.documentType === documentType); return <small key={documentType}>{label(documentType)}: {document ? `v${document.version} · ${document.status.replaceAll('_', ' ')}${document.isSelected ? ' · selected' : ''}${document.exportedPdfPath || document.exportedTextPath ? ' · exported' : ''} · updated ${new Date(document.updatedAt).toLocaleDateString()}` : 'not generated'}</small>; })}<button className="secondary" onClick={() => openApplication(job)}>Resume & documents</button></>; };
