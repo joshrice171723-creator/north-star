@@ -29,3 +29,21 @@ test('a user-excluded email stays hidden after sync updates and can be restored'
     assert.equal(db.email.list({ jobOnly: true }).some((entry) => entry.id === email.id), true);
   } finally { db.close(); fs.rmSync(userDataPath, { recursive: true, force: true }); }
 });
+
+test('sender controls preserve seen state, group identity, and blocking across sync updates', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aicc-email-sender-controls-'));
+  const db = createDatabase({ userDataPath, seedPath: path.join(userDataPath, 'missing.csv') });
+  try {
+    const first = db.email.upsert({ provider: 'gmail', externalId: 'message-3', subject: 'First', from: 'Recruiting <recruiter@example.com>', isJobRelated: true });
+    const second = db.email.upsert({ provider: 'gmail', externalId: 'message-4', subject: 'Second', from: 'recruiter@example.com', isJobRelated: true });
+    assert.equal(first.senderKey, 'recruiter@example.com');
+    assert.equal(second.isSeen, false);
+    assert.equal(db.email.markSeen({ emailId: first.id }).isSeen, true);
+    assert.equal(db.email.upsert({ provider: 'gmail', externalId: 'message-3', subject: 'Updated', from: 'Recruiting <recruiter@example.com>', isJobRelated: true }).isSeen, true);
+    db.email.blockSender({ sender: 'Recruiting <recruiter@example.com>' });
+    assert.equal(db.email.list({ jobOnly: true }).some((entry) => entry.senderKey === 'recruiter@example.com'), false);
+    assert.equal(db.email.list({ jobOnly: true, includeBlocked: true }).length, 2);
+    db.email.unblockSender({ senderKey: 'recruiter@example.com' });
+    assert.equal(db.email.list({ jobOnly: true }).length, 2);
+  } finally { db.close(); fs.rmSync(userDataPath, { recursive: true, force: true }); }
+});
