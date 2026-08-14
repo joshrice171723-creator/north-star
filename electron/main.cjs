@@ -346,7 +346,7 @@ async function interpretJobEmail(input = {}) {
   interpretation.summary = typeof interpretation.summary === 'string' ? interpretation.summary.slice(0, 2000) : '';
   interpretation.followUpTitle = typeof interpretation.followUpTitle === 'string' ? interpretation.followUpTitle.slice(0, 500) : '';
   interpretation.followUpDate = typeof interpretation.followUpDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(interpretation.followUpDate) ? interpretation.followUpDate : null;
-  coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted â€œ${email.subject || 'Untitled email'}â€.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
+  coachDatabase.jobs.activity.record(input.jobId, 'email_interpreted', `AI interpreted “${email.subject || 'Untitled email'}”.`, { emailId: email.id, signal: interpretation.signal, confidence: interpretation.confidence });
   return interpretation;
 }
 const APPLICATION_STATUSES = new Set(['drafting', 'documents_ready', 'in_progress', 'needs_user_input', 'ready_for_review', 'ready_to_submit', 'submitted', 'withdrawn', 'blocked']);
@@ -510,7 +510,7 @@ function generateAcademyFlashcards(ids) {
     const generated = selected.map((capture) => {
       const paragraphs = String(capture.content || '').split(/\n+/).map((part) => part.trim()).filter((part) => part.length >= 30);
       const answer = (paragraphs[0] || String(capture.content || '').trim()).slice(0, 1200);
-      return { id: crypto.createHash('sha256').update(`${capture.id}:flashcard`).digest('hex').slice(0, 24), type: 'flashcard', label: 'App-generated', derivation: 'Academy-derived', question: `What key point is stated in â€œ${String(capture.pageTitle || 'this Academy capture').slice(0, 180)}â€?`, answer, sourceCaptureId: capture.id, sourceTitle: String(capture.pageTitle || ''), sourceUrl: String(capture.sourceUrl || ''), generatedAt };
+      return { id: crypto.createHash('sha256').update(`${capture.id}:flashcard`).digest('hex').slice(0, 24), type: 'flashcard', label: 'App-generated', derivation: 'Academy-derived', question: `What key point is stated in “${String(capture.pageTitle || 'this Academy capture').slice(0, 180)}”?`, answer, sourceCaptureId: capture.id, sourceTitle: String(capture.pageTitle || ''), sourceUrl: String(capture.sourceUrl || ''), generatedAt };
     });
     const selectedIds = new Set(selected.map((capture) => capture.id));
     const materials = [...data.materials.filter((entry) => !selectedIds.has(entry.sourceCaptureId)), ...generated];
@@ -628,7 +628,7 @@ function showRendererContextMenu(params) {
       node = node.parentElement;
     }
     const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
-    return (el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().replace(/\\s+/g, '.') : '') + (text ? ' â€” "' + text + '"' : '') + ' â€” ' + path.join(' > ')).slice(0, 500);
+    return (el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().replace(/\\s+/g, '.') : '') + (text ? ' — "' + text + '"' : '') + ' — ' + path.join(' > ')).slice(0, 500);
   })()`;
   const copyReference = async () => {
     try { const reference = await renderer.executeJavaScript(referenceScript, true); clipboard.writeText(reference); } catch (error) { clipboard.writeText('UI reference unavailable: ' + error.message); }
