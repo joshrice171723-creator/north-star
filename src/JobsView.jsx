@@ -3,6 +3,7 @@ import { BriefcaseBusiness, Check, ExternalLink, FileText, Pencil, Plus, Search,
 import JobDetailsWorkspace from './jobs/JobDetailsWorkspace.jsx';
 
 export const JOB_STAGES = [['target', 'Target'], ['researching', 'Researching'], ['ready', 'Ready to apply'], ['applied', 'Applied'], ['screen', 'Recruiter screen'], ['interviewing', 'Interviewing'], ['final', 'Final round'], ['offer', 'Offer'], ['accepted', 'Accepted'], ['rejected', 'Rejected / withdrawn']];
+const stageIndex = (stage) => JOB_STAGES.findIndex(([value]) => value === stage);
 const PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const PROFILE_LIST_FIELDS = ['targetRoles', 'targetLocations', 'targetIndustries', 'interests', 'mustHaveSkills', 'niceToHaveSkills', 'excludedKeywords'];
 
@@ -189,7 +190,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const clearSource = async () => { const result = await window.desktopShell?.clearJobSource?.(); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage('Job-source credentials cleared from this computer.'); };
   const saveAiKey = async () => { try { const result = await window.desktopShell?.saveOpenRouterApiKey?.(aiKey); setAiStatus(result); setAiKey(''); setAiMessage('OpenRouter key saved securely on this computer.'); } catch (cause) { setAiMessage(cause?.message || 'Could not save the OpenRouter key.'); } };
   const clearAiKey = async () => { const result = await window.desktopShell?.clearOpenRouterApiKey?.(); setAiStatus(result); setAiMessage('Saved OpenRouter key cleared.'); };
-  const dueCount = jobs.filter((job) => job.followUpDate && job.followUpDate <= today && !['accepted', 'rejected'].includes(job.stage)).length;
+  const dueCount = jobs.filter((job) => stageIndex(job.stage) >= stageIndex('applied') && job.followUpDate && job.followUpDate <= today && !['accepted', 'rejected'].includes(job.stage)).length;
 
   useEffect(() => {
     // Rebind after the detail view replaces the board nodes so returning to the pipeline keeps job titles clickable.
