@@ -95,6 +95,11 @@ const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const nonEmpty = (value, fallback = '') => typeof value === 'string' && value.trim() ? value.trim() : fallback;
 const bounded = (value, max = 10000) => String(value ?? '').slice(0, max);
+const normalizeEmailSender = (value) => {
+  const text = String(value || '').trim().toLowerCase();
+  const address = text.match(/<([^>]+)>/)?.[1] || text;
+  return address.replace(/^mailto:/, '').trim();
+};
 
 function parseCsv(textValue) {
   const rows = [];
@@ -424,10 +429,12 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const emailId = input.id || stableEmailId(input.provider || 'gmail', input.externalId);
     const matchedTerms = Array.isArray(input.matchedTerms) ? input.matchedTerms.slice(0, 30) : [];
     const matchedPipelineSignals = Array.isArray(input.matchedPipelineSignals) ? input.matchedPipelineSignals.slice(0, 30) : [];
-    sqlite.prepare(`INSERT INTO email_messages (id, provider, external_id, thread_id, subject, sender, recipients, received_at, body, is_job_related, classification_score, matched_terms_json, matched_pipeline_signals_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider, external_id) DO UPDATE SET thread_id=excluded.thread_id, subject=excluded.subject, sender=excluded.sender, recipients=excluded.recipients, received_at=excluded.received_at, body=excluded.body, is_job_related=excluded.is_job_related, classification_score=excluded.classification_score, matched_terms_json=excluded.matched_terms_json, matched_pipeline_signals_json=excluded.matched_pipeline_signals_json, updated_at=excluded.updated_at`).run(
-      emailId, String(input.provider || 'gmail').slice(0, 40), String(input.externalId || '').slice(0, 300), String(input.threadId || '').slice(0, 300), String(input.subject || '').slice(0, 1000), String(input.from || '').slice(0, 500), String(input.to || '').slice(0, 1000), input.receivedAt || null, String(input.body || '').slice(0, 200000), input.isJobRelated ? 1 : 0, Number(input.score) || 0, JSON.stringify(matchedTerms), JSON.stringify(matchedPipelineSignals), input.createdAt || timestamp, timestamp,
+    const sender = String(input.from || '').slice(0, 500);
+    const senderKey = normalizeEmailSender(sender);
+    sqlite.prepare(`INSERT INTO email_messages (id, provider, external_id, thread_id, subject, sender, sender_key, recipients, received_at, body, is_job_related, classification_score, matched_terms_json, matched_pipeline_signals_json, created_at, updated_at, seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      ON CONFLICT(provider, external_id) DO UPDATE SET thread_id=excluded.thread_id, subject=excluded.subject, sender=excluded.sender, sender_key=excluded.sender_key, recipients=excluded.recipients, received_at=excluded.received_at, body=excluded.body, is_job_related=excluded.is_job_related, classification_score=excluded.classification_score, matched_terms_json=excluded.matched_terms_json, matched_pipeline_signals_json=excluded.matched_pipeline_signals_json, updated_at=excluded.updated_at`).run(
+      emailId, String(input.provider || 'gmail').slice(0, 40), String(input.externalId || '').slice(0, 300), String(input.threadId || '').slice(0, 300), String(input.subject || '').slice(0, 1000), sender, senderKey, String(input.to || '').slice(0, 1000), input.receivedAt || null, String(input.body || '').slice(0, 200000), input.isJobRelated ? 1 : 0, Number(input.score) || 0, JSON.stringify(matchedTerms), JSON.stringify(matchedPipelineSignals), input.createdAt || timestamp, timestamp,
     );
     sqlite.prepare('DELETE FROM email_chunks WHERE email_id = ?').run(emailId);
     const insertChunk = sqlite.prepare('INSERT INTO email_chunks (id, email_id, chunk_index, content, created_at) VALUES (?, ?, ?, ?, ?)');
@@ -441,12 +448,15 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
   function emailToRenderer(row) {
     const linkedJobIds = sqlite.prepare('SELECT job_id FROM email_job_links WHERE email_id = ? ORDER BY created_at ASC').all(row.id).map((entry) => entry.job_id);
-    return { ...row, isJobRelated: Boolean(row.is_job_related), isExcluded: Boolean(row.user_excluded), matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]'), linkedJobIds };
+    const senderKey = row.sender_key || normalizeEmailSender(row.sender);
+    const isBlocked = Boolean(sqlite.prepare('SELECT 1 FROM email_sender_blocks WHERE sender_key = ?').get(senderKey));
+    return { ...row, senderKey, isJobRelated: Boolean(row.is_job_related), isExcluded: Boolean(row.user_excluded), isSeen: Boolean(row.seen_at), isBlocked, matchedTerms: JSON.parse(row.matched_terms_json || '[]'), matchedPipelineSignals: JSON.parse(row.matched_pipeline_signals_json || '[]'), linkedJobIds };
   }
-  function listEmails({ jobOnly = true, includeExcluded = false, limit = 50 } = {}) {
+  function listEmails({ jobOnly = true, includeExcluded = false, includeBlocked = false, limit = 50 } = {}) {
     const conditions = [];
     if (jobOnly) conditions.push('is_job_related = 1');
     if (!includeExcluded) conditions.push('user_excluded = 0');
+    if (!includeBlocked) conditions.push('NOT EXISTS (SELECT 1 FROM email_sender_blocks b WHERE b.sender_key = email_messages.sender_key)');
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = sqlite.prepare(`SELECT * FROM email_messages ${where} ORDER BY received_at DESC, updated_at DESC LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)));
     return rows.map(emailToRenderer);
@@ -456,6 +466,28 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     if (!sqlite.prepare('SELECT 1 FROM email_messages WHERE id = ?').get(emailId)) throw new Error('Email not found.');
     sqlite.prepare('UPDATE email_messages SET user_excluded = ?, updated_at = ? WHERE id = ?').run(input.excluded ? 1 : 0, now(), emailId);
     return getEmail(emailId);
+  }
+  function markEmailSeen(input = {}) {
+    const emailId = bounded(input.emailId, 160);
+    if (!sqlite.prepare('SELECT 1 FROM email_messages WHERE id = ?').get(emailId)) throw new Error('Email not found.');
+    const timestamp = now();
+    sqlite.prepare('UPDATE email_messages SET seen_at = COALESCE(seen_at, ?), updated_at = ? WHERE id = ?').run(timestamp, timestamp, emailId);
+    return getEmail(emailId);
+  }
+  function blockEmailSender(input = {}) {
+    const sender = bounded(input.sender || input.senderKey, 500).trim();
+    const senderKey = normalizeEmailSender(input.senderKey || sender);
+    if (!senderKey) throw new Error('A sender is required.');
+    sqlite.prepare('INSERT INTO email_sender_blocks (sender_key, sender, created_at) VALUES (?, ?, ?) ON CONFLICT(sender_key) DO UPDATE SET sender = excluded.sender').run(senderKey, sender || senderKey, now());
+    return { senderKey, sender: sender || senderKey };
+  }
+  function unblockEmailSender(input = {}) {
+    const senderKey = normalizeEmailSender(input.senderKey || input.sender);
+    sqlite.prepare('DELETE FROM email_sender_blocks WHERE sender_key = ?').run(senderKey);
+    return { senderKey };
+  }
+  function listBlockedEmailSenders() {
+    return sqlite.prepare('SELECT sender_key AS senderKey, sender, created_at AS createdAt FROM email_sender_blocks ORDER BY sender COLLATE NOCASE ASC').all();
   }
   function linkEmailToJob(input = {}) {
     const emailId = bounded(input.emailId, 160); const jobId = bounded(input.jobId, 160);
@@ -490,7 +522,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
-    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded },
+    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },

@@ -100,4 +100,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,linkJobEmail: (input) => ipcRenderer.invoke('email:link', input)
   ,unlinkJobEmail: (input) => ipcRenderer.invoke('email:unlink', input)
   ,setJobEmailExcluded: (input) => ipcRenderer.invoke('email:exclude', input)
+  ,markJobEmailSeen: (input) => ipcRenderer.invoke('email:seen', input)
+  ,blockJobEmailSender: (input) => ipcRenderer.invoke('email:sender:block', input)
+  ,unblockJobEmailSender: (input) => ipcRenderer.invoke('email:sender:unblock', input)
+  ,listBlockedJobEmailSenders: () => ipcRenderer.invoke('email:sender:blocked:list')
 });

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView, { EmailMonitorPanel } from './JobsView.jsx';
+import GroupedEmailMonitorPanel from './jobs/EmailMonitorPanel.jsx';
 import WorkspaceSettingsModal from './WorkspaceSettingsModal.jsx';
 import './styles.css';
 import './theme.css';
@@ -636,7 +637,7 @@ function App() {
         {view === 'jobs' ? null : (
 <section className="stats"><div className="stat"><label>LEARNING &amp; DEVELOPMENT</label><b>{completed}/{officialLessons.length} items</b><div className="bar"><i style={{ width: `${progress}%` }} /></div><small>Preserved certification curriculum and local study progress</small></div><div className="stat"><label>READINESS EVIDENCE</label><b>{readinessOverall === null ? 'Not assessed' : `${readinessOverall}% evidence`}</b><small>App-derived estimate  /  not an official passing prediction</small></div><div className="stat"><label>COMMAND CENTER STATUS</label><b>Foundation active</b><small>{roadmapStatus.state === 'ready' ? `${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length} local project${roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length === 1 ? '' : 's'}  /  ${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length} task${roadmap.tasks.filter((task) => !task.archived).length + roadmap.subtasks.filter((task) => !task.archived).length === 1 ? '' : 's'}` : 'Loading local roadmap…'}</small></div></section>
 )}
-        {view === 'jobs' && <>{!jobDetailsOpen && <EmailMonitorPanel jobs={jobs} />}<JobsView jobs={jobs} onRefresh={refreshJobs} onDetailChange={setJobDetailsOpen} /></>}
+        {view === 'jobs' && <>{!jobDetailsOpen && <GroupedEmailMonitorPanel jobs={jobs} />}<JobsView jobs={jobs} onRefresh={refreshJobs} onDetailChange={setJobDetailsOpen} /></>}
         {view === 'today' && (roadmapStatus.state === 'loading'
           ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmap…</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'
