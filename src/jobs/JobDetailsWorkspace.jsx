@@ -26,6 +26,11 @@ const roleContextSections = (job) => {
   ];
   return sections.filter(([, value]) => String(value || '').trim());
 };
+const usableFitSummary = (job) => {
+  const candidate = String(job.matchSummary || '').trim();
+  if (candidate && !/(final ai|selection|search query|retrieval)/i.test(candidate)) return candidate;
+  return 'No role-specific AI fit summary was saved for this opportunity. Use the requirements above to compare the role with your resume evidence.';
+};
 
 function ResumeUsedSelector({ applicationId, documents, onSelected }) {
   const [resumeVersions, setResumeVersions] = useState(documents.filter((document) => document.documentType === 'resume')); const [selectedId, setSelectedId] = useState(resumeVersions.find((document) => document.isSelected)?.id || ''); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
@@ -54,7 +59,7 @@ export default function JobDetailsWorkspace({ job, application, documents = [], 
   const interpretEmail = async (email) => { setBusy(true); setInterpretation(null); try { const result = await window.desktopShell.interpretJobEmail({ jobId: job.id, emailId: email.id }); setInterpretation({ ...result, emailId: email.id }); await load(); } catch (cause) { const errorMessage = cause?.message || 'Could not interpret this email.'; setMessage(errorMessage); if (/OPENROUTER_API_KEY is not configured/i.test(errorMessage)) onOpenAiSettings?.(); } finally { setBusy(false); } };
   const applyRecommendation = async () => { if (!interpretation) return; setBusy(true); try { if (interpretation.recommendedStage && interpretation.recommendedStage !== job.stage) await onStageChange(interpretation.recommendedStage); if (interpretation.followUpTitle) await createFollowUp({ title: interpretation.followUpTitle, dueDate: interpretation.followUpDate || '' }, interpretation.emailId); else { setInterpretation(null); await load(); } } finally { setBusy(false); } };
   const visibleDocuments = application?.status === 'submitted' ? documents.filter((document) => document.isSelected) : documents;
-  const listingSections = roleContextSections(job); const fitSummary = job.matchSummary || job.notes;
+  const listingSections = roleContextSections(job); const fitSummary = usableFitSummary(job);
 
   return <section className={`jobs-view job-details-workspace${browserOpen ? ' assistant-open' : ''}${stageIndex(job.stage) < stageIndex('applied') ? ' pre-applied' : ''}`} style={browserOpen ? { '--application-browser-width': `${layout.browserWidth}px`, '--application-assistant-width': `${layout.assistantWidth}px` } : undefined}>
     <header className="job-detail-header"><div className="job-detail-heading"><span className="eyebrow">ROLE DETAILS</span><h2>{job.roleTitle}</h2><p>{job.company} <span>·</span> {job.location || 'Location not listed'} <span>·</span> {stageLabel(job.stage)}</p></div><div className="jobs-actions"><button className="secondary" onClick={onEdit}>Edit role</button>{job.url && <a className="secondary" href={job.url} target="_blank" rel="noreferrer">Open listing <ExternalLink size={14} /></a>}{stageIndex(job.stage) < stageIndex('applied') && <button className="primary" disabled={!assistantReady || job.stage !== 'ready'} title={!assistantReady ? 'Select an approved resume and cover letter first.' : job.stage !== 'ready' ? 'The application assistant is available before Applied.' : undefined} onClick={onOpenApplicationAssistant}>Open application assistant</button>}</div></header>
