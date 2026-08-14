@@ -1,5 +1,5 @@
 const electron = require('electron');
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog } = electron;
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog, shell } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
@@ -822,6 +822,13 @@ function registerDatabaseIpc() {
   ipcMain.handle('email:source:save', (_event, input) => saveEmailCredentials(input));
   ipcMain.handle('email:source:clear', () => clearEmailCredentials());
   ipcMain.handle('email:sync', () => syncJobEmails());
+  ipcMain.handle('email:open-gmail', (event, input = {}) => {
+    assertTrustedRenderer(event);
+    const messageId = String(input.threadId || input.externalId || '').trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(messageId)) throw new Error('This email does not have a valid Gmail message link.');
+    const url = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(messageId)}`;
+    return shell.openExternal(url).then(() => ({ ok: true, url }));
+  });
   ipcMain.handle('email:list', (_event, options) => coachDatabase.email.list(options || {}));
   ipcMain.handle('email:search', (_event, query, limit) => coachDatabase.email.search(String(query || '').slice(0, 500), Math.min(20, Number(limit) || 10)));
   ipcMain.handle('email:link', (_event, input) => coachDatabase.email.link(input || {}));
