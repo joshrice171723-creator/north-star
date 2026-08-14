@@ -72,7 +72,14 @@ function showGoogleVoiceNotification(title, body) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('google-voice:notification', { title, body, receivedAt: new Date().toISOString() });
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title, body, silent: false });
-  notification.on('click', () => openGoogleVoiceWindow());
+  notification.on('click', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+      setGoogleVoiceViewVisible(true);
+      googleVoiceView?.webContents.focus();
+    } else openGoogleVoiceWindow();
+  });
   notification.show();
 }
 async function inspectGoogleVoice() {
