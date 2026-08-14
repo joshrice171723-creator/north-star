@@ -1,5 +1,5 @@
 const electron = require('electron');
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, clipboard, safeStorage, dialog, shell } = electron;
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
@@ -39,6 +39,116 @@ let academyLayout = null;
 let coachDatabase;
 let applicationBrowser;
 let emailMonitorTimer;
+let googleVoiceWindow;
+let googleVoiceMonitorTimer;
+let googleVoiceTray;
+let isQuitting = false;
+let googleVoiceSnapshot = null;
+const googleVoiceUrl = 'https://voice.google.com/';
+const googleVoicePartition = 'persist:google-voice-native';
+const googleVoiceSettingsPath = () => path.join(app.getPath('userData'), 'google-voice-settings.json');
+function readGoogleVoiceSettings() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(googleVoiceSettingsPath(), 'utf8'));
+    return { enabled: Boolean(parsed?.enabled) };
+  } catch { return { enabled: false }; }
+}
+function writeGoogleVoiceSettings(settings) {
+  const destination = googleVoiceSettingsPath();
+  const temporary = `${destination}.tmp-${process.pid}`;
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(temporary, JSON.stringify({ enabled: Boolean(settings.enabled) }), 'utf8');
+  fs.renameSync(temporary, destination);
+}
+function googleVoiceStatus() {
+  const settings = readGoogleVoiceSettings();
+  return { enabled: settings.enabled, running: Boolean(googleVoiceWindow && !googleVoiceWindow.isDestroyed()), signedIn: Boolean(googleVoiceWindow?.webContents?.getURL()?.includes('voice.google.com')) };
+}
+function showGoogleVoiceNotification(title, body) {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({ title, body, silent: false });
+  notification.on('click', () => openGoogleVoiceWindow());
+  notification.show();
+}
+async function inspectGoogleVoice() {
+  if (!googleVoiceWindow?.webContents || googleVoiceWindow.webContents.isDestroyed()) return;
+  try {
+    const snapshot = await googleVoiceWindow.webContents.executeJavaScript(`(() => {
+      const text = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const labels = Array.from(document.querySelectorAll('[aria-label], [title]'))
+        .map((node) => text(node.getAttribute('aria-label') || node.getAttribute('title')))
+        .filter((value) => value && /call|message|text|voicemail|ring|incoming|missed|new/i.test(value))
+        .slice(0, 80);
+      return { title: text(document.title), labels, body: text(document.body?.innerText).slice(0, 12000) };
+    })()`, true);
+    const normalized = JSON.stringify(snapshot);
+    if (!googleVoiceSnapshot) { googleVoiceSnapshot = normalized; return; }
+    if (normalized === googleVoiceSnapshot) return;
+    googleVoiceSnapshot = normalized;
+    const signal = [...(snapshot.labels || []), snapshot.title, snapshot.body].join(' ');
+    if (/new message|incoming call|missed call|new voicemail|ringing|unread/i.test(signal)) {
+      const label = (snapshot.labels || []).find((value) => /new message|incoming|missed call|voicemail|ringing|unread/i.test(value));
+      showGoogleVoiceNotification('Google Voice', label || 'You have a new Google Voice call or message.');
+    }
+  } catch { /* Google Voice can briefly replace its document during navigation. */ }
+}
+function stopGoogleVoiceMonitor() {
+  if (googleVoiceMonitorTimer) clearInterval(googleVoiceMonitorTimer);
+  googleVoiceMonitorTimer = null;
+  googleVoiceSnapshot = null;
+  if (googleVoiceWindow && !googleVoiceWindow.isDestroyed()) googleVoiceWindow.destroy();
+  googleVoiceWindow = null;
+}
+function openGoogleVoiceWindow() {
+  if (!googleVoiceWindow || googleVoiceWindow.isDestroyed()) {
+    googleVoiceWindow = new BrowserWindow({
+      show: false,
+      width: 960,
+      height: 720,
+      title: 'Google Voice background monitor',
+      webPreferences: { partition: googleVoicePartition, contextIsolation: true, nodeIntegration: false, sandbox: true }
+    });
+    googleVoiceWindow.webContents.setWindowOpenHandler(({ url }) => {
+      try { if (new URL(url).origin === 'https://voice.google.com' || new URL(url).origin === 'https://accounts.google.com') googleVoiceWindow.loadURL(url); } catch {}
+      return { action: 'deny' };
+    });
+    googleVoiceWindow.webContents.on('did-finish-load', () => { googleVoiceSnapshot = null; inspectGoogleVoice(); });
+    googleVoiceWindow.on('close', (event) => {
+      if (!isQuitting && readGoogleVoiceSettings().enabled) { event.preventDefault(); googleVoiceWindow.hide(); }
+    });
+    googleVoiceWindow.on('closed', () => { googleVoiceWindow = null; });
+    googleVoiceWindow.loadURL(googleVoiceUrl);
+  }
+  googleVoiceWindow.show();
+  googleVoiceWindow.focus();
+  return googleVoiceStatus();
+}
+function startGoogleVoiceMonitor() {
+  if (!readGoogleVoiceSettings().enabled) return googleVoiceStatus();
+  openGoogleVoiceWindow();
+  googleVoiceWindow.hide();
+  if (!googleVoiceMonitorTimer) googleVoiceMonitorTimer = setInterval(() => inspectGoogleVoice(), 5000);
+  return googleVoiceStatus();
+}
+function setGoogleVoiceEnabled(enabled) {
+  writeGoogleVoiceSettings({ enabled: Boolean(enabled) });
+  if (enabled) return startGoogleVoiceMonitor();
+  stopGoogleVoiceMonitor();
+  return googleVoiceStatus();
+}
+function createGoogleVoiceTray() {
+  if (googleVoiceTray) return;
+  const icon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
+  googleVoiceTray = new Tray(icon);
+  googleVoiceTray.setToolTip('Claude Architect · Google Voice monitor');
+  googleVoiceTray.on('double-click', () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); } });
+  googleVoiceTray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Claude Architect', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: 'Open Google Voice', click: () => openGoogleVoiceWindow() },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
+  ]));
+}
 const jobSourceCredentialsPath = () => path.join(app.getPath('userData'), 'job-source-credentials.json');
 function readStoredJobSourceCredentials() { try { const parsed = JSON.parse(fs.readFileSync(jobSourceCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
 function readJobSourceCredentials() {
@@ -742,6 +852,11 @@ function createWindow() {
 
   academyView.webContents.loadURL(academyUrl);
   mainWindow.on('resize', academyBounds);
+  mainWindow.on('close', (event) => {
+    // Keep the Electron process alive when Voice monitoring is enabled. The
+    // hidden Google Voice session cannot receive events after the app quits.
+    if (!isQuitting && readGoogleVoiceSettings().enabled) { event.preventDefault(); mainWindow.hide(); }
+  });
   mainWindow.on('closed', () => { applicationBrowser?.close(); applicationBrowser = null; mainWindow = null; academyView = null; });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -996,6 +1111,10 @@ function registerDatabaseIpc() {
     return { ok: true, ...found, sourceStats, warning, jobs: found.jobs, matches: ranked, searchPlan: plan, apiCalls, rankingBatches, counts: { ...found.counts, finalSelected: rankingDiagnostics?.returnedCount || 0, displayed: ranked.length }, ranking: { status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics } };
   });
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
+  ipcMain.handle('google-voice:get', () => googleVoiceStatus());
+  ipcMain.handle('google-voice:set-enabled', (_event, enabled) => setGoogleVoiceEnabled(Boolean(enabled)));
+  ipcMain.handle('google-voice:open', () => openGoogleVoiceWindow());
+  ipcMain.handle('google-voice:test-notification', () => { showGoogleVoiceNotification('Google Voice monitor', 'Desktop notifications are working.'); return { ok: true }; });
 }
 
 app.whenReady().then(() => {
@@ -1027,9 +1146,11 @@ app.whenReady().then(() => {
   });
   session.fromPartition('persist:anthropic-academy-native').setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   createWindow();
+  createGoogleVoiceTray();
+  if (readGoogleVoiceSettings().enabled) startGoogleVoiceMonitor();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { if (emailMonitorTimer) clearInterval(emailMonitorTimer); try { coachDatabase?.close(); } catch { /* best effort */ } });
+app.on('will-quit', () => { isQuitting = true; if (emailMonitorTimer) clearInterval(emailMonitorTimer); stopGoogleVoiceMonitor(); try { googleVoiceTray?.destroy(); } catch {} try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };
