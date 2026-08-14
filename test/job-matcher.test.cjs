@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { rankJobs, MAX_FINAL_CANDIDATES, MAX_SELECTED, FINAL_SELECTION_MAX_TOKENS, jobForRanking, selectionIds } = require('../electron/job-matcher.cjs');
+const { rankJobs, MAX_FINAL_CANDIDATES, MAX_SELECTED, FINAL_SELECTION_MAX_TOKENS, jobForRanking, selectionMessages, selectionIds } = require('../electron/job-matcher.cjs');
 
 const jobs = (count, providerKey = 'usajobs') => Array.from({ length: count }, (_, index) => ({ externalId: `${providerKey}-${index + 1}`, providerKey, title: 'Machine Learning Engineer', description: 'machine learning python', retrievalScore: 90 - index, diagnostics: { secret: 'do not send' } }));
 const response = (ids, fitScore = 80) => ({ ok: true, message: { content: JSON.stringify({ selections: ids.map((externalId) => ({ externalId, fitScore, fitTier: 'good match', strengths: ['Relevant experience'], gaps: [], unknowns: [], reasoning: 'Evidence-based fit.' })) }) } });
@@ -33,6 +33,22 @@ test('final selector displays only the high-quality IDs returned by AI', async (
   assert.equal(selected.length, 2);
   assert.equal(selected.filter((entry) => entry.scoreType === 'deterministic-backfill').length, 0);
   assert.equal(selected.rankingDiagnostics.returnedCount, 2);
+});
+
+test('final selector orders results by the highest balanced AI scores', async () => {
+  const selected = await rankJobs({ jobs: jobs(3), profile: {}, resume: {}, openRouter: async () => ({ ok: true, message: { content: JSON.stringify({ selections: [
+    { externalId: 'usajobs-1', requirementsMatchScore: 95, candidateMatchScore: 70, fitTier: 'good match', strengths: ['Relevant experience'], gaps: ['Location'], reasoning: 'Evidence-based fit.' },
+    { externalId: 'usajobs-2', requirementsMatchScore: 85, candidateMatchScore: 85, fitTier: 'strong match', strengths: ['Relevant experience'], gaps: ['Salary'], reasoning: 'Evidence-based fit.' },
+    { externalId: 'usajobs-3', requirementsMatchScore: 91, candidateMatchScore: 80, fitTier: 'good match', strengths: ['Relevant experience'], gaps: ['Seniority'], reasoning: 'Evidence-based fit.' },
+  ] }) } }) });
+  assert.deepEqual(selected.map((entry) => entry.externalId), ['usajobs-2', 'usajobs-3', 'usajobs-1']);
+});
+
+test('final selector prompt requires the top 20 balanced scores', () => {
+  const prompt = selectionMessages({}, {}, jobs(40))[0].content;
+  assert.match(prompt, /Evaluate every supplied candidate/);
+  assert.match(prompt, /rank first by the lower of requirementsMatchScore and candidateMatchScore/);
+  assert.match(prompt, /Return at most 20/);
 });
 
 test('final selector rejects invented, duplicate, malformed, and over-limit IDs', () => {
