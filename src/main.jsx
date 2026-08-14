@@ -286,7 +286,12 @@ const THEMES = {
   'sunset-citadel': { name: 'Sunset Citadel', description: 'High-contrast solar yellow and flame orange over a midnight sky.', colors: ['#05072e', '#ff3b00', '#ffe600'] },
   'arcane-cobalt': { name: 'Arcane Cobalt', description: 'Vivid cobalt and ultraviolet with a hot-magenta signal.', colors: ['#030b3d', '#004cff', '#ff16a8'] },
   dragonfire: { name: 'Dragonfire', description: 'Crimson, electric blue, and blazing orange at full intensity.', colors: ['#10002d', '#e40046', '#ff5a00'] },
-  'solar-sorcerer': { name: 'Solar Sorcerer', description: 'The image in full: cosmic blue, violet clouds, solar gold, and laser fire.', colors: ['#04062c', '#174bd9', '#ffd900', '#ff4b12', '#c344d7'] }
+  'solar-sorcerer': { name: 'Solar Sorcerer', description: 'The image in full: cosmic blue, violet clouds, solar gold, and laser fire.', colors: ['#04062c', '#174bd9', '#ffd900', '#ff4b12', '#c344d7'] },
+  'neon-bazaar': { name: 'Neon Bazaar', description: 'Fuchsia city lights, citrus gold, and turquoise afterglow.', colors: ['#170d1d', '#ff3d81', '#ffe34d', '#00d8c7', '#ff8a00'] },
+  'jungle-gem': { name: 'Jungle Gem', description: 'Emerald and jade with amethyst shadows and coral heat.', colors: ['#081b1a', '#00d6a0', '#ffe05a', '#8b4dff', '#ff5b3d'] },
+  'lava-lagoon': { name: 'Lava Lagoon', description: 'Volcanic crimson, cyan water, violet mist, and amber light.', colors: ['#1c0d1b', '#ff4b29', '#ffd34d', '#00d3e6', '#cc3eff'] },
+  'prism-night': { name: 'Prism Night', description: 'Ultraviolet, aqua, pink, and yellow in a dark prism field.', colors: ['#100d21', '#a35cff', '#fff05a', '#00e0c8', '#ff5f9e'] },
+  'toxic-candy': { name: 'Toxic Candy', description: 'Acid green, electric cyan, pink, and gold against black teal.', colors: ['#0e1718', '#73ff38', '#ffdc39', '#ff32a3', '#28d7ff'] }
 };
 
 function ThemeModal({ theme, onChange, onClose }) {
