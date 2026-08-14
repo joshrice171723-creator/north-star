@@ -129,11 +129,11 @@ test('searchJobs keeps relevant jobs and exposes lane counts', async () => {
     const result = await searchJobs({ profile: { targetRoles: ['AI engineer'], targetLocations: ['Dallas, TX'], remotePreference: 'any' }, credentials: { usajobsEmail: 'test@example.com', usajobsApiKey: 'test-key' }, plan: aiSearchPlan(brief) });
     assert.ok(result.jobs.length >= 1);
     assert.ok(result.diagnostics.attempts.length >= 1);
-    assert.equal(result.counts.retrieved, 5);
+    assert.equal(result.counts.retrieved, 1);
     assert.equal(result.counts.unique, 1);
     assert.equal(result.counts.filtered, 0);
     assert.equal(result.counts.aiSubmitted, 1);
-    assert.equal(result.sourceStats[0].fetched, 5);
+    assert.equal(result.sourceStats[0].fetched, 1);
     assert.equal(result.sourceStats[0].filtered, 0);
     assert.equal(result.sourceStats[0].aiSubmitted, 1);
   } finally { global.fetch = originalFetch; }
@@ -303,5 +303,29 @@ test('Arbeitnow advances feed pages through the same five-request quality budget
     assert.deepEqual(pages, [1, 2, 3, 4, 5]);
     assert.equal(arbeitnow.requestsAttempted, MAX_PROVIDER_REQUESTS);
     assert.equal(arbeitnow.qualifiedCount, 0);
+  } finally { global.fetch = originalFetch; }
+});
+
+test('Arbeitnow evaluates matching candidates from later feed pages instead of truncating before qualification', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const value = String(url);
+    if (value.includes('arbeitnow')) {
+      const page = Number(new URL(value).searchParams.get('page'));
+      const ordinary = Array.from({ length: 99 }, (_, index) => ({ slug: `ordinary-${page}-${index}`, title: 'Account Manager', description: 'Own renewals.', company_name: 'Example', location: 'Remote', url: `https://example.test/${page}/${index}` }));
+      const special = { slug: 'later-match', title: 'Machine Learning Engineer', description: 'Build Python machine learning systems.', company_name: 'Example', location: 'Remote', url: 'https://example.test/later-match' };
+      return { ok: true, status: 200, json: async () => ({ data: page === 4 ? [...ordinary, special] : [...ordinary, { ...ordinary[0], slug: `ordinary-${page}-99` }] }) };
+    }
+    if (value.includes('remotive.com')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) };
+    throw new Error(`Unexpected request: ${value}`);
+  };
+  try {
+    const brief = { jobFamilies: ['Machine Learning Engineer'], mustHaveSkills: ['python'], remotePreference: 'any', locations: [] };
+    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'remote', search: 'machine learning' }], arbeitnow: [{ laneId: 'feed', searchTerms: ['machine learning engineer'] }] } } });
+    const arbeitnow = result.sourceStats.find((entry) => entry.key === 'arbeitnow');
+    assert.equal(arbeitnow.retrievedRaw, 500);
+    assert.equal(arbeitnow.uniqueCount, 1);
+    assert.equal(arbeitnow.qualifiedCount, 1);
+    assert.ok(result.jobs.some((job) => job.externalId === 'later-match'));
   } finally { global.fetch = originalFetch; }
 });
