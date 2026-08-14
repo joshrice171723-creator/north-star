@@ -216,7 +216,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       top.insertAdjacentElement('afterend', badge);
     });
     return () => document.querySelectorAll('.job-card-notifications').forEach((node) => node.remove());
-  }, [jobs]);
+  }, [jobs, detailJob]);
 
   useEffect(() => {
     // Rebind after the detail view replaces the board nodes so returning to the pipeline keeps job titles clickable.
