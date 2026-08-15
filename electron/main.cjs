@@ -879,7 +879,7 @@ function showAcademyContextMenu(params) {
 
 async function captureGoogleVoiceConversation(job, selectionText = '') {
   if (!googleVoiceView?.webContents || googleVoiceView.webContents.isDestroyed()) throw new Error('Google Voice is not open.');
-  const page = await googleVoiceView.webContents.executeJavaScript(`((selectedText) => {
+  const rendered = await googleVoiceView.webContents.executeJavaScript(`(() => {
     const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
     const selected = clean(selectedText) || clean(window.getSelection?.()?.toString());
     const body = clean(document.body?.innerText) || clean(document.body?.textContent) || clean(document.documentElement?.innerText);
