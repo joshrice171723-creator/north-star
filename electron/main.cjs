@@ -890,7 +890,9 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
     const bodyText = body && (body.innerText || body.textContent) || '';
     const lines = bodyText.split(/\r?\n/).map(clean).filter(Boolean);
     const contactLineIndex = lines.findIndex((line) => /(?:mobile|home|work)\b.*(?:\+?\d[\d\s().-]{6,}\d)/i.test(line));
-    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine: contactLineIndex >= 0 ? lines[contactLineIndex] : '', contactHeaderName: contactLineIndex > 0 ? lines[contactLineIndex - 1] : '' };
+    const contactPhoneLine = contactLineIndex >= 0 ? lines[contactLineIndex] : '';
+    const nameBeforePhone = (contactPhoneLine.match(/^(.*?)\b(?:mobile|home|work)\b/i) || [])[1] || '';
+    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine, contactHeaderName: clean(nameBeforePhone).replace(/^messages with\s+/i, '').trim() || (contactLineIndex > 0 ? lines[contactLineIndex - 1] : '') };
     // Use the whole rendered conversation for the assignment key even when a
     // user selected only the message text before choosing “Assign”.
   })()`, true);
