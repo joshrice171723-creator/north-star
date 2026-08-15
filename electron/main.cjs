@@ -575,7 +575,7 @@ const documentGenerationInFlight = new Set();
 async function generateApplicationDocument(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
   if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
-  if (input.guidance !== undefined && (typeof input.guidance !== 'string' || input.guidance.length > 2000)) throw new Error('Document guidance must be 2,000 characters or fewer.');
+  if (input.guidance !== undefined && (typeof input.guidance !== 'string' || input.guidance.length > 10000)) throw new Error('Document guidance must be 10,000 characters or fewer.');
   const key = `${applicationId}:${documentType}`; if (documentGenerationInFlight.has(key)) throw new Error('Document generation is already in progress.'); documentGenerationInFlight.add(key);
   try {
     const application = coachDatabase.applications.get(applicationId); if (!application) throw new Error('Application not found.');
