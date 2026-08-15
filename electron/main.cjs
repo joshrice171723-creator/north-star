@@ -877,25 +877,28 @@ function showAcademyContextMenu(params) {
   menu.popup({ window: mainWindow });
 }
 
-async function captureGoogleVoiceConversation(job) {
+async function captureGoogleVoiceConversation(job, selectionText = '') {
   if (!googleVoiceView?.webContents || googleVoiceView.webContents.isDestroyed()) throw new Error('Google Voice is not open.');
-  const page = await googleVoiceView.webContents.executeJavaScript(`(() => {
+  const page = await googleVoiceView.webContents.executeJavaScript(`((selectedText) => {
     const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-    const selected = clean(window.getSelection?.()?.toString());
-    const body = clean(document.body?.innerText);
-    const content = (selected.length >= 20 ? selected : body).slice(0, 20000);
+    const selected = clean(selectedText) || clean(window.getSelection?.()?.toString());
+    const body = clean(document.body?.innerText) || clean(document.body?.textContent) || clean(document.documentElement?.innerText);
+    const labels = [...document.querySelectorAll('[aria-label], [data-phone-number]')].map((node) => clean(node.getAttribute('aria-label') || node.getAttribute('data-phone-number'))).filter(Boolean).join(' ');
+    const title = clean(document.title) || 'Google Voice conversation';
+    const searchableText = [selected, body, labels, title, location.href].filter(Boolean).join(' ');
+    const content = (selected.length >= 20 ? selected : body || labels || title).slice(0, 20000);
     // Use the whole rendered conversation for the assignment key even when a
     // user selected only the message text before choosing “Assign”.
-    const phoneNumber = (body.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
-    return { sourceUrl: location.href, title: clean(document.title) || 'Google Voice conversation', content, phoneNumber };
-  })()`, true);
+    const phoneNumber = (searchableText.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []).find((value) => value.replace(/\D/g, '').length >= 7) || '';
+    return { sourceUrl: location.href, title, content, phoneNumber };
+  })(${JSON.stringify(selectionText)})`, true);
   return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, page);
 }
 
 function showGoogleVoiceContextMenu(params) {
   const jobs = coachDatabase?.jobs?.list?.() || [];
   const assignmentItems = jobs.length
-    ? jobs.slice(0, 50).map((job, index) => ({ label: `#${index + 1} · ${job.roleTitle || job.title || 'Untitled role'} · ${job.company || 'Unknown company'}`, click: () => captureGoogleVoiceConversation(job).catch((error) => showGoogleVoiceNotification('Google Voice', error.message || 'Could not assign the conversation.')) }))
+    ? jobs.slice(0, 50).map((job, index) => ({ label: `#${index + 1} · ${job.roleTitle || job.title || 'Untitled role'} · ${job.company || 'Unknown company'}`, click: () => captureGoogleVoiceConversation(job, params.selectionText).catch((error) => showGoogleVoiceNotification('Google Voice', error.message || 'Could not assign the conversation.')) }))
     : [{ label: 'No active jobs available', enabled: false }];
   const menu = Menu.buildFromTemplate([
     { label: 'Assign conversation to job', submenu: assignmentItems },
