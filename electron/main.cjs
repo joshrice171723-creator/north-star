@@ -887,7 +887,10 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
     const labels = Array.from(document.querySelectorAll('[aria-label], [data-phone-number]')).map((node) => clean(node.getAttribute('aria-label') || node.getAttribute('data-phone-number'))).filter(Boolean).join(' ');
     const phoneLinks = Array.from(document.querySelectorAll('a[href^="tel:"], [href*="tel:"]')).map((node) => clean(node.getAttribute('href') || node.textContent)).filter(Boolean).join(' ');
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]')).map((node) => clean(node.textContent)).filter(Boolean);
-    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(body && (body.innerText || body.textContent)), labels, phoneLinks, headings };
+    const bodyText = body && (body.innerText || body.textContent) || '';
+    const lines = bodyText.split(/\r?\n/).map(clean).filter(Boolean);
+    const contactLineIndex = lines.findIndex((line) => /(?:mobile|home|work)\b.*(?:\+?\d[\d\s().-]{6,}\d)/i.test(line));
+    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine: contactLineIndex >= 0 ? lines[contactLineIndex] : '', contactHeaderName: contactLineIndex > 0 ? lines[contactLineIndex - 1] : '' };
     // Use the whole rendered conversation for the assignment key even when a
     // user selected only the message text before choosing “Assign”.
   })()`, true);
@@ -899,8 +902,9 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
   const callAsNumber = extractPhoneNumber((rendered.body.match(/Call as[^\d+]*(?:\+?\d[\d\s().-]{6,}\d)/i) || [])[1] || '');
   const contactText = [selected, rendered.phoneLinks, rendered.labels, rendered.body, title, rendered.sourceUrl].filter(Boolean).join(' ');
   const phoneCandidates = contactText.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || [];
-  const phoneNumber = phoneCandidates.map((candidate) => extractPhoneNumber(candidate)).find((candidate) => candidate && candidate !== callAsNumber) || '';
-  const contactName = rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|messages?|calls?)$/i.test(heading)) || '';
+  const headerPhone = extractPhoneNumber(rendered.contactPhoneLine || rendered.phoneLinks || '');
+  const phoneNumber = [headerPhone, ...phoneCandidates.map((candidate) => extractPhoneNumber(candidate))].find((candidate) => candidate && candidate !== callAsNumber) || '';
+  const contactName = rendered.contactHeaderName || rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|messages?|calls?)$/i.test(heading)) || '';
   return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title, content, phoneNumber, contactName });
 }
 
