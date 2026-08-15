@@ -24,6 +24,16 @@ test('planner fallback creates related queries instead of using one raw target p
   assert.equal(plan.source, 'deterministic-fallback');
 });
 
+test('planner fallback prioritizes explicit AI implementation target titles', () => {
+  const plan = fallbackPlan({
+    targetRoles: ['AI Automation Engineer', 'AI Implementation Engineer', 'Forward Deployed Engineer', 'Solutions Engineer (AI)', 'Technical Consultant (AI)'],
+    interests: ['workflow automation'],
+  });
+  const targetTitles = ['AI Automation Engineer', 'AI Implementation Engineer', 'Forward Deployed Engineer', 'Solutions Engineer (AI)', 'Technical Consultant (AI)'];
+  assert.deepEqual(plan.jobFamilies.slice(0, 5), targetTitles);
+  assert.deepEqual(plan.providerQueries.usajobs.slice(0, 5).map((lane) => lane.positionTitle), targetTitles);
+});
+
 test('provider filter removes excluded aviation listings before ranking', () => {
   const plan = { jobTypes: ['AI Solutions Architect'], excludedTerms: ['aviation', 'aircraft'] };
   const jobs = [

@@ -3,6 +3,8 @@ const MAX_TERMS = 30;
 const MAX_TEXT = 160;
 const AI_EXCLUSIONS = ['aviation', 'aircraft', 'airworthiness', 'avionics', 'air carrier', 'pilot', 'flight', 'airway', 'dispatcher', 'federal aviation administration', 'faa'];
 const AI_TITLE_FAMILIES = ['IT Specialist', 'Computer Scientist', 'Computer Engineer', 'Data Scientist', 'Information Technology Specialist', 'Operations Research Analyst', 'Program Analyst'];
+// Keep explicit user titles ahead of broad federal equivalents. This prevents
+// the deterministic path from silently dropping the roles the candidate named.
 const AI_KEYWORDS = ['machine learning', 'artificial intelligence', 'generative AI', 'natural language processing'];
 const SENIORITY = new Set(['entry', 'mid', 'senior', 'lead', 'director']);
 const REMOTE = new Set(['any', 'remote', 'hybrid', 'onsite']);
@@ -41,7 +43,7 @@ function fallbackSearchBrief(profile = {}, resume = {}) {
   const text = `${roles.join(' ')} ${industries.join(' ')} ${interests.join(' ')}`.toLowerCase();
   const isAi = /(^|\W)(ai|a\.i\.|artificial intelligence|machine learning|generative ai|automation)(\W|$)/i.test(text);
   const jobFamilies = isAi
-    ? unique([...AI_TITLE_FAMILIES.slice(0, 5), ...roles], 8)
+    ? unique([...roles, ...AI_TITLE_FAMILIES], 8)
     : unique([...roles, ...industries, ...interests].filter((entry) => entry.length > 2), 8);
   const families = jobFamilies.length ? jobFamilies : ['Technology Specialist'];
   const exclusions = unique([...cleanList(profile.excludedKeywords), ...(isAi ? AI_EXCLUSIONS : [])]);
@@ -79,7 +81,9 @@ function fallbackSearchBrief(profile = {}, resume = {}) {
 function buildProviderLanes(brief = {}) {
   const families = cleanList(brief.jobFamilies || brief.jobTypes, 6);
   const isAi = /ai|machine learning|artificial intelligence|automation/i.test(`${brief.targetIntent} ${families.join(' ')}`);
-  const titleFamilies = isAi ? unique([...families.filter((value) => AI_TITLE_FAMILIES.some((title) => value.toLowerCase().includes(title.toLowerCase()))), ...AI_TITLE_FAMILIES], 6) : (families.length ? families : ['Technology Specialist']);
+  const titleFamilies = isAi
+    ? unique([...families, ...AI_TITLE_FAMILIES], 6)
+    : (families.length ? families : ['Technology Specialist']);
   const lanes = titleFamilies.map((title, index) => ({ laneId: `title-primary-${index + 1}`, type: 'position-title', positionTitle: title, filters: {}, reason: 'Primary federal job-title search', expectedSignal: 'title' }));
   if (isAi) AI_KEYWORDS.slice(0, 2).forEach((keyword, index) => lanes.push({ laneId: `keyword-support-${index + 1}`, type: 'keyword-support', keyword, positionTitle: titleFamilies[index] || null, filters: {}, reason: 'Supporting technical-skill search', expectedSignal: 'skill' }));
   return lanes.slice(0, MAX_LANES);
