@@ -888,11 +888,11 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
     const phoneLinks = Array.from(document.querySelectorAll('a[href^="tel:"], [href*="tel:"]')).map((node) => clean(node.getAttribute('href') || node.textContent)).filter(Boolean).join(' ');
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]')).map((node) => clean(node.textContent)).filter(Boolean);
     const bodyText = body && (body.innerText || body.textContent) || '';
-    const lines = bodyText.split(/\r?\n/).map(clean).filter(Boolean);
-    const contactLineIndex = lines.findIndex((line) => /(?:mobile|home|work)\b.*(?:\+?\d[\d\s().-]{6,}\d)/i.test(line));
+    const lines = bodyText.split(/\\r?\\n/).map(clean).filter(Boolean);
+    const contactLineIndex = lines.findIndex((line) => /(?:mobile|home|work).*[0-9].*[0-9]/i.test(line));
     const contactPhoneLine = contactLineIndex >= 0 ? lines[contactLineIndex] : '';
-    const nameBeforePhone = (contactPhoneLine.match(/^(.*?)\b(?:mobile|home|work)\b/i) || [])[1] || '';
-    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine, contactHeaderName: clean(nameBeforePhone).replace(/^messages with\s+/i, '').trim() || (contactLineIndex > 0 ? lines[contactLineIndex - 1] : '') };
+    const nameBeforePhone = (contactPhoneLine.match(/^(.*?)(?:mobile|home|work)/i) || [])[1] || '';
+    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine, contactHeaderName: clean(nameBeforePhone).replace(/^messages with\\s+/i, '').trim() || (contactLineIndex > 0 ? lines[contactLineIndex - 1] : '') };
     // Use the whole rendered conversation for the assignment key even when a
     // user selected only the message text before choosing “Assign”.
   })()`, true);
