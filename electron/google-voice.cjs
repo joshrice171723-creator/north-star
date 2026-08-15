@@ -11,7 +11,7 @@ function normalizePhoneNumber(value) {
 }
 
 function extractPhoneNumber(value) {
-  const candidates = String(value || '').match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || [];
+  const candidates = String(value || '').match(/(?:\+?[\d(][\d\s().-]{6,}\d)/g) || [];
   return candidates.map(normalizePhoneNumber).find(Boolean) || '';
 }
 
