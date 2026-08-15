@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createDatabase } = require('../electron/database.cjs');
-const { normalizePhoneNumber, extractPhoneNumber } = require('../electron/google-voice.cjs');
+const { normalizePhoneNumber, extractPhoneNumber, extractGoogleVoiceItemNumber } = require('../electron/google-voice.cjs');
 
 const create = () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aicc-google-voice-'));
@@ -14,7 +14,9 @@ const create = () => {
 test('phone numbers normalize across Google Voice display formats', () => {
   assert.equal(normalizePhoneNumber('+1 (214) 555-0199'), '2145550199');
   assert.equal(normalizePhoneNumber('214-555-0199'), '2145550199');
+  assert.equal(extractPhoneNumber('(580) 204-4040'), '5802044040');
   assert.equal(extractPhoneNumber('New message from +1 (214) 555-0199'), '2145550199');
+  assert.equal(extractGoogleVoiceItemNumber('https://voice.google.com/u/0/messages?itemId=t.%2B15802044040'), '5802044040');
 });
 
 test('assigned Google Voice activity updates one job and deduplicates polling', () => {
