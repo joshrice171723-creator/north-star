@@ -883,17 +883,23 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
     const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
     const body = document.body;
     const labels = Array.from(document.querySelectorAll('[aria-label], [data-phone-number]')).map((node) => clean(node.getAttribute('aria-label') || node.getAttribute('data-phone-number'))).filter(Boolean).join(' ');
-    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(body && (body.innerText || body.textContent)), labels };
+    const phoneLinks = Array.from(document.querySelectorAll('a[href^="tel:"], [href*="tel:"]')).map((node) => clean(node.getAttribute('href') || node.textContent)).filter(Boolean).join(' ');
+    const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]')).map((node) => clean(node.textContent)).filter(Boolean);
+    return { sourceUrl: window.location.href, title: clean(document.title), body: clean(body && (body.innerText || body.textContent)), labels, phoneLinks, headings };
     // Use the whole rendered conversation for the assignment key even when a
     // user selected only the message text before choosing “Assign”.
   })()`, true);
   const selected = String(selectionText || '').trim();
   const title = rendered.title || 'Google Voice conversation';
   const content = (selected.length >= 20 ? selected : rendered.body || rendered.labels || title).slice(0, 20000);
-  // Keep parsing in the Electron process so browser-page compatibility cannot
-  // prevent an assignment from reaching the validated database operation.
-  const phoneNumber = extractPhoneNumber([selected, rendered.body, rendered.labels, title, rendered.sourceUrl].filter(Boolean).join(' '));
-  return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title, content, phoneNumber });
+  // Google Voice also renders the account's own number beside “Call as”. Do
+  // not let that page chrome become the contact number assigned to every job.
+  const callAsNumber = extractPhoneNumber((rendered.body.match(/Call as[^\d+]*(?:\+?\d[\d\s().-]{6,}\d)/i) || [])[1] || '');
+  const contactText = [selected, rendered.phoneLinks, rendered.labels, rendered.body, title, rendered.sourceUrl].filter(Boolean).join(' ');
+  const phoneCandidates = contactText.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || [];
+  const phoneNumber = phoneCandidates.map((candidate) => extractPhoneNumber(candidate)).find((candidate) => candidate && candidate !== callAsNumber) || '';
+  const contactName = rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|messages?|calls?)$/i.test(heading)) || '';
+  return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title, content, phoneNumber, contactName });
 }
 
 function showGoogleVoiceContextMenu(params) {
