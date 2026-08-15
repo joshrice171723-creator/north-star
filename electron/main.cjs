@@ -13,7 +13,7 @@ const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
-const { extractPhoneNumber } = require('./google-voice.cjs');
+const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
@@ -904,9 +904,13 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
   const callAsNumber = extractPhoneNumber((rendered.body.match(/Call as[^\d+]*(?:\+?\d[\d\s().-]{6,}\d)/i) || [])[1] || '');
   const contactText = [selected, rendered.phoneLinks, rendered.labels, rendered.body, title, rendered.sourceUrl].filter(Boolean).join(' ');
   const phoneCandidates = contactText.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || [];
+  const itemPhone = extractGoogleVoiceItemNumber(rendered.sourceUrl);
   const headerPhone = extractPhoneNumber(rendered.contactPhoneLine || rendered.phoneLinks || '');
-  const phoneNumber = [headerPhone, ...phoneCandidates.map((candidate) => extractPhoneNumber(candidate))].find((candidate) => candidate && candidate !== callAsNumber) || '';
-  const contactName = rendered.contactHeaderName || rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|messages?|calls?)$/i.test(heading)) || '';
+  const phoneNumber = [itemPhone, headerPhone, ...phoneCandidates.map((candidate) => extractPhoneNumber(candidate))].find((candidate) => candidate && candidate !== callAsNumber) || '';
+  const bodyContactName = ((rendered.body.match(/Messages with\s+(.+?)\s+(?:mobile|home|work)\b/i) || [])[1] || '').trim();
+  const nameWords = bodyContactName.split(/\s+/).filter(Boolean);
+  const repeatedName = nameWords.length % 2 === 0 && nameWords.slice(0, nameWords.length / 2).join(' ') === nameWords.slice(nameWords.length / 2).join(' ');
+  const contactName = (repeatedName ? nameWords.slice(0, nameWords.length / 2).join(' ') : bodyContactName) || rendered.contactHeaderName || rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|latest messages|messages?|calls?)$/i.test(heading)) || '';
   return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title, content, phoneNumber, contactName });
 }
 
