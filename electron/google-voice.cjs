@@ -15,6 +15,17 @@ function extractPhoneNumber(value) {
   return candidates.map(normalizePhoneNumber).find(Boolean) || '';
 }
 
+function extractGoogleVoiceItemNumber(sourceUrl) {
+  try {
+    // Google Voice message URLs identify the open conversation as
+    // itemId=t.+1XXXXXXXXXX, which is more reliable than scanning message text.
+    const itemId = new URL(String(sourceUrl || '')).searchParams.get('itemId') || '';
+    return extractPhoneNumber(itemId);
+  } catch {
+    return '';
+  }
+}
+
 function activityFingerprint(input = {}) {
   return crypto.createHash('sha256').update(JSON.stringify({
     phoneNumber: normalizePhoneNumber(input.phoneNumber),
@@ -25,4 +36,4 @@ function activityFingerprint(input = {}) {
   })).digest('hex');
 }
 
-module.exports = { normalizePhoneNumber, extractPhoneNumber, activityFingerprint };
+module.exports = { normalizePhoneNumber, extractPhoneNumber, extractGoogleVoiceItemNumber, activityFingerprint };
