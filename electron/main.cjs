@@ -889,7 +889,7 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]')).map((node) => clean(node.textContent)).filter(Boolean);
     const bodyText = body && (body.innerText || body.textContent) || '';
     const lines = bodyText.split(/\\r?\\n/).map(clean).filter(Boolean);
-    const contactLineIndex = lines.findIndex((line) => /(?:mobile|home|work).*[0-9].*[0-9]/i.test(line));
+    const contactLineIndex = lines.findIndex((line) => /(?:^|[^a-z])(?:mobile|home|work)(?:[^a-z]|$).*[0-9].*[0-9]/i.test(line));
     const contactPhoneLine = contactLineIndex >= 0 ? lines[contactLineIndex] : '';
     const nameBeforePhone = (contactPhoneLine.match(/^(.*?)(?:mobile|home|work)/i) || [])[1] || '';
     return { sourceUrl: window.location.href, title: clean(document.title), body: clean(bodyText), labels, phoneLinks, headings, contactPhoneLine, contactHeaderName: clean(nameBeforePhone).replace(/^messages with\\s+/i, '').trim() || (contactLineIndex > 0 ? lines[contactLineIndex - 1] : '') };
@@ -907,7 +907,7 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
   const itemPhone = extractGoogleVoiceItemNumber(rendered.sourceUrl);
   const headerPhone = extractPhoneNumber(rendered.contactPhoneLine || rendered.phoneLinks || '');
   const phoneNumber = [itemPhone, headerPhone, ...phoneCandidates.map((candidate) => extractPhoneNumber(candidate))].find((candidate) => candidate && candidate !== callAsNumber) || '';
-  const bodyContactName = ((rendered.body.match(/Messages with\s+(.+?)\s+(?:mobile|home|work)\b/i) || [])[1] || '').trim();
+  const bodyContactName = ((rendered.body.match(/Messages with\s+(.{1,120}?)(?:mobile|home|work)/i) || [])[1] || '').trim();
   const nameWords = bodyContactName.split(/\s+/).filter(Boolean);
   const repeatedName = nameWords.length % 2 === 0 && nameWords.slice(0, nameWords.length / 2).join(' ') === nameWords.slice(nameWords.length / 2).join(' ');
   const contactName = (repeatedName ? nameWords.slice(0, nameWords.length / 2).join(' ') : bodyContactName) || rendered.contactHeaderName || rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|latest messages|messages?|calls?)$/i.test(heading)) || '';
