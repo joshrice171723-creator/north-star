@@ -916,7 +916,8 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
   const nameWords = bodyContactName.split(/\s+/).filter(Boolean);
   const repeatedName = nameWords.length % 2 === 0 && nameWords.slice(0, nameWords.length / 2).join(' ') === nameWords.slice(nameWords.length / 2).join(' ');
   const contactName = (repeatedName ? nameWords.slice(0, nameWords.length / 2).join(' ') : bodyContactName) || rendered.contactHeaderName || rendered.headings?.find((heading) => !/^(google voice|search google voice|call as|latest messages|messages?|calls?)$/i.test(heading)) || '';
-  return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title, content, phoneNumber, contactName });
+  const activityTitle = contactName ? `${contactName} conversation` : 'Google Voice conversation';
+  return coachDatabase.jobs.activity.assignGoogleVoiceConversation(job.id, { sourceUrl: rendered.sourceUrl, title: activityTitle, content, phoneNumber, contactName });
 }
 
 function showGoogleVoiceContextMenu(params) {
