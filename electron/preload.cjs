@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,clearApplicationBrowserSession: () => ipcRenderer.invoke('jobs:browser:clear-session')
   // React event handlers may call this function with a SyntheticEvent; never send that event across IPC.
   ,searchJobs: (input) => ipcRenderer.invoke('jobs:search', input?.nativeEvent ? {} : input)
+  ,searchGreenhouseBoard: (boardUrl) => ipcRenderer.invoke('jobs:search-greenhouse', boardUrl)
   ,onJobSearchProgress: (listener) => { const handler = (_event, progress) => listener(progress); ipcRenderer.on('jobs:search:progress', handler); return () => ipcRenderer.removeListener('jobs:search:progress', handler); }
   ,getJobSource: () => ipcRenderer.invoke('jobs:source:get')
   ,saveJobSource: (input) => ipcRenderer.invoke('jobs:source:save', input)

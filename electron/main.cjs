@@ -7,6 +7,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { createDatabase } = require('./database.cjs');
 const { searchJobs, testUsaJobs } = require('./job-search.cjs');
+const { searchGreenhouseBoard } = require('./greenhouse-provider.cjs');
+const { calculateRetrievalScore } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
@@ -981,6 +983,46 @@ function createWindow() {
   mainWindow.loadURL(devUrl || pathToFileURL(path.join(__dirname, '../dist/index.html')).toString());
 }
 
+async function searchGreenhouseBoardForCandidate(boardUrl) {
+  const profile = coachDatabase.profiles.getCurrent() || {};
+  const resume = coachDatabase.resumes.getMaster() || {};
+  const found = await searchGreenhouseBoard(boardUrl);
+  if (found.error && !found.jobs.length) return { ok: false, ...found };
+  const brief = {
+    jobFamilies: [...(Array.isArray(profile.targetRoles) ? profile.targetRoles : []), ...(Array.isArray(profile.interests) ? profile.interests : [])],
+    mustHaveSkills: Array.isArray(profile.mustHaveSkills) ? profile.mustHaveSkills : [],
+    niceToHaveSkills: Array.isArray(profile.niceToHaveSkills) ? profile.niceToHaveSkills : [],
+    exclusions: Array.isArray(profile.excludedKeywords) ? profile.excludedKeywords : [],
+    locations: Array.isArray(profile.targetLocations) ? profile.targetLocations.map((raw) => ({ raw })) : [],
+    remotePreference: profile.remotePreference || 'any',
+  };
+  const jobs = found.jobs.map((job) => ({ ...job, retrievalScore: calculateRetrievalScore(job, brief), scoreType: 'deterministic' }))
+    .filter((job) => job.retrievalScore >= 0)
+    .sort((left, right) => right.retrievalScore - left.retrievalScore || String(left.title).localeCompare(String(right.title)))
+    .slice(0, 80);
+  if (!jobs.length) return { ok: true, ...found, jobs: [], matches: [], counts: { retrieved: found.jobs.length, unique: found.jobs.length, displayed: 0 }, ranking: { status: 'unavailable', error: null } };
+  let matches;
+  let rankingError = null;
+  let rankingStatus = 'available';
+  try {
+    matches = await rankJobs({ jobs, profile, resume, openRouter: (messages, options) => openRouterChat(messages, { ...options, auditPurpose: 'greenhouse_final_selection' }) });
+    rankingStatus = matches.length ? (matches.rankingDiagnostics?.underSelected ? 'under_selected' : 'available') : 'unavailable';
+  } catch (cause) {
+    rankingError = { code: cause?.code || 'ai_ranking_failed', message: cause?.message || 'AI job ranking failed.' };
+    rankingStatus = 'unavailable';
+  }
+  if (!matches?.length) matches = jobs.map((job) => ({ job, externalId: job.externalId, fitScore: Math.round(job.retrievalScore), requirementsMatchScore: null, candidateMatchScore: null, scoreType: 'deterministic', fitTier: 'deterministic candidate', strengths: [], gaps: ['AI selection was unavailable; review the listing manually.'], unknowns: [], reasoning: 'Retrieved from the Greenhouse board and ranked by profile relevance.' }));
+  return {
+    ok: true,
+    ...found,
+    jobs,
+    matches,
+    counts: { retrieved: found.jobs.length, unique: found.jobs.length, deterministicTop: jobs.length, aiSubmitted: jobs.length, displayed: matches.length },
+    sourceStats: [{ key: 'greenhouse', provider: `Greenhouse · ${found.boardToken}`, status: 'success', retrievedRaw: found.jobs.length, uniqueCount: found.jobs.length, deterministicTopCount: jobs.length, aiSubmitted: jobs.length, finalSelectedCount: matches.length, displayedCount: matches.length, errors: 0, failures: [] }],
+    ranking: { status: rankingStatus, error: rankingError },
+  };
+}
+
 function registerDatabaseIpc() {
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
   ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
@@ -1059,6 +1101,7 @@ function registerDatabaseIpc() {
     return { ok: results.every((result) => result.ok), results };
   });
   ipcMain.handle('jobs:search:attempts', (_event, runId) => coachDatabase.listJobSearchAttempts(String(runId || '').slice(0, 160)));
+  ipcMain.handle('jobs:search-greenhouse', async (event, boardUrl) => { assertTrustedRenderer(event); return searchGreenhouseBoardForCandidate(boardUrl); });
   ipcMain.handle('jobs:search:api-calls', (_event, runId) => coachDatabase.listApiCalls(String(runId || '').slice(0, 160)));
   ipcMain.handle('jobs:search:ranking-batches', (_event, runId) => coachDatabase.listJobSearchRankingBatches(String(runId || '').slice(0, 160)));
   ipcMain.handle('email:source:get', () => { const { accessToken, refreshToken, ...safe } = readEmailCredentials(); return safe; });
