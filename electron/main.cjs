@@ -898,7 +898,12 @@ async function captureGoogleVoiceConversation(job, selectionText = '') {
   })()`, true);
   const selected = String(selectionText || '').trim();
   const title = rendered.title || 'Google Voice conversation';
-  const content = (selected.length >= 20 ? selected : rendered.body || rendered.labels || title).slice(0, 20000);
+  const bodyMarker = rendered.body.indexOf('Messages with');
+  const latestMessagesMarker = bodyMarker >= 0 ? rendered.body.indexOf('Latest messages', bodyMarker) : -1;
+  const conversationBody = latestMessagesMarker >= 0 ? rendered.body.slice(latestMessagesMarker + 'Latest messages'.length).trim() : rendered.body;
+  // The page body contains the inbox, settings, call controls, and the open
+  // conversation in one stream; retain only the open conversation segment.
+  const content = (selected.length >= 20 ? selected : conversationBody || rendered.labels || title).slice(0, 20000);
   // Google Voice also renders the account's own number beside “Call as”. Do
   // not let that page chrome become the contact number assigned to every job.
   const callAsNumber = extractPhoneNumber((rendered.body.match(/Call as[^\d+]*(?:\+?\d[\d\s().-]{6,}\d)/i) || [])[1] || '');
