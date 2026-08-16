@@ -24,6 +24,20 @@ function buildContextMenuTemplate({ params = {}, webContents, clipboard }) {
   ];
 }
 
+function handleMouseNavigationInput(input, webContents) {
+  if (input?.type !== 'mouseDown') return false;
+  const button = input.mouseButton || input.button;
+  if (button === 'back') {
+    if (webContents.canGoBack()) webContents.goBack();
+    return true;
+  }
+  if (button === 'forward') {
+    if (webContents.canGoForward()) webContents.goForward();
+    return true;
+  }
+  return false;
+}
+
 function createApplicationBrowser({ electron, getApplicationUrl, attachView = () => {}, detachView = () => {}, onSnapshot = () => {}, onState = () => {} }) {
   const { WebContentsView, session, Menu, clipboard } = electron; let view = null; let active = null;
   const hide = () => { if (view) view.setBounds({ x: 0, y: 0, width: 1, height: 1 }); };
@@ -48,6 +62,11 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     // Remote pages never receive a second window. A user-triggered target=_blank link
     // is routed through the same isolated view and the normal host checkpoint instead.
     view.webContents.setWindowOpenHandler(({ url }) => { requestNavigation(url, true).catch(() => {}); return { action: 'deny' }; });
+    view.webContents.on('before-input-event', (event, input) => {
+      // Electron reports mouse side buttons as navigation input. Consume them
+      // here so the isolated employer page owns history instead of the shell.
+      if (handleMouseNavigationInput(input, view.webContents)) event.preventDefault();
+    });
     view.webContents.on('context-menu', (_event, params) => {
       Menu.buildFromTemplate(buildContextMenuTemplate({ params, webContents: view.webContents, clipboard })).popup();
     });
@@ -74,4 +93,4 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
   return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
-module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, createApplicationBrowser };
+module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };

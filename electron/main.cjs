@@ -6,18 +6,19 @@ const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { createDatabase } = require('./database.cjs');
-const { searchJobs, testUsaJobs } = require('./job-search.cjs');
+const { searchJobs, testUsaJobs, excludePipelineJobs } = require('./job-search.cjs');
 const { searchGreenhouseBoard } = require('./greenhouse-provider.cjs');
 const { calculateRetrievalScore } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
+const { publicConfig } = require('./job-search-integrations.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
 const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
-const { createApplicationBrowser } = require('./jobs/application-browser.cjs');
+const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
 
@@ -978,7 +979,19 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('context-menu', (_event, params) => showRendererContextMenu(params));
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    // The app-level mouse Back button follows the visible Job search breadcrumb.
+    // Embedded browser views handle their own history before this shell handler.
+    if (input?.type === 'mouseDown' && (input.mouseButton || input.button) === 'back') {
+      event.preventDefault();
+      mainWindow.webContents.send('app:navigate-back');
+    }
+  });
   academyView.webContents.on('context-menu', (_event, params) => showAcademyContextMenu(params));
+  academyView.webContents.on('before-input-event', (event, input) => {
+    // Keep the mouse side-button behavior consistent with the Academy context menu.
+    if (handleMouseNavigationInput(input, academyView.webContents)) event.preventDefault();
+  });
   const keepNavigationInApp = (event, url) => {
     if (!isAllowedAcademyUrl(url)) event.preventDefault();
   };
@@ -1098,9 +1111,11 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:documents:validate', (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); return doc.validation; });
   ipcMain.handle('jobs:documents:approve', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.approve(validateCoachId(id, 'document id')); });
   ipcMain.handle('jobs:documents:select', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.select(validateCoachId(id, 'document id')); });
+  ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: `${doc.documentType}-v${doc.version}.txt`, filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: `${doc.documentType}-v${doc.version}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
   ipcMain.handle('jobs:ai:get', () => openRouterStatus());
+  ipcMain.handle('jobs:integrations:get', () => publicConfig());
   ipcMain.handle('jobs:ai:save', (_event, input) => saveOpenRouterApiKey(input?.apiKey));
   ipcMain.handle('jobs:ai:clear', () => clearOpenRouterApiKey());
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
@@ -1223,6 +1238,14 @@ function registerDatabaseIpc() {
         diagnostics: { runId, attempts },
         apiCalls,
       };
+    }
+    const savedPipelineJobs = coachDatabase.jobs.list();
+    const rankableJobs = excludePipelineJobs(found.jobs, savedPipelineJobs);
+    const skippedPipelineJobs = found.jobs.length - rankableJobs.length;
+    if (skippedPipelineJobs) {
+      // Provider IDs are stable across searches, so this prevents repeat results
+      // from consuming AI ranking tokens after they are already in the pipeline.
+      found = { ...found, jobs: rankableJobs, counts: { ...found.counts, alreadyInPipeline: skippedPipelineJobs, aiSubmitted: rankableJobs.length }, warning: [found.warning, `${skippedPipelineJobs} job${skippedPipelineJobs === 1 ? '' : 's'} already in your pipeline skipped before AI ranking.`].filter(Boolean).join(' ') };
     }
     const attempts = coachDatabase.listJobSearchAttempts(runId);
     // Keep backend-only callbacks out of Electron IPC payloads. A function in

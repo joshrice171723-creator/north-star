@@ -382,6 +382,10 @@ function App() {
     return () => unsubscribe?.();
   }, []);
   useEffect(() => {
+    const unsubscribe = window.desktopShell?.onAppBack?.(() => window.dispatchEvent(new CustomEvent('job-search-navigation')));
+    return () => unsubscribe?.();
+  }, []);
+  useEffect(() => {
     const crumb = document.querySelector('.crumb');
     const jobSearch = crumb?.querySelector('b');
     if (!crumb || !jobSearch || view !== 'jobs') return undefined;

@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('desktopShell', {
   openRouterChat: (messages, options) => ipcRenderer.invoke('openrouter:chat', messages, options),
   setAcademyVisible: (visible) => ipcRenderer.invoke('academy:set-visible', Boolean(visible)),
   setAcademyBounds: (bounds) => ipcRenderer.invoke('academy:set-bounds', bounds),
+  onAppBack: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on('app:navigate-back', handler);
+    return () => ipcRenderer.removeListener('app:navigate-back', handler);
+  },
   coachBootstrap: () => ipcRenderer.invoke('coach:bootstrap'),
   syncRoadmap: (payload) => ipcRenderer.invoke('coach:sync-roadmap', payload),
   importRoadmap: (payload) => ipcRenderer.invoke('coach:import-roadmap', payload),
@@ -45,6 +50,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,createJobCalendarEvent: (input) => ipcRenderer.invoke('jobs:detail:calendar:create', input)
   ,interpretJobEmail: (input) => ipcRenderer.invoke('jobs:detail:email:interpret', input)
   ,getOpenRouterStatus: () => ipcRenderer.invoke('jobs:ai:get')
+  ,getJobSearchIntegrations: () => ipcRenderer.invoke('jobs:integrations:get')
   ,saveOpenRouterApiKey: (apiKey) => ipcRenderer.invoke('jobs:ai:save', { apiKey })
   ,clearOpenRouterApiKey: () => ipcRenderer.invoke('jobs:ai:clear')
   ,getJobProfile: () => ipcRenderer.invoke('jobs:profile:get')
@@ -69,6 +75,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,validateApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:validate', id)
   ,approveApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:approve', id)
   ,selectApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:select', id)
+  ,selectMasterApplicationResume: (applicationId) => ipcRenderer.invoke('jobs:documents:select-master-resume', { applicationId })
   ,exportApplicationDocumentText: (id) => ipcRenderer.invoke('jobs:documents:export-text', id)
   ,exportApplicationDocumentPdf: (id) => ipcRenderer.invoke('jobs:documents:export-pdf', id)
   ,openApplicationBrowser: (input) => ipcRenderer.invoke('jobs:browser:open', input)

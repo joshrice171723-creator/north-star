@@ -10,6 +10,7 @@ const {
   plannedProviderLanes,
   MAX_PROVIDER_REQUESTS,
   filterJobs,
+  excludePipelineJobs,
   selectTopJobsPerProvider,
 } = require('../electron/job-search.cjs');
 const { fallbackSearchBrief, buildProviderLanes } = require('../electron/job-search-planner.cjs');
@@ -304,6 +305,17 @@ test('Arbeitnow advances feed pages through the same five-request quality budget
     assert.equal(arbeitnow.requestsAttempted, MAX_PROVIDER_REQUESTS);
     assert.equal(arbeitnow.qualifiedCount, 0);
   } finally { global.fetch = originalFetch; }
+});
+
+test('pipeline jobs are excluded from later AI-ranking candidates by provider and listing ID', () => {
+  const candidates = [
+    { providerKey: 'dice', externalId: 'already-saved', title: 'Saved role' },
+    { providerKey: 'dice', externalId: 'new-role', title: 'New role' },
+    { providerKey: 'adzuna', externalId: 'already-saved', title: 'Same ID from another provider' },
+  ];
+  const saved = [{ apiSource: 'dice', externalId: 'already-saved' }];
+
+  assert.deepEqual(excludePipelineJobs(candidates, saved).map((job) => job.title), ['New role', 'Same ID from another provider']);
 });
 
 test('remote candidates remain eligible and receive a modest retrieval preference', () => {
