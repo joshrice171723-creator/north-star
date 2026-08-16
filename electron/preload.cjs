@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,createJobCalendarEvent: (input) => ipcRenderer.invoke('jobs:detail:calendar:create', input)
   ,interpretJobEmail: (input) => ipcRenderer.invoke('jobs:detail:email:interpret', input)
   ,getOpenRouterStatus: () => ipcRenderer.invoke('jobs:ai:get')
+  ,getJobSearchIntegrations: () => ipcRenderer.invoke('jobs:integrations:get')
   ,saveOpenRouterApiKey: (apiKey) => ipcRenderer.invoke('jobs:ai:save', { apiKey })
   ,clearOpenRouterApiKey: () => ipcRenderer.invoke('jobs:ai:clear')
   ,getJobProfile: () => ipcRenderer.invoke('jobs:profile:get')
