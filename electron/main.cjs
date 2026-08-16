@@ -19,7 +19,7 @@ const { normalizeGmailMessage } = require('./job-email-rag.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
-const { buildEvidenceCatalog, buildGenerationMessages, normalizeGeneratedContent, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
+const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose } = require('./api-audit.cjs');
 installApiAuditFetch();
@@ -584,10 +584,38 @@ async function generateApplicationDocument(input = {}) {
     const application = coachDatabase.applications.get(applicationId); if (!application) throw new Error('Application not found.');
     const job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.');
     const profile = coachDatabase.profiles.getCurrent() || {}; const resume = coachDatabase.resumes.getMaster() || {}; const evidenceCatalog = buildEvidenceCatalog(profile, resume);
-    const response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog, guidance: input.guidance || '' }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
+    const claimLedger = documentType === 'cover_letter' ? buildCoverLetterClaimLedger(job, evidenceCatalog) : null;
+    let response = await openRouterChat(buildGenerationMessages({ documentType, job, profile, resume, evidenceCatalog, guidance: input.guidance || '', claimLedger }), { auditPurpose: 'application_document_generation', response_format: { type: 'json_object' }, max_tokens: 5000 });
     if (!response?.ok) throw new Error(response?.error || 'OpenRouter document generation failed.');
-    let content; try { content = normalizeGeneratedContent(documentType, JSON.parse(response.message?.content || '')); } catch { throw new Error('OpenRouter returned malformed document JSON.'); }
-    const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job); const status = validation.errors.length ? 'needs_review' : 'draft';
+    let content; try { content = normalizeGeneratedContent(documentType, JSON.parse(response.message?.content || '')); if (documentType === 'cover_letter') content = cleanCoverLetterPresentation(content, profile); } catch { throw new Error('OpenRouter returned malformed document JSON.'); }
+    if (documentType === 'cover_letter') {
+      const reviewResponse = await openRouterChat([
+        { role: 'system', content: 'Review this generated cover letter against its requirements. Return JSON only: {"issues":["..."],"revisionRequired":true|false}. Require revision for visible evidence labels/citations/brackets, a non-empty subject/title, fewer or more than four paragraphs, generic or repetitive résumé-style prose, a long tool list, unsupported claims, or a weak closing. Be concise and specific.' },
+        { role: 'user', content: JSON.stringify({ draft: content, company: job.company, roleTitle: job.roleTitle, claimLedger }) }
+      ], { auditPurpose: 'application_document_review', response_format: { type: 'json_object' }, max_tokens: 900 });
+      let review = { issues: ['Polish the letter for directness, specificity, and clean presentation.'], revisionRequired: true };
+      if (reviewResponse?.ok) { try { const parsed = JSON.parse(reviewResponse.message?.content || '{}'); review = { issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 12).map((issue) => String(issue).slice(0, 800)) : review.issues, revisionRequired: true }; } catch {} }
+      const revisionResponse = await openRouterChat(buildCoverLetterRevisionMessages({ job, profile, evidenceCatalog, claimLedger, draft: content, review }), { auditPurpose: 'application_document_revision', response_format: { type: 'json_object' }, max_tokens: 5000 });
+      if (revisionResponse?.ok) {
+        try {
+          let revised = cleanCoverLetterPresentation(normalizeGeneratedContent(documentType, JSON.parse(revisionResponse.message?.content || '')), profile);
+          let revisionValidation = validateGeneratedDocument(documentType, revised, evidenceCatalog, job, claimLedger);
+          // A second repair is bounded to one attempt and runs only when the
+          // reviewer’s intended style constraints remain visibly unmet.
+          if (!revisionValidation.valid) {
+            const repairReview = { issues: [...review.issues, ...revisionValidation.errors.map((error) => error.message)].slice(0, 16), revisionRequired: true };
+            const repairResponse = await openRouterChat(buildCoverLetterRevisionMessages({ job, profile, evidenceCatalog, claimLedger, draft: revised, review: repairReview }), { auditPurpose: 'application_document_style_repair', response_format: { type: 'json_object' }, max_tokens: 5000 });
+            if (repairResponse?.ok) {
+              const repaired = cleanCoverLetterPresentation(normalizeGeneratedContent(documentType, JSON.parse(repairResponse.message?.content || '')), profile);
+              const repairValidation = validateGeneratedDocument(documentType, repaired, evidenceCatalog, job, claimLedger);
+              if (repairValidation.valid) { revised = repaired; revisionValidation = repairValidation; response = repairResponse; }
+            }
+          }
+          if (revisionValidation.valid) { content = revised; response = response || revisionResponse; }
+        } catch {}
+      }
+    }
+    const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job, claimLedger); if (claimLedger) validation.claimLedger = claimLedger; const status = validation.errors.length ? 'needs_review' : 'draft';
     return coachDatabase.applications.documents.save({ applicationId, documentType, title: `${job.roleTitle} ${documentType === 'resume' ? 'Resume' : 'Cover Letter'}`, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: resume.version, modelName: response.model, promptVersion: PROMPT_VERSION, status });
   } finally { documentGenerationInFlight.delete(key); }
 }
