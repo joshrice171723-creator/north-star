@@ -10,9 +10,13 @@
     "desktop:prod": "npm run build && electron ."
   },
   "dependencies": {
+    "@langchain/core": "^1.2.8",
+    "@langchain/langgraph": "^1.4.10",
+    "@langchain/openai": "^1.5.8",
     "@vitejs/plugin-react": "latest",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
+    "langsmith": "^0.8.11",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
