@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { PDFParse } = require('pdf-parse');
+const mammoth = require('mammoth');
 const { createDatabase } = require('./database.cjs');
 const { searchJobs, testUsaJobs, excludePipelineJobs } = require('./job-search.cjs');
 const { searchGreenhouseBoard } = require('./greenhouse-provider.cjs');
@@ -1077,8 +1079,37 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:jobs:import-url', (event, url) => { assertTrustedRenderer(event); return importJobFromUrl(url); });
   ipcMain.handle('jobs:profile:get', () => coachDatabase.profiles.getCurrent());
   ipcMain.handle('jobs:profile:save', (_event, input) => coachDatabase.profiles.upsert(input));
+  const masterResumePdfPath = () => path.join(app.getPath('userData'), 'master-resume.pdf');
   ipcMain.handle('jobs:resume:get', () => coachDatabase.resumes.getMaster());
   ipcMain.handle('jobs:resume:save', (_event, input) => coachDatabase.resumes.upsertMaster(input));
+  ipcMain.handle('jobs:resume:upload', async (event) => {
+    assertTrustedRenderer(event);
+    const chosen = await dialog.showOpenDialog(mainWindow, { title: 'Choose master resume', properties: ['openFile'], filters: [{ name: 'Resume documents', extensions: ['pdf', 'docx'] }] });
+    if (chosen.canceled || !chosen.filePaths[0]) return { canceled: true };
+    const sourcePath = chosen.filePaths[0];
+    const buffer = fs.readFileSync(sourcePath);
+    const extension = path.extname(sourcePath).toLowerCase();
+    let rawText = '';
+    if (extension === '.pdf') {
+      if (buffer.subarray(0, 5).toString() !== '%PDF-') throw new Error('That file is not a readable PDF.');
+      const parser = new PDFParse({ data: buffer });
+      const parsed = await parser.getText();
+      await parser.destroy?.();
+      rawText = String(parsed?.text || '').replace(/\u0000/g, '').trim();
+      fs.writeFileSync(masterResumePdfPath(), buffer);
+      try { fs.unlinkSync(path.join(app.getPath('userData'), 'master-resume.docx')); } catch {}
+    } else if (extension === '.docx') {
+      if (buffer.subarray(0, 2).toString() !== 'PK') throw new Error('That file is not a readable DOCX document.');
+      rawText = String((await mammoth.extractRawText({ buffer })).value || '').replace(/\u0000/g, '').trim();
+      fs.writeFileSync(path.join(app.getPath('userData'), 'master-resume.docx'), buffer);
+      try { fs.unlinkSync(masterResumePdfPath()); } catch {}
+    } else {
+      throw new Error('Choose a PDF or DOCX resume.');
+    }
+    if (!rawText) throw new Error('The document did not contain readable text. Choose a text-based PDF or DOCX resume.');
+    return { canceled: false, resume: coachDatabase.resumes.upsertMaster({ rawText, sourceFilename: path.basename(sourcePath), sourceType: extension.slice(1) }) };
+  });
+  ipcMain.handle('jobs:resume:pdf', async (event) => { assertTrustedRenderer(event); const pdfPath = masterResumePdfPath(); if (fs.existsSync(pdfPath)) return `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`; const docxPath = path.join(app.getPath('userData'), 'master-resume.docx'); if (!fs.existsSync(docxPath)) return null; const { value: html } = await mammoth.convertToHtml({ path: docxPath }); const preview = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#172033;line-height:1.5;max-width:760px;margin:32px auto;padding:0 28px}h1,h2,h3{color:#111827}p{margin:0 0 10px}ul,ol{padding-left:24px}</style></head><body>${html}</body></html>`; return `data:text/html;charset=utf-8,${encodeURIComponent(preview)}`; });
   ipcMain.handle('jobs:applications:start', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.createOrResume({ jobId: validateCoachId(input?.jobId, 'job id') }); });
   ipcMain.handle('jobs:applications:get', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.get(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:get-for-job', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.applications.getForJob(validateCoachId(jobId, 'job id')); });

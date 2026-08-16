@@ -18,6 +18,8 @@
     "drizzle-orm": "^0.45.2",
     "langsmith": "^0.8.11",
     "lucide-react": "latest",
+    "mammoth": "^1.12.1",
+    "pdf-parse": "^2.4.5",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest"

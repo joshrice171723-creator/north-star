@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,saveJobProfile: (input) => ipcRenderer.invoke('jobs:profile:save', input)
   ,getMasterResume: () => ipcRenderer.invoke('jobs:resume:get')
   ,saveMasterResume: (input) => ipcRenderer.invoke('jobs:resume:save', input)
+  ,uploadMasterResume: () => ipcRenderer.invoke('jobs:resume:upload')
+  ,getMasterResumePdf: () => ipcRenderer.invoke('jobs:resume:pdf')
   ,startJobApplication: (input) => ipcRenderer.invoke('jobs:applications:start', input)
   ,getJobApplication: (id) => ipcRenderer.invoke('jobs:applications:get', id)
   ,getJobApplicationForJob: (jobId) => ipcRenderer.invoke('jobs:applications:get-for-job', jobId)
