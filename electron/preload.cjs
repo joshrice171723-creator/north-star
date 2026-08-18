@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,exportInterviewReport: (input) => ipcRenderer.invoke('jobs:interview:report', input)
   ,confirmJobApplicationSubmission: (input) => ipcRenderer.invoke('jobs:applications:confirm-submission', input)
   ,generateApplicationDocument: (input) => ipcRenderer.invoke('jobs:documents:generate', input)
+  ,uploadApplicationDocument: (input) => ipcRenderer.invoke('jobs:documents:upload', input)
   ,listApplicationDocuments: (input) => ipcRenderer.invoke('jobs:documents:list', input)
   ,resetApplicationDocuments: (applicationId) => ipcRenderer.invoke('jobs:documents:reset', { applicationId })
   ,getApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:get', id)
