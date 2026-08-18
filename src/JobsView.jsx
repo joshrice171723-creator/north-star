@@ -380,7 +380,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
         followUpDate: job.followUpDate || null,
         appliedAt: job.appliedAt || null,
       };
-      await window.desktopShell?.updateJob?.(updatePayload);
+      await window.desktopShell?.updateJobStage?.({ jobId: String(job.id), stage });
       await onRefresh?.();
     } catch (cause) {
       setSearchMessage(cause?.message || 'Could not update the pipeline stage.');

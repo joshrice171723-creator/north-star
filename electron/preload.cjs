@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,listJobs: () => ipcRenderer.invoke('coach:jobs:list')
   ,createJob: (input) => ipcRenderer.invoke('coach:jobs:create', input)
   ,updateJob: (input) => ipcRenderer.invoke('coach:jobs:update', input)
+  ,updateJobStage: (input) => ipcRenderer.invoke('coach:jobs:update-stage', input)
   ,deleteJob: (id) => ipcRenderer.invoke('coach:jobs:delete', id)
   ,importJobFromUrl: (url) => ipcRenderer.invoke('coach:jobs:import-url', url)
   ,listJobDetailEmails: (jobId) => ipcRenderer.invoke('jobs:detail:emails:list', jobId)

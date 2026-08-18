@@ -1261,6 +1261,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('coach:jobs:list', () => coachDatabase.jobs.list());
   ipcMain.handle('coach:jobs:create', (_event, input) => coachDatabase.jobs.create(validateJobRecord(input)));
   ipcMain.handle('coach:jobs:update', (_event, input) => coachDatabase.jobs.update(validateJobRecord(input)));
+  ipcMain.handle('coach:jobs:update-stage', (_event, input) => { validateJobDetailId(input?.jobId); return coachDatabase.jobs.updateStage(input.jobId, input.stage); });
   ipcMain.handle('coach:jobs:delete', (_event, id) => coachDatabase.jobs.delete(validateCoachDeleteId(id, 'job')));
   ipcMain.handle('coach:jobs:import-url', (event, url) => { assertTrustedRenderer(event); return importJobFromUrl(url); });
   ipcMain.handle('jobs:profile:get', () => coachDatabase.profiles.getCurrent());
