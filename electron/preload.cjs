@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,validateApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:validate', id)
   ,approveApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:approve', id)
   ,selectApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:select', id)
+  ,forceSelectApplicationDocument: (id) => ipcRenderer.invoke('jobs:documents:force-select', id)
   ,selectMasterApplicationResume: (applicationId) => ipcRenderer.invoke('jobs:documents:select-master-resume', { applicationId })
   ,exportApplicationDocumentText: (id) => ipcRenderer.invoke('jobs:documents:export-text', id)
   ,exportApplicationDocumentPdf: (id) => ipcRenderer.invoke('jobs:documents:export-pdf', id)

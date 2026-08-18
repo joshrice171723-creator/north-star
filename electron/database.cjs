@@ -356,14 +356,15 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
   }
   function getDocument(documentId) { return documentToRenderer(sqlite.prepare('SELECT * FROM job_application_documents WHERE id = ? AND deleted_at IS NULL').get(documentId)); }
   function updateDocument(documentId, changes = {}) { const current = getDocument(documentId); if (!current) throw new Error('Document not found.'); requireEditableApplicationDocument(current.applicationId); const content = changes.content || current.content; const validation = changes.validation || current.validation; sqlite.prepare('UPDATE job_application_documents SET status = ?, content_json = ?, plain_text = ?, html_text = ?, provenance_json = ?, validation_json = ?, updated_at = ? WHERE id = ?').run(STATUSES.has(changes.status) ? changes.status : current.status, JSON.stringify(content), renderPlainText(current.documentType, content), renderHtml(current.documentType, content), JSON.stringify(changes.provenance || current.provenance), JSON.stringify(validation), now(), documentId); return getDocument(documentId); }
-  function selectDocument(documentId, { allowReadyMasterRefresh = false } = {}) {
+  function selectDocument(documentId, { allowReadyMasterRefresh = false, allowValidationOverride = false } = {}) {
     const current = getDocument(documentId); if (!current) throw new Error('Document not found.');
     requireEditableApplicationDocument(current.applicationId, { allowReadyMasterRefresh });
-    if (current.status !== 'approved' || current.validation.errors?.length) throw new Error('Only approved, error-free documents can be selected.');
+    if (!allowValidationOverride && (current.status !== 'approved' || current.validation.errors?.length)) throw new Error('Only approved, error-free documents can be selected.');
     let movedToReady = false; let readyJobId = null;
     sqlite.transaction(() => {
       sqlite.prepare('UPDATE job_application_documents SET is_selected = 0, status = CASE WHEN is_selected = 1 THEN \'superseded\' ELSE status END, updated_at = ? WHERE application_id = ? AND document_type = ? AND deleted_at IS NULL').run(now(), current.applicationId, current.documentType);
-      sqlite.prepare('UPDATE job_application_documents SET is_selected = 1, status = \'approved\', updated_at = ? WHERE id = ?').run(now(), documentId);
+      const provenance = allowValidationOverride ? JSON.stringify([...(current.provenance || []), 'manual_selection_override']) : null;
+      sqlite.prepare('UPDATE job_application_documents SET is_selected = 1, status = \'approved\', provenance_json = COALESCE(?, provenance_json), updated_at = ? WHERE id = ?').run(provenance, now(), documentId);
       const job = sqlite.prepare('SELECT id, stage FROM job_opportunities WHERE id = (SELECT job_id FROM job_applications WHERE id = ?)').get(current.applicationId);
       if (job?.stage === 'researching' && hasSelectedApplicationDocuments(job.id)) {
         sqlite.prepare("UPDATE job_opportunities SET stage = 'ready', updated_at = ? WHERE id = ?").run(now(), job.id);
