@@ -7,8 +7,9 @@ const { eq, isNull, and, asc, desc } = require('drizzle-orm');
 const { sqliteTable, text, integer, index, uniqueIndex } = require('drizzle-orm/sqlite-core');
 const { assertTransition, computeApplicationReadiness, validateAnswer } = require('./jobs/application-domain.cjs');
 const { DOCUMENT_TYPES, STATUSES, renderPlainText, renderHtml } = require('./jobs/application-documents.cjs');
-const { chunkText, searchChunks, stableEmailId } = require('./job-email-rag.cjs');
+const { chunkText, searchChunks, stableEmailId, extractApplicationConfirmation } = require('./job-email-rag.cjs');
 const { normalizePhoneNumber, activityFingerprint } = require('./google-voice.cjs');
+const { ensureApplicationFileStructure, applicationExportDirectory, applicationFilePaths } = require('./jobs/application-export.cjs');
 
 const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
@@ -86,12 +87,13 @@ const calendarEvents = sqliteTable('calendar_events', {
 const jobOpportunities = sqliteTable('job_opportunities', {
   id: text('id').primaryKey(), company: text('company').notNull(), roleTitle: text('role_title').notNull(), url: text('url').notNull().default(''), location: text('location').notNull().default(''), employmentType: text('employment_type').notNull().default(''), salaryRange: text('salary_range').notNull().default(''), source: text('source').notNull().default(''), stage: text('stage').notNull().default('target'), priority: text('priority').notNull().default('medium'), nextAction: text('next_action').notNull().default(''), followUpDate: text('follow_up_date'), contactName: text('contact_name').notNull().default(''), contactEmail: text('contact_email').notNull().default(''), notes: text('notes').notNull().default(''), appliedAt: text('applied_at'), externalId: text('external_id'), apiSource: text('api_source'), canonicalUrl: text('canonical_url').notNull().default(''), rawDataJson: text('raw_data_json').notNull().default('{}'), description: text('description').notNull().default(''), requirementsJson: text('requirements_json').notNull().default('[]'), postedAt: text('posted_at'), expiresAt: text('expires_at'), salaryMin: integer('salary_min'), salaryMax: integer('salary_max'), salaryCurrency: text('salary_currency').notNull().default('USD'), remoteType: text('remote_type').notNull().default('unknown'), matchScore: integer('match_score'), requirementsMatchScore: integer('requirements_match_score'), candidateMatchScore: integer('candidate_match_score'), fitTier: text('fit_tier'), matchSummary: text('match_summary').notNull().default(''), lastEvaluatedAt: text('last_evaluated_at'), lastSeenAt: text('last_seen_at'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), archived: integer('archived', { mode: 'boolean' }).notNull().default(false), deletedAt: text('deleted_at'),
 }, (table) => ({ stageIdx: index('jobs_stage_idx').on(table.stage), followUpIdx: index('jobs_follow_up_idx').on(table.followUpDate), activeIdx: index('jobs_active_idx').on(table.archived, table.deletedAt) }));
-const jobApplications = sqliteTable('job_applications', { id: text('id').primaryKey(), jobId: text('job_id').notNull(), status: text('status').notNull(), applicationUrl: text('application_url').notNull(), atsKey: text('ats_key').notNull(), readinessJson: text('readiness_json').notNull(), unresolvedCount: integer('unresolved_count').notNull(), startedAt: text('started_at').notNull(), lastActivityAt: text('last_activity_at').notNull(), submittedAt: text('submitted_at'), confirmationNumber: text('confirmation_number').notNull(), confirmationUrl: text('confirmation_url').notNull(), withdrawnAt: text('withdrawn_at'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at') });
+const jobApplications = sqliteTable('job_applications', { id: text('id').primaryKey(), jobId: text('job_id').notNull(), status: text('status').notNull(), applicationUrl: text('application_url').notNull(), externalApplicationUrl: text('external_application_url').notNull(), externalApplicationHost: text('external_application_host').notNull(), atsKey: text('ats_key').notNull(), readinessJson: text('readiness_json').notNull(), unresolvedCount: integer('unresolved_count').notNull(), startedAt: text('started_at').notNull(), lastActivityAt: text('last_activity_at').notNull(), submittedAt: text('submitted_at'), confirmationNumber: text('confirmation_number').notNull(), confirmationUrl: text('confirmation_url').notNull(), withdrawnAt: text('withdrawn_at'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at') });
 const jobApplicationAnswers = sqliteTable('job_application_answers', { id: text('id').primaryKey(), applicationId: text('application_id'), questionKey: text('question_key').notNull(), questionText: text('question_text').notNull(), normalizedCategory: text('normalized_category').notNull(), answerText: text('answer_text').notNull(), answerJson: text('answer_json').notNull(), scope: text('scope').notNull(), sensitivity: text('sensitivity').notNull(), approvalStatus: text('approval_status').notNull(), autofillPolicy: text('autofill_policy').notNull(), provenanceJson: text('provenance_json').notNull(), approvedAt: text('approved_at'), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at') });
 const jobApplicationEvents = sqliteTable('job_application_events', { id: text('id').primaryKey(), applicationId: text('application_id').notNull(), eventType: text('event_type').notNull(), summary: text('summary').notNull(), metadataJson: text('metadata_json').notNull(), createdAt: text('created_at').notNull() });
 const jobApplicationDocuments = sqliteTable('job_application_documents', { id: text('id').primaryKey(), applicationId: text('application_id').notNull(), documentType: text('document_type').notNull(), version: integer('version').notNull(), status: text('status').notNull(), title: text('title').notNull(), contentJson: text('content_json').notNull(), plainText: text('plain_text').notNull(), htmlText: text('html_text').notNull(), provenanceJson: text('provenance_json').notNull(), validationJson: text('validation_json').notNull(), sourceResumeVersion: integer('source_resume_version'), modelName: text('model_name').notNull(), promptVersion: text('prompt_version').notNull(), isSelected: integer('is_selected').notNull(), exportedPdfPath: text('exported_pdf_path').notNull(), exportedTextPath: text('exported_text_path').notNull(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at') });
+const jobApplicationExternalAccounts = sqliteTable('job_application_external_accounts', { id: text('id').primaryKey(), applicationId: text('application_id').notNull(), host: text('host').notNull(), username: text('username').notNull(), credentialRef: text('credential_ref').notNull(), status: text('status').notNull(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull() });
 
-const tableMap = { projects, tasks, goals, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities, jobApplications, jobApplicationAnswers, jobApplicationEvents, jobApplicationDocuments };
+const tableMap = { projects, tasks, goals, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities, jobApplications, jobApplicationAnswers, jobApplicationEvents, jobApplicationDocuments, jobApplicationExternalAccounts };
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const nonEmpty = (value, fallback = '') => typeof value === 'string' && value.trim() ? value.trim() : fallback;
@@ -121,7 +123,7 @@ function parseCsv(textValue) {
   return rows.filter((entry) => entry.some(Boolean)).map((entry) => Object.fromEntries(headers.map((header, index) => [header, entry[index] || ''])));
 }
 
-function createDatabase({ userDataPath, seedPath } = {}) {
+function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, masterResumeSourcePath } = {}) {
   if (!userDataPath) throw new Error('A user-data path is required.');
   fs.mkdirSync(userDataPath, { recursive: true });
   const databasePath = path.join(userDataPath, 'executive-coach.sqlite');
@@ -130,6 +132,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   sqlite.pragma('foreign_keys = ON');
   const db = drizzle(sqlite);
   const migrationDir = path.join(__dirname, 'migrations');
+  const documentsRoot = applicationDocumentsPath || userDataPath;
   sqlite.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
   const applied = new Set(sqlite.prepare('SELECT id FROM schema_migrations').all().map((entry) => entry.id));
   for (const filename of fs.readdirSync(migrationDir).filter((entry) => entry.endsWith('.sql')).sort()) {
@@ -197,7 +200,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const row = sqlite.prepare(`SELECT COUNT(DISTINCT document_type) AS count FROM job_application_documents d JOIN job_applications a ON a.id = d.application_id WHERE a.job_id = ? AND a.deleted_at IS NULL AND d.deleted_at IS NULL AND d.is_selected = 1 AND d.status = 'approved' AND d.document_type IN ('resume', 'cover_letter')`).get(jobId);
     return Number(row?.count || 0) === 2;
   }
-  function jobToRenderer(row) { let rawData = {}; let requirements = []; try { rawData = JSON.parse(row.rawDataJson || '{}'); } catch {} try { requirements = JSON.parse(row.requirementsJson || '[]'); } catch {} return { ...row, rawData, requirements, archived: Boolean(row.archived) }; }
+  function jobToRenderer(row) { let rawData = {}; let requirements = []; try { rawData = JSON.parse(row.rawDataJson || row.raw_data_json || '{}'); } catch {} try { requirements = JSON.parse(row.requirementsJson || row.requirements_json || '[]'); } catch {} return { ...row, roleTitle: row.roleTitle ?? row.role_title, employmentType: row.employmentType ?? row.employment_type, salaryRange: row.salaryRange ?? row.salary_range, followUpDate: row.followUpDate ?? row.follow_up_date, contactName: row.contactName ?? row.contact_name, contactEmail: row.contactEmail ?? row.contact_email, appliedAt: row.appliedAt ?? row.applied_at, externalId: row.externalId ?? row.external_id, apiSource: row.apiSource ?? row.api_source, canonicalUrl: row.canonicalUrl ?? row.canonical_url, rawData, requirements, postedAt: row.postedAt ?? row.posted_at, expiresAt: row.expiresAt ?? row.expires_at, salaryMin: row.salaryMin ?? row.salary_min, salaryMax: row.salaryMax ?? row.salary_max, salaryCurrency: row.salaryCurrency ?? row.salary_currency, remoteType: row.remoteType ?? row.remote_type, matchScore: row.matchScore ?? row.match_score, requirementsMatchScore: row.requirementsMatchScore ?? row.requirements_match_score, candidateMatchScore: row.candidateMatchScore ?? row.candidate_match_score, fitTier: row.fitTier ?? row.fit_tier, matchSummary: row.matchSummary ?? row.match_summary, lastEvaluatedAt: row.lastEvaluatedAt ?? row.last_evaluated_at, lastSeenAt: row.lastSeenAt ?? row.last_seen_at, createdAt: row.createdAt ?? row.created_at, updatedAt: row.updatedAt ?? row.updated_at, deletedAt: row.deletedAt ?? row.deleted_at, archived: Boolean(row.archived) }; }
   function upsertJob(input) {
     const record = validateJobRecord(jobRecord(input));
     const existing = db.select().from(jobOpportunities).where(eq(jobOpportunities.id, record.id)).get();
@@ -208,12 +211,14 @@ function createDatabase({ userDataPath, seedPath } = {}) {
       db.update(jobOpportunities).set({ ...restored, id: undefined }).where(eq(jobOpportunities.id, record.id)).run();
       recordJobActivity(record.id, 'job_restored', 'Archived opportunity restored to the job pipeline.');
     } else if (existing) {
-      // Applied is a forward-only milestone: preserving this invariant here
-      // prevents board edits, detail edits, and IPC callers from moving a job
-      // back to a pre-application stage after submission.
+      // Applied is the forward-only boundary: before submission, a job can be
+      // moved back through research (including Ready to apply) when the user
+      // needs to revisit the opportunity. Once Applied is reached, preserving
+      // this invariant prevents board edits, detail edits, and IPC callers
+      // from moving a submitted job back to a pre-application stage.
       const currentStageIndex = JOB_STAGE_ORDER.indexOf(existing.stage);
       const nextStageIndex = JOB_STAGE_ORDER.indexOf(record.stage);
-      if (nextStageIndex < currentStageIndex) throw new Error(`A job cannot move backward from ${existing.stage}.`);
+      if (currentStageIndex >= JOB_STAGE_ORDER.indexOf('applied') && nextStageIndex < currentStageIndex) throw new Error(`A job cannot move backward from ${existing.stage}.`);
       if (record.stage === 'ready' && currentStageIndex < JOB_STAGE_ORDER.indexOf('ready') && !hasSelectedApplicationDocuments(record.id)) throw new Error('A job can move to Ready to apply only after an approved resume and cover letter are selected.');
       db.update(jobOpportunities).set({ ...record, id: undefined, createdAt: existing.createdAt }).where(eq(jobOpportunities.id, record.id)).run();
       if (existing.stage !== record.stage) recordJobActivity(record.id, 'stage_changed', `Stage changed to ${record.stage}.`, { from: existing.stage, to: record.stage });
@@ -223,7 +228,7 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     }
     return jobToRenderer(db.select().from(jobOpportunities).where(eq(jobOpportunities.id, record.id)).get());
   }
-  function jobNotificationCounts(jobId) { const idValue = bounded(jobId, 160); return { unreadVoiceActivityCount: Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_detail_activity WHERE job_id = ? AND activity_type = 'google_voice_conversation' AND read_at IS NULL").get(idValue).count) || 0, unreadEmailCount: Number(sqlite.prepare("SELECT COUNT(*) AS count FROM email_job_links l JOIN email_messages e ON e.id = l.email_id WHERE l.job_id = ? AND e.seen_at IS NULL AND e.user_excluded = 0").get(idValue).count) || 0 }; }
+  function jobNotificationCounts(jobId) { const idValue = bounded(jobId, 160); return { linkedEmailCount: Number(sqlite.prepare('SELECT COUNT(*) AS count FROM email_job_links WHERE job_id = ?').get(idValue).count) || 0, unreadVoiceActivityCount: Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_detail_activity WHERE job_id = ? AND activity_type = 'google_voice_conversation' AND read_at IS NULL").get(idValue).count) || 0, unreadEmailCount: Number(sqlite.prepare("SELECT COUNT(*) AS count FROM email_job_links l JOIN email_messages e ON e.id = l.email_id WHERE l.job_id = ? AND e.seen_at IS NULL AND e.user_excluded = 0").get(idValue).count) || 0 }; }
   function jobGoogleVoiceAssignment(jobId) { return sqlite.prepare('SELECT phone_number AS phoneNumber FROM job_phone_assignments WHERE job_id = ? ORDER BY created_at DESC LIMIT 1').get(bounded(jobId, 160)) || {}; }
   function listJobs() { return db.select().from(jobOpportunities).where(and(isNull(jobOpportunities.deletedAt), eq(jobOpportunities.archived, false))).orderBy(asc(jobOpportunities.stage), desc(jobOpportunities.updatedAt)).all().map((row) => ({ ...jobToRenderer(row), ...jobNotificationCounts(row.id), googleVoicePhoneNumber: jobGoogleVoiceAssignment(row.id).phoneNumber || '', googleVoiceContactName: row.contactName || '' })); }
   function requirePipelineJob(jobId) { const job = db.select().from(jobOpportunities).where(and(eq(jobOpportunities.id, bounded(jobId, 160)), isNull(jobOpportunities.deletedAt))).get(); if (!job) throw new Error('Pipeline job not found.'); return job; }
@@ -248,26 +253,59 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   function upsertProfile(input) { const record = profileRecord(input); sqlite.prepare(`INSERT INTO user_profiles (${Object.keys(record).join(',')}) VALUES (${Object.keys(record).map(() => '?').join(',')}) ON CONFLICT(id) DO UPDATE SET ${Object.keys(record).filter((key) => key !== 'id').map((key) => `${key}=excluded.${key}`).join(',')}`).run(...Object.values(record)); return getProfile(); }
   function getResume() { const row = sqlite.prepare('SELECT * FROM master_resumes WHERE id = ?').get('current'); return row ? { ...row, rawText: row.raw_text, professionalSummary: row.professional_summary, sourceFilename: row.source_filename, sourceType: row.source_type, experience: jsonField(row.experience_json), education: jsonField(row.education_json), skills: jsonField(row.skills_json), projects: jsonField(row.projects_json), certifications: jsonField(row.certifications_json), achievements: jsonField(row.achievements_json) } : null; }
   function upsertResume(input = {}) { const old = sqlite.prepare('SELECT * FROM master_resumes WHERE id = ?').get('current'); const record = { id: 'current', raw_text: bounded(input.rawText ?? old?.raw_text, 100000), professional_summary: bounded(input.professionalSummary ?? old?.professional_summary), experience_json: JSON.stringify(input.experience ?? jsonField(old?.experience_json)), education_json: JSON.stringify(input.education ?? jsonField(old?.education_json)), skills_json: JSON.stringify(input.skills ?? jsonField(old?.skills_json)), projects_json: JSON.stringify(input.projects ?? jsonField(old?.projects_json)), certifications_json: JSON.stringify(input.certifications ?? jsonField(old?.certifications_json)), achievements_json: JSON.stringify(input.achievements ?? jsonField(old?.achievements_json)), source_filename: bounded(input.sourceFilename ?? old?.source_filename), source_type: bounded(input.sourceType ?? old?.source_type ?? 'manual'), version: (old?.version || 0) + 1, created_at: old?.created_at || now(), updated_at: now() }; sqlite.prepare(`INSERT INTO master_resumes (${Object.keys(record).join(',')}) VALUES (${Object.keys(record).map(() => '?').join(',')}) ON CONFLICT(id) DO UPDATE SET ${Object.keys(record).filter((key) => key !== 'id').map((key) => `${key}=excluded.${key}`).join(',')}`).run(...Object.values(record)); return getResume(); }
+  // Document labels identify internal workflow versions. They must never become
+  // the heading of a resume that a candidate can export, select, or submit.
+  const isInternalResumeHeading = (value) => /^(?:master\s+resume|resume(?:\s*[-–—:]?\s*(?:v(?:ersion)?\.?\s*)?\d+)?)$/i.test(String(value || '').trim());
+  function masterResumeContent(resume) {
+    const sourceLines = String(resume.rawText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const sourceHeading = sourceLines.find((line) => !isInternalResumeHeading(line)) || '';
+    const profileHeading = String(getProfile()?.fullName || '').trim();
+    const summaryLines = sourceHeading && sourceLines[0] === sourceHeading ? sourceLines.slice(1) : sourceLines;
+    return { headline: sourceHeading || (isInternalResumeHeading(profileHeading) ? '' : profileHeading), summary: summaryLines.length ? [{ text: summaryLines.join('\n') }] : [], skills: resume.skills || [], experience: resume.experience || [], education: resume.education || [] };
+  }
+  function repairMasterResumeDocument(document, content) {
+    const plainText = renderPlainText('resume', content);
+    const htmlText = renderHtml('resume', content);
+    // A repaired version no longer corresponds to an already-exported PDF.
+    // Clear export metadata so selecting it cannot silently reuse the stale file.
+    sqlite.prepare('UPDATE job_application_documents SET content_json = ?, plain_text = ?, html_text = ?, exported_pdf_path = ?, exported_text_path = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(content), plainText, htmlText, '', '', now(), document.id);
+    return getDocument(document.id);
+  }
+  function repairStoredMasterResumeHeadings() {
+    const documents = sqlite.prepare("SELECT id, content_json FROM job_application_documents WHERE document_type = 'resume' AND model_name = 'master_resume' AND deleted_at IS NULL").all();
+    for (const document of documents) {
+      const content = parseObject(document.content_json);
+      if (!isInternalResumeHeading(content.headline)) continue;
+      const sourceHeading = String(content.summary?.[0]?.text || '').split(/\r?\n/).map((line) => line.trim()).find((line) => line && !isInternalResumeHeading(line)) || '';
+      repairMasterResumeDocument(document, { ...content, headline: sourceHeading });
+    }
+  }
   const parseObject = (value, fallback = {}) => { try { const parsed = JSON.parse(value || ''); return parsed && typeof parsed === 'object' ? parsed : fallback; } catch { return fallback; } };
-  const applicationToRenderer = (row) => row ? ({ ...row, jobId: row.job_id, readiness: parseObject(row.readiness_json), unresolvedCount: row.unresolved_count, applicationUrl: row.application_url, atsKey: row.ats_key, startedAt: row.started_at, lastActivityAt: row.last_activity_at, submittedAt: row.submitted_at, confirmationNumber: row.confirmation_number, confirmationUrl: row.confirmation_url, withdrawnAt: row.withdrawn_at, createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at }) : null;
+  const applicationToRenderer = (row) => row ? ({ ...row, jobId: row.job_id, readiness: parseObject(row.readiness_json), unresolvedCount: row.unresolved_count, applicationUrl: row.application_url, externalApplicationUrl: row.external_application_url, externalApplicationHost: row.external_application_host, atsKey: row.ats_key, startedAt: row.started_at, lastActivityAt: row.last_activity_at, submittedAt: row.submitted_at, confirmationNumber: row.confirmation_number, confirmationUrl: row.confirmation_url, withdrawnAt: row.withdrawn_at, createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, applicationFolderPath: row.application_folder_path, selectedResumePath: row.selected_resume_path, selectedCoverLetterPath: row.selected_cover_letter_path }) : null;
+  function recordExternalApplicationUrl(input = {}) { const applicationId = bounded(input.applicationId, 160); const url = bounded(input.url, 2000); const host = bounded(input.host, 253).toLowerCase(); const app = getApplication(applicationId); if (!app || !url || !host || host === (() => { try { return new URL(app.applicationUrl).host; } catch { return ''; } })()) return app; if (app.externalApplicationUrl === url && app.externalApplicationHost === host) return app; const stamp = now(); sqlite.prepare('UPDATE job_applications SET external_application_url = ?, external_application_host = ?, last_activity_at = ?, updated_at = ? WHERE id = ?').run(url, host, stamp, stamp, applicationId); recordApplicationEvent({ applicationId, eventType: 'external_destination_recorded', summary: `Redirected application destination recorded for ${host}.`, metadata: { host, url } }); return getApplication(applicationId); }
   const answerToRenderer = (row) => ({ ...row, applicationId: row.application_id, questionKey: row.question_key, questionText: row.question_text, normalizedCategory: row.normalized_category, answerText: row.answer_text, answer: jsonField(row.answer_json, null), approvalStatus: row.approval_status, autofillPolicy: row.autofill_policy, provenance: jsonField(row.provenance_json) });
   const eventToRenderer = (row) => ({ ...row, applicationId: row.application_id, eventType: row.event_type, metadata: parseObject(row.metadata_json), createdAt: row.created_at });
   function refreshApplicationReadiness(applicationId) { const app = sqlite.prepare('SELECT * FROM job_applications WHERE id = ? AND deleted_at IS NULL').get(applicationId); if (!app) return null; const job = jobToRenderer(sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ?').get(app.job_id)); const readiness = computeApplicationReadiness({ job, profile: getProfile() || {}, resume: getResume() || {} }); const stamp = now(); sqlite.prepare('UPDATE job_applications SET readiness_json = ?, last_activity_at = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(readiness), stamp, stamp, applicationId); return applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE id = ?').get(applicationId)); }
   function recordApplicationEvent(input = {}) { const appId = bounded(input.applicationId, 160); if (!appId) throw new Error('Invalid application id.'); const metadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata) ? input.metadata : {}; const record = { id: id('application-event'), application_id: appId, event_type: bounded(input.eventType, 80) || 'updated', summary: bounded(input.summary, 1000), metadata_json: JSON.stringify(metadata), created_at: now() }; sqlite.prepare('INSERT INTO job_application_events (id, application_id, event_type, summary, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(...Object.values(record)); return eventToRenderer(record); }
-  function createOrResumeApplication(input = {}) { const jobId = bounded(input.jobId, 160); const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ? AND deleted_at IS NULL').get(jobId); if (!job) throw new Error('Job not found.'); const current = sqlite.prepare('SELECT * FROM job_applications WHERE job_id = ? AND deleted_at IS NULL').get(jobId); if (current) return refreshApplicationReadiness(current.id);
+  function ensureApplicationFiles(applicationId) { const row = sqlite.prepare('SELECT * FROM job_applications WHERE id = ? AND deleted_at IS NULL').get(applicationId); if (!row) throw new Error('Application not found.'); const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ? AND deleted_at IS NULL').get(row.job_id); if (!job) return applicationToRenderer(row); const files = ensureApplicationFileStructure(documentsRoot, jobToRenderer(job), row.id); const legacyFolder = row.application_folder_path && path.resolve(row.application_folder_path) !== path.resolve(files.folderPath) ? row.application_folder_path : ''; if (legacyFolder && fs.existsSync(legacyFolder)) { fs.cpSync(legacyFolder, files.folderPath, { recursive: true, force: true }); } const pathsChanged = row.application_folder_path !== files.folderPath || row.selected_resume_path !== files.selectedResumePath || row.selected_cover_letter_path !== files.selectedCoverLetterPath; if (pathsChanged) sqlite.prepare('UPDATE job_applications SET application_folder_path = ?, selected_resume_path = ?, selected_cover_letter_path = ?, updated_at = ? WHERE id = ?').run(files.folderPath, files.selectedResumePath, files.selectedCoverLetterPath, now(), row.id); return applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE id = ?').get(row.id)); }
+  function createOrResumeApplication(input = {}) { const jobId = bounded(input.jobId, 160); const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ? AND deleted_at IS NULL').get(jobId); if (!job) throw new Error('Job not found.'); const current = sqlite.prepare('SELECT * FROM job_applications WHERE job_id = ? AND deleted_at IS NULL').get(jobId); if (current) { ensureApplicationFiles(current.id); return refreshApplicationReadiness(current.id); }
     const stamp = now(); const appId = id('application'); const readiness = computeApplicationReadiness({ job: jobToRenderer(job), profile: getProfile() || {}, resume: getResume() || {} });
     sqlite.transaction(() => {
       // Starting an application begins research; both selected documents earn Ready to apply.
       if (job.stage === 'target') sqlite.prepare("UPDATE job_opportunities SET stage = 'researching', updated_at = ? WHERE id = ?").run(stamp, jobId);
-      sqlite.prepare('INSERT INTO job_applications (id, job_id, status, application_url, ats_key, readiness_json, unresolved_count, started_at, last_activity_at, submitted_at, confirmation_number, confirmation_url, withdrawn_at, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, NULL)').run(appId, jobId, 'drafting', bounded(job.url || job.canonical_url, 2000), 'unknown', JSON.stringify(readiness), 0, stamp, stamp, '', '', stamp, stamp);
+      const files = ensureApplicationFileStructure(documentsRoot, jobToRenderer(job), appId);
+      sqlite.prepare('INSERT INTO job_applications (id, job_id, status, application_url, ats_key, readiness_json, unresolved_count, started_at, last_activity_at, submitted_at, confirmation_number, confirmation_url, withdrawn_at, created_at, updated_at, deleted_at, application_folder_path, selected_resume_path, selected_cover_letter_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)').run(appId, jobId, 'drafting', bounded(job.url || job.canonical_url, 2000), 'unknown', JSON.stringify(readiness), 0, stamp, stamp, '', '', stamp, stamp, files.folderPath, files.selectedResumePath, files.selectedCoverLetterPath);
       recordApplicationEvent({ applicationId: appId, eventType: 'started', summary: 'Application workspace created.' });
     })();
     return applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE id = ?').get(appId)); }
-  function getApplication(applicationId) { return applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE id = ? AND deleted_at IS NULL').get(applicationId)); }
+  function getApplication(applicationId) { const row = sqlite.prepare('SELECT * FROM job_applications WHERE id = ? AND deleted_at IS NULL').get(applicationId); return row ? ensureApplicationFiles(row.id) : null; }
   function transitionApplication(input = {}) { const app = getApplication(bounded(input.id, 160)); if (!app) throw new Error('Application not found.'); assertTransition(app.status, input.status, { trustedCompletion: false }); const stamp = now(); sqlite.prepare('UPDATE job_applications SET status = ?, last_activity_at = ?, updated_at = ? WHERE id = ?').run(input.status, stamp, stamp, app.id); recordApplicationEvent({ applicationId: app.id, eventType: 'status_changed', summary: `Status changed to ${input.status}.` }); return refreshApplicationReadiness(app.id); }
   function abandonApplication(applicationId) { const app = getApplication(bounded(applicationId, 160)); if (!app) throw new Error('Application not found.'); const stamp = now(); sqlite.prepare('UPDATE job_applications SET status = ?, deleted_at = ?, withdrawn_at = ?, last_activity_at = ?, updated_at = ? WHERE id = ?').run('withdrawn', stamp, stamp, stamp, stamp, app.id); recordApplicationEvent({ applicationId: app.id, eventType: 'abandoned', summary: 'Application workspace abandoned.' }); return { ...app, status: 'withdrawn', deletedAt: stamp, withdrawnAt: stamp }; }
   function completeSubmission(input = {}) { const app = getApplication(bounded(input.applicationId, 160)); if (!app) throw new Error('Application not found.'); if (!input.userAcknowledged) throw new Error('User acknowledgment is required before recording submission.'); const job = requirePipelineJob(app.jobId); if (JOB_STAGE_ORDER.indexOf(job.stage) >= JOB_STAGE_ORDER.indexOf('applied')) throw new Error('This application has already crossed the Applied boundary.'); const stamp = now(); const followUpDate = /^\d{4}-\d{2}-\d{2}$/.test(input.followUpDate || '') ? input.followUpDate : null; sqlite.transaction(() => { sqlite.prepare('UPDATE job_applications SET status = ?, submitted_at = ?, confirmation_number = ?, confirmation_url = ?, last_activity_at = ?, updated_at = ? WHERE id = ?').run('submitted', stamp, bounded(input.confirmationNumber, 160), bounded(input.confirmationUrl, 2000), stamp, stamp, app.id); sqlite.prepare('UPDATE job_opportunities SET stage = ?, applied_at = ?, follow_up_date = ?, next_action = ?, updated_at = ? WHERE id = ?').run('applied', stamp.slice(0, 10), followUpDate, bounded(input.nextAction, 1000), stamp, app.jobId); recordApplicationEvent({ applicationId: app.id, eventType: 'submitted', summary: 'User confirmed application submission.' }); })(); return getApplication(app.id); }
   function saveApplicationAnswer(input = {}) { const answer = validateAnswer(input); if (answer.scope === 'application' && !getApplication(bounded(answer.applicationId, 160))) throw new Error('Application not found.'); const stamp = now(); const record = { id: bounded(answer.id, 160) || id('application-answer'), application_id: answer.applicationId || null, question_key: answer.questionKey, question_text: answer.questionText, normalized_category: answer.normalizedCategory, answer_text: answer.answerText, answer_json: JSON.stringify(answer.answer ?? null), scope: answer.scope, sensitivity: answer.sensitivity, approval_status: answer.approvalStatus, autofill_policy: answer.autofillPolicy, provenance_json: JSON.stringify(answer.provenance), approved_at: answer.approvalStatus === 'approved' ? (answer.approvedAt || stamp) : null, created_at: stamp, updated_at: stamp, deleted_at: null }; sqlite.prepare('INSERT INTO job_application_answers (id, application_id, question_key, question_text, normalized_category, answer_text, answer_json, scope, sensitivity, approval_status, autofill_policy, provenance_json, approved_at, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET question_text=excluded.question_text, answer_text=excluded.answer_text, answer_json=excluded.answer_json, scope=excluded.scope, approval_status=excluded.approval_status, autofill_policy=excluded.autofill_policy, provenance_json=excluded.provenance_json, approved_at=excluded.approved_at, updated_at=excluded.updated_at').run(...Object.values(record)); return answerToRenderer(sqlite.prepare('SELECT * FROM job_application_answers WHERE id = ?').get(record.id)); }
+  function externalAccountToRenderer(row) { return row ? { id: row.id, applicationId: row.application_id, host: row.host, username: row.username, status: row.status, credentialRef: row.credential_ref, createdAt: row.created_at, updatedAt: row.updated_at } : null; }
+  function saveExternalAccount(input = {}) { const applicationId = bounded(input.applicationId, 160); if (!getApplication(applicationId)) throw new Error('Application not found.'); const host = bounded(input.host, 253).toLowerCase(); const username = bounded(input.username, 320); const credentialRef = bounded(input.credentialRef, 160); if (!/^[a-z0-9.-]{1,253}$/.test(host) || !credentialRef) throw new Error('A valid external account host and credential reference are required.'); const stamp = now(); const current = sqlite.prepare('SELECT id FROM job_application_external_accounts WHERE application_id = ?').get(applicationId); const accountId = current?.id || id('external-account'); if (current) sqlite.prepare('UPDATE job_application_external_accounts SET host = ?, username = ?, credential_ref = ?, status = ?, updated_at = ? WHERE id = ?').run(host, username, credentialRef, 'saved', stamp, accountId); else sqlite.prepare('INSERT INTO job_application_external_accounts (id, application_id, host, username, credential_ref, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(accountId, applicationId, host, username, credentialRef, 'saved', stamp, stamp); recordApplicationEvent({ applicationId, eventType: 'external_account_saved', summary: `External application account saved for ${host}.`, metadata: { host, username } }); return externalAccountToRenderer(sqlite.prepare('SELECT * FROM job_application_external_accounts WHERE id = ?').get(accountId)); }
+  function getExternalAccount(applicationId) { return externalAccountToRenderer(sqlite.prepare('SELECT * FROM job_application_external_accounts WHERE application_id = ?').get(bounded(applicationId, 160))); }
   // Keep the renderer DTO camel-cased, including export-ready renderings.  The
   // PDF IPC handler receives this DTO, so omitting these aliases produced PDFs
   // containing the literal text "undefined" despite valid stored HTML.
@@ -281,6 +319,41 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   }
   function saveDocument(input = {}) { if (!DOCUMENT_TYPES.has(input.documentType)) throw new Error('Invalid document type.'); requireEditableApplicationDocument(input.applicationId, { allowReadyMasterRefresh: Boolean(input.allowReadyMasterRefresh) }); const stamp = now(); const content = input.content && typeof input.content === 'object' ? input.content : {}; const validation = input.validation && typeof input.validation === 'object' ? input.validation : {}; const version = Number.isInteger(input.version) ? input.version : Number(sqlite.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS next FROM job_application_documents WHERE application_id = ? AND document_type = ?').get(input.applicationId, input.documentType).next); const record = { id: bounded(input.id, 160) || id('document'), application_id: bounded(input.applicationId, 160), document_type: input.documentType, version, status: STATUSES.has(input.status) ? input.status : 'draft', title: bounded(input.title, 500), content_json: JSON.stringify(content), plain_text: bounded(input.plainText || renderPlainText(input.documentType, content), 100000), html_text: bounded(input.htmlText || renderHtml(input.documentType, content), 150000), provenance_json: JSON.stringify(Array.isArray(input.provenance) ? input.provenance : []), validation_json: JSON.stringify(validation), source_resume_version: Number.isInteger(input.sourceResumeVersion) ? input.sourceResumeVersion : null, model_name: bounded(input.modelName, 200), prompt_version: bounded(input.promptVersion, 100), is_selected: 0, exported_pdf_path: bounded(input.exportedPdfPath, 2000), exported_text_path: bounded(input.exportedTextPath, 2000), created_at: stamp, updated_at: stamp, deleted_at: null }; sqlite.prepare('INSERT INTO job_application_documents (id, application_id, document_type, version, status, title, content_json, plain_text, html_text, provenance_json, validation_json, source_resume_version, model_name, prompt_version, is_selected, exported_pdf_path, exported_text_path, created_at, updated_at, deleted_at) VALUES (@id,@application_id,@document_type,@version,@status,@title,@content_json,@plain_text,@html_text,@provenance_json,@validation_json,@source_resume_version,@model_name,@prompt_version,@is_selected,@exported_pdf_path,@exported_text_path,@created_at,@updated_at,@deleted_at)').run(record); return documentToRenderer(sqlite.prepare('SELECT * FROM job_application_documents WHERE id = ?').get(record.id)); }
   function listDocuments(applicationId, documentType) { return sqlite.prepare(`SELECT * FROM job_application_documents WHERE application_id = ? AND deleted_at IS NULL ${documentType ? 'AND document_type = ?' : ''} ORDER BY document_type, version DESC`).all(...(documentType ? [applicationId, documentType] : [applicationId])).map(documentToRenderer); }
+  function resetApplicationDocuments(applicationId) {
+    const application = sqlite.prepare('SELECT id, job_id, application_folder_path, selected_resume_path, selected_cover_letter_path FROM job_applications WHERE id = ? AND deleted_at IS NULL').get(bounded(applicationId, 160));
+    if (!application) throw new Error('Application not found.');
+    let filesRemoved = 0;
+    const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ? AND deleted_at IS NULL').get(application.job_id);
+    const jobRecord = job && jobToRenderer(job);
+    const folders = new Set([application.application_folder_path].filter(Boolean));
+    if (jobRecord) {
+      folders.add(applicationFilePaths(documentsRoot, jobRecord, application.id).folderPath);
+      // Early workspaces were named with the job ID, not the application ID.
+      // Keep this compatibility cleanup narrowly scoped to that known folder.
+      folders.add(applicationExportDirectory(documentsRoot, jobRecord, jobRecord.id));
+    }
+    for (const folderPath of folders) {
+      if (!fs.existsSync(folderPath)) continue;
+      for (const target of [path.join(folderPath, 'Versions'), application.selected_resume_path, application.selected_cover_letter_path]) {
+        if (target && fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true, force: true });
+          filesRemoved += 1;
+        }
+      }
+      for (const entry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+        if (entry.isFile() && /^(?:Resume|Cover Letter) - v\d+\.(?:pdf|txt)$/i.test(entry.name)) {
+          fs.rmSync(path.join(folderPath, entry.name), { force: true });
+          filesRemoved += 1;
+        }
+      }
+    }
+    const documentCount = Number(sqlite.prepare('SELECT COUNT(*) AS count FROM job_application_documents WHERE application_id = ?').get(application.id).count || 0);
+    sqlite.transaction(() => {
+      sqlite.prepare('DELETE FROM job_application_documents WHERE application_id = ?').run(application.id);
+      sqlite.prepare("UPDATE job_opportunities SET stage = 'researching', updated_at = ? WHERE id = ? AND stage = 'ready'").run(now(), application.job_id);
+    })();
+    return { applicationId: application.id, documentsRemoved: documentCount, filesRemoved };
+  }
   function getDocument(documentId) { return documentToRenderer(sqlite.prepare('SELECT * FROM job_application_documents WHERE id = ? AND deleted_at IS NULL').get(documentId)); }
   function updateDocument(documentId, changes = {}) { const current = getDocument(documentId); if (!current) throw new Error('Document not found.'); requireEditableApplicationDocument(current.applicationId); const content = changes.content || current.content; const validation = changes.validation || current.validation; sqlite.prepare('UPDATE job_application_documents SET status = ?, content_json = ?, plain_text = ?, html_text = ?, provenance_json = ?, validation_json = ?, updated_at = ? WHERE id = ?').run(STATUSES.has(changes.status) ? changes.status : current.status, JSON.stringify(content), renderPlainText(current.documentType, content), renderHtml(current.documentType, content), JSON.stringify(changes.provenance || current.provenance), JSON.stringify(validation), now(), documentId); return getDocument(documentId); }
   function selectDocument(documentId, { allowReadyMasterRefresh = false } = {}) {
@@ -297,6 +370,21 @@ function createDatabase({ userDataPath, seedPath } = {}) {
         movedToReady = true; readyJobId = job.id;
       }
     })();
+    const application = getApplication(current.applicationId);
+    const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ?').get(application.jobId);
+    const files = ensureApplicationFileStructure(documentsRoot, jobToRenderer(job), application.id);
+    const sourcePath = current.documentType === 'resume' ? current.exportedPdfPath : current.exportedPdfPath;
+    // Selection is persisted by opportunity and the stable Selected filename is
+    // deliberately independent of version. If a PDF was already exported,
+    // copy it into the opportunity's selected slot; otherwise the resolver
+    // reports a missing file instead of borrowing another opportunity's file.
+    const selectedPath = current.documentType === 'resume' ? files.selectedResumePath : files.selectedCoverLetterPath;
+    if (sourcePath && fs.existsSync(sourcePath)) {
+      const versionDirectory = current.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory;
+      const versionPath = path.join(versionDirectory, `${current.documentType === 'resume' ? 'Resume' : 'Cover Letter'}-v${current.version}.pdf`);
+      fs.copyFileSync(sourcePath, versionPath);
+      fs.copyFileSync(sourcePath, selectedPath);
+    } else if (fs.existsSync(selectedPath)) fs.unlinkSync(selectedPath);
     if (movedToReady) recordJobActivity(readyJobId, 'documents_ready', 'Resume and cover letter selected; opportunity is ready to apply.');
     return getDocument(documentId);
   }
@@ -305,13 +393,24 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     const resume = getResume();
     if (!resume || (!resume.rawText && !resume.experience?.length && !resume.skills?.length)) throw new Error('Save a master resume before selecting it for an application.');
     const existing = sqlite.prepare("SELECT id FROM job_application_documents WHERE application_id = ? AND document_type = 'resume' AND model_name = 'master_resume' AND source_resume_version = ? AND deleted_at IS NULL ORDER BY version DESC LIMIT 1").get(application.id, resume.version);
-    if (existing) return selectDocument(existing.id, { allowReadyMasterRefresh: true });
-    const content = { headline: resume.professionalSummary || 'Master resume', summary: resume.rawText ? [{ text: resume.rawText }] : [], skills: resume.skills || [], experience: resume.experience || [], education: resume.education || [] };
-    const document = saveDocument({ applicationId: application.id, documentType: 'resume', title: 'Master resume', content, validation: { valid: true, errors: [] }, provenance: ['master_resume'], sourceResumeVersion: resume.version, modelName: 'master_resume', promptVersion: 'master_resume', status: 'approved', allowReadyMasterRefresh: true });
+    const content = masterResumeContent(resume);
+    const existingDocument = existing && getDocument(existing.id);
+    if (existingDocument) {
+      if (isInternalResumeHeading(existingDocument.content?.headline) || existingDocument.content?.summary?.[0]?.text?.split(/\r?\n/)[0]?.trim() === content.headline) repairMasterResumeDocument(existingDocument, content);
+      if (masterResumeSourcePath && resume.sourceType === 'pdf' && fs.existsSync(masterResumeSourcePath)) {
+        sqlite.prepare('UPDATE job_application_documents SET exported_pdf_path = ?, updated_at = ? WHERE id = ?').run(masterResumeSourcePath, now(), existingDocument.id);
+      }
+      return selectDocument(existing.id, { allowReadyMasterRefresh: true });
+    }
+    // The master path is a source-file copy operation. Keep a document record
+    // for application state and auditability, but never regenerate or rewrite
+    // the uploaded PDF when the user explicitly chooses “Use master resume.”
+    const document = saveDocument({ applicationId: application.id, documentType: 'resume', title: 'Master resume', content, validation: { valid: true, errors: [] }, provenance: ['master_resume'], sourceResumeVersion: resume.version, modelName: 'master_resume', promptVersion: 'master_resume', status: 'approved', exportedPdfPath: masterResumeSourcePath && resume.sourceType === 'pdf' && fs.existsSync(masterResumeSourcePath) ? masterResumeSourcePath : '', allowReadyMasterRefresh: true });
     return selectDocument(document.id, { allowReadyMasterRefresh: true });
   }
   function approveDocument(documentId) { const current = getDocument(documentId); if (!current) throw new Error('Document not found.'); requireEditableApplicationDocument(current.applicationId); if (current.validation.errors?.length || current.validation.valid === false) throw new Error('Documents with validation errors cannot be approved.'); sqlite.prepare('UPDATE job_application_documents SET status = \'approved\', updated_at = ? WHERE id = ?').run(now(), documentId); return getDocument(documentId); }
   function markDocumentExport(documentId, paths = {}) { const current = getDocument(documentId); if (!current) throw new Error('Document not found.'); sqlite.prepare('UPDATE job_application_documents SET exported_pdf_path = COALESCE(?, exported_pdf_path), exported_text_path = COALESCE(?, exported_text_path), updated_at = ? WHERE id = ?').run(paths.pdfPath || null, paths.textPath || null, now(), documentId); return getDocument(documentId); }
+  function resolveApplicationFile(applicationId, documentType) { const application = ensureApplicationFiles(applicationId); const selectedPath = documentType === 'resume' ? application.selectedResumePath : documentType === 'cover_letter' ? application.selectedCoverLetterPath : ''; if (!selectedPath) throw new Error('Invalid application document type.'); if (!fs.existsSync(selectedPath)) return { exists: false, path: selectedPath, message: `No selected ${documentType === 'resume' ? 'resume' : 'cover letter'} exists for this opportunity. Select or generate one before continuing.` }; return { exists: true, path: selectedPath, message: '' }; }
   function validateTaskHierarchy(record) {
     const project = db.select().from(projects).where(eq(projects.id, record.projectId)).get();
     if (!project || project.kind !== 'project') throw new Error('Task must belong to a real project.');
@@ -532,6 +631,51 @@ function createDatabase({ userDataPath, seedPath } = {}) {
     sqlite.prepare('UPDATE email_messages SET user_excluded = ?, updated_at = ? WHERE id = ?').run(input.excluded ? 1 : 0, now(), emailId);
     return getEmail(emailId);
   }
+  function autoAssignApplicationEmail(input = {}) {
+    // Auto-creation is deliberately gated by explicit submission language plus
+    // enough identity to avoid turning newsletters, job alerts, or generic
+    // recruiter updates into junk pipeline opportunities.
+    const confirmation = extractApplicationConfirmation(input);
+    if (!confirmation || input.isJobRelated === false) return { created: false, linked: false, reason: 'not_explicit_application_confirmation', job: null, email: getEmail(input.id) };
+    const normalizeUrl = (value) => { try { const parsed = new URL(String(value || '')); parsed.search = ''; parsed.hash = ''; return parsed.toString().replace(/\/$/, '').toLowerCase(); } catch { return String(value || '').trim().toLowerCase().replace(/\/$/, ''); } };
+    const canonicalUrl = normalizeUrl(confirmation.url);
+    const rows = sqlite.prepare('SELECT * FROM job_opportunities WHERE deleted_at IS NULL OR external_id = ? OR canonical_url = ?').all(confirmation.url.match(/\/([0-9A-Za-z_-]+)(?:\?|$)/)?.[1] || '', confirmation.url || '');
+    const existing = rows.find((row) => {
+      const sameUrl = canonicalUrl && normalizeUrl(row.canonical_url || row.url) === canonicalUrl;
+      const sameExternalId = confirmation.url && row.external_id && confirmation.url.match(/\/([0-9A-Za-z_-]+)(?:\?|$)/)?.[1] === row.external_id;
+      const sameRoleCompany = confirmation.company && row.company && confirmation.roleTitle && row.role_title && String(row.company).toLowerCase() === String(confirmation.company).toLowerCase() && String(row.role_title).toLowerCase() === String(confirmation.roleTitle).toLowerCase();
+      return sameUrl || sameExternalId || sameRoleCompany;
+    });
+    const jobId = existing?.id || `job-${input.id || stableEmailId(input.provider || 'gmail', input.externalId)}`;
+    const job = upsertJob({
+      id: jobId,
+      company: confirmation.company || existing?.company || 'Unknown employer',
+      roleTitle: confirmation.roleTitle || existing?.role_title || 'Unknown role',
+      url: confirmation.url || existing?.url || '',
+      canonicalUrl: confirmation.url || existing?.canonical_url || '',
+      location: confirmation.location || existing?.location || '',
+      employmentType: existing?.employment_type || '',
+      source: confirmation.source || existing?.source || 'email',
+      apiSource: existing?.api_source || confirmation.source || 'email',
+      externalId: existing?.external_id || (confirmation.url.match(/\/([0-9A-Za-z_-]+)(?:\?|$)/)?.[1] || null),
+      stage: existing?.stage && JOB_STAGE_ORDER.indexOf(existing.stage) > JOB_STAGE_ORDER.indexOf('applied') ? existing.stage : 'applied',
+      appliedAt: existing?.applied_at || confirmation.appliedAt || now().slice(0, 10),
+      priority: existing?.priority || 'medium',
+      nextAction: existing?.next_action || 'Track employer response and follow up on the application.',
+      notes: existing?.notes || 'Auto-created from an explicit application-confirmation email.',
+      rawData: { ...(existing ? parseObject(existing.raw_data_json) : {}), applicationConfirmation: confirmation, sourceEmailId: input.id || null },
+      description: existing?.description || '',
+      requirements: existing ? parseObject(existing.requirements_json, []) : [],
+      archived: false,
+      matchScore: existing?.match_score ?? null,
+      requirementsMatchScore: existing?.requirements_match_score ?? null,
+      candidateMatchScore: existing?.candidate_match_score ?? null,
+      fitTier: existing?.fit_tier || null,
+      matchSummary: existing?.match_summary || 'Created from an explicit application-confirmation email.'
+    });
+    const linked = linkEmailToJob({ emailId: input.id || stableEmailId(input.provider || 'gmail', input.externalId), jobId: job.id });
+    return { created: !existing, linked: true, reason: existing ? 'matched_existing_pipeline_job' : 'created_from_application_confirmation', job, email: linked };
+  }
   function markEmailSeen(input = {}) {
     const emailId = bounded(input.emailId, 160);
     if (!sqlite.prepare('SELECT 1 FROM email_messages WHERE id = ?').get(emailId)) throw new Error('Email not found.');
@@ -594,18 +738,22 @@ function createDatabase({ userDataPath, seedPath } = {}) {
   seedDefaults();
   const hierarchyRepairResult = repairWorkspaceHierarchy();
   const seedResult = seedRoadmap();
+  // Normalize every existing application at startup so records created before
+  // the workspace-root change cannot keep displaying the legacy Documents path.
+  sqlite.prepare('SELECT id FROM job_applications WHERE deleted_at IS NULL').all().forEach(({ id: applicationId }) => ensureApplicationFiles(applicationId));
+  repairStoredMasterResumeHeadings();
   return {
     databasePath, seedResult, hierarchyRepairResult, db, sqlite, tables: tableMap,
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
-    email: { upsert: upsertEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, markJobSeen: markJobEmailsSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
+    email: { upsert: upsertEmail, autoAssignApplication: autoAssignApplicationEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, markJobSeen: markJobEmailsSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
     jobs: { list: listJobs, create: upsertJob, update: upsertJob, delete: (recordId) => softDelete(jobOpportunities, recordId), activity: { list: listJobActivity, record: recordJobActivity, recordGoogleVoiceConversation, assignGoogleVoiceConversation, ingestGoogleVoiceActivity, markSeen: markJobActivitySeen }, followUps: { list: listJobFollowUps, create: createJobFollowUp, complete: completeJobFollowUp }, calendar: { list: listJobCalendarEvents, create: createJobCalendarEvent } }, profiles: { getCurrent: getProfile, upsert: upsertProfile }, resumes: { getMaster: getResume, upsertMaster: upsertResume },
-    applications: { createOrResume: createOrResumeApplication, get: getApplication, getForJob: (jobId) => applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE job_id = ? AND deleted_at IS NULL').get(bounded(jobId, 160))), listActive: () => sqlite.prepare('SELECT * FROM job_applications WHERE deleted_at IS NULL ORDER BY last_activity_at DESC').all().map(applicationToRenderer), transition: transitionApplication, abandon: abandonApplication, completeSubmission, listEvents: (applicationId) => sqlite.prepare('SELECT * FROM job_application_events WHERE application_id = ? ORDER BY created_at ASC').all(bounded(applicationId, 160)).map(eventToRenderer), recordEvent: recordApplicationEvent, listAnswers: (applicationId) => sqlite.prepare("SELECT * FROM job_application_answers WHERE deleted_at IS NULL AND (application_id = ? OR scope = 'global') ORDER BY updated_at DESC").all(bounded(applicationId, 160)).map(answerToRenderer), saveAnswer: saveApplicationAnswer, refreshReadiness: refreshApplicationReadiness, documents: { save: saveDocument, list: listDocuments, get: getDocument, update: updateDocument, approve: approveDocument, select: selectDocument, selectMasterResume, markExport: markDocumentExport } },
+    applications: { createOrResume: createOrResumeApplication, get: getApplication, getForJob: (jobId) => applicationToRenderer(sqlite.prepare('SELECT * FROM job_applications WHERE job_id = ? AND deleted_at IS NULL').get(bounded(jobId, 160))), listActive: () => sqlite.prepare('SELECT * FROM job_applications WHERE deleted_at IS NULL ORDER BY last_activity_at DESC').all().map(applicationToRenderer), ensureFiles: ensureApplicationFiles, resolveFile: resolveApplicationFile, transition: transitionApplication, abandon: abandonApplication, completeSubmission, listEvents: (applicationId) => sqlite.prepare('SELECT * FROM job_application_events WHERE application_id = ? ORDER BY created_at ASC').all(bounded(applicationId, 160)).map(eventToRenderer), recordEvent: recordApplicationEvent, recordExternalApplicationUrl, listAnswers: (applicationId) => sqlite.prepare("SELECT * FROM job_application_answers WHERE deleted_at IS NULL AND (application_id = ? OR scope = 'global') ORDER BY updated_at DESC").all(bounded(applicationId, 160)).map(answerToRenderer), saveAnswer: saveApplicationAnswer, saveExternalAccount, getExternalAccount, refreshReadiness: refreshApplicationReadiness, resetDocuments: resetApplicationDocuments, documents: { save: saveDocument, list: listDocuments, get: getDocument, update: updateDocument, approve: approveDocument, select: selectDocument, selectMasterResume, markExport: markDocumentExport } },
     close: () => sqlite.close(),
   };
 }
 
-module.exports = { createDatabase, tables: { projects, tasks, goals, userSettings, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities, jobApplications, jobApplicationAnswers, jobApplicationEvents, jobApplicationDocuments }, parseCsv };
+module.exports = { createDatabase, tables: { projects, tasks, goals, userSettings, checkIns, notes, briefings, integrationsMetadata, calendarEvents, jobOpportunities, jobApplications, jobApplicationAnswers, jobApplicationEvents, jobApplicationDocuments, jobApplicationExternalAccounts }, parseCsv };

@@ -1,12 +1,17 @@
 const crypto = require('crypto');
-const { decideField } = require('./application-policy.cjs');
+const { BLOCKED, decideField } = require('./application-policy.cjs');
 const planId = () => `fill-plan-${crypto.randomUUID()}`;
 
-function buildFillPlan({ sessionId, applicationId, pageFingerprint, fields = [], profile = {}, excluded = [] }) {
+function buildFillPlan({ sessionId, applicationId, pageFingerprint, fields = [], profile = {}, excluded = [], aiDecisions = {} }) {
   const excludedSet = new Set(excluded);
   return { id: planId(), sessionId, applicationId, pageFingerprint, createdAt: new Date().toISOString(), fields: fields.map((field) => {
-    const decision = decideField(field, { profile, excluded: excludedSet.has(field.fieldFingerprint) });
-    return { fieldFingerprint: field.fieldFingerprint, category: field.category, label: field.label, action: decision.action, displayValue: decision.value ? String(decision.value).slice(0, 300) : '', protectedValueRef: '', provenance: decision.provenance, confidence: decision.confidence, reasonCode: decision.reasonCode };
+    const deterministic = decideField(field, { profile, excluded: excludedSet.has(field.fieldFingerprint) });
+    const ai = aiDecisions?.[field.fieldFingerprint];
+    // AI may answer safe application questions, but identity fields remain tied
+    // to the verified profile and protected categories can never be overridden.
+    const useAi = Boolean(ai?.action === 'fill' && ai.displayValue && !BLOCKED.has(field.category) && field.category !== 'identity_contact');
+    const decision = useAi ? { action: 'fill', value: String(ai.displayValue), provenance: ['ai.application_answer', ...(Array.isArray(ai.evidence) ? ai.evidence.slice(0, 5) : [])], confidence: Number.isFinite(Number(ai.confidence)) ? Number(ai.confidence) : 0.7, reasonCode: 'ai_generated_application_answer' } : deterministic;
+    return { fieldFingerprint: field.fieldFingerprint, category: field.category, label: field.label, action: decision.action, displayValue: decision.value ? String(decision.value).slice(0, 300) : '', protectedValueRef: '', provenance: decision.provenance, confidence: decision.confidence, reasonCode: decision.reasonCode, reason: useAi ? String(ai.reason || 'AI-generated answer').slice(0, 500) : decision.reasonCode, aiGenerated: useAi };
   }) };
 }
 
@@ -19,6 +24,9 @@ function validatePlanForFill({ plan, currentPageFingerprint, fields = [], profil
     const decision = decideField(field, { profile });
     // Recompute from the current trusted profile to prevent a stale plan from
     // applying a value that was removed or changed after review.
+    if (entry.aiGenerated) {
+      return entry.action === 'fill' && entry.displayValue && !BLOCKED.has(field.category) ? entry : { ...entry, action: 'blocked', reasonCode: 'ai_answer_invalid' };
+    }
     return decision.action === 'fill' && String(decision.value) === entry.displayValue ? entry : { ...entry, action: 'blocked', reasonCode: decision.reasonCode };
   });
 }

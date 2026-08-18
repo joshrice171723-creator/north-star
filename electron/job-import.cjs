@@ -19,7 +19,14 @@ const salary = (value) => {
   const detail = value?.value || value;
   const min = detail?.minValue; const max = detail?.maxValue; const unit = detail?.unitText || detail?.unitCode;
   if (min || max) return `${min ? `$${Number(min).toLocaleString()}` : ''}${min && max ? '–' : ''}${max ? `$${Number(max).toLocaleString()}` : ''}${unit ? ` ${unit}` : ''}`;
+  if (Number.isFinite(Number(detail))) return `$${Number(detail).toLocaleString()}`;
   return '';
+};
+const salaryFromText = (value) => {
+  const match = String(value || '').match(/(?:USD|US\$|\$)\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:-|–|to)\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:per|\/)\s*(year|yr|hour|hr))?/i);
+  if (!match) return '';
+  const unit = match[3] ? ` per ${match[3].replace(/^yr$/i, 'year').replace(/^hr$/i, 'hour')}` : '';
+  return `USD $${Number(match[1].replace(/,/g, '')).toLocaleString()}–$${Number(match[2].replace(/,/g, '')).toLocaleString()}${unit}`;
 };
 
 function parseJobListing(html, url) {
@@ -34,10 +41,12 @@ function parseJobListing(html, url) {
   const company = text(posting?.hiringOrganization?.name || matchMeta(html, 'og:site_name'), 300);
   const description = stripHtml(posting?.description || matchMeta(html, 'description') || matchMeta(html, 'og:description'));
   const employmentType = text(asArray(posting?.employmentType).join(', '), 120);
+  const remote = String(posting?.jobLocationType || '').toUpperCase() === 'TELECOMMUTE' || /\bremote\b|work from home|telecommute/i.test(`${description} ${location(posting?.jobLocation)}`);
+  const parsedLocation = location(posting?.jobLocation) || location(posting?.applicantLocationRequirements) || (remote ? 'Remote' : '');
   return {
     url, canonicalUrl: url, source: new URL(url).hostname.replace(/^www\./, ''), roleTitle: title.replace(/\s*[|·–—-]\s*[^|·–—-]+$/, ''), company,
-    location: text(location(posting?.jobLocation) || location(posting?.applicantLocationRequirements), 300), employmentType,
-    salaryRange: salary(posting?.baseSalary), description, requirements: [], postedAt: posting?.datePosted || null, expiresAt: posting?.validThrough ? String(posting.validThrough).slice(0, 10) : null,
+    location: text(parsedLocation, 300), remoteType: remote ? 'remote' : 'onsite', employmentType,
+    salaryRange: salaryFromText(description) || salary(posting?.baseSalary), description, requirements: [], postedAt: posting?.datePosted || null, expiresAt: posting?.validThrough ? String(posting.validThrough).slice(0, 10) : null,
   };
 }
 

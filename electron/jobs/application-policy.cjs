@@ -4,17 +4,17 @@ const BLOCKED = new Set(['sensitive_voluntary_disclosure', 'legal_signature', 'a
 const fieldText = (field = {}) => `${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.autocomplete || ''} ${field.inputType || ''}`.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_./-]+/g, ' ').toLowerCase();
 const profileSource = (field) => {
   const text = fieldText(field);
-  if (/first name|given name/.test(text)) return 'firstName';
-  if (/last name|family name|surname/.test(text)) return 'lastName';
+  if (/first name|given name|forename/.test(text)) return 'firstName';
+  if (/last name|family name|surname|second name/.test(text)) return 'lastName';
   if (/email/.test(text)) return 'email';
-  if (/phone|mobile/.test(text)) return 'phone';
+  if (/phone|mobile|telephone|cell/.test(text)) return 'phone';
   if (/linkedin/.test(text)) return 'linkedinUrl';
   if (/github/.test(text)) return 'githubUrl';
   if (/portfolio|website/.test(text)) return 'portfolioUrl';
-  if (/postal|zip/.test(text)) return 'postalCode';
-  if (/street|address/.test(text)) return 'street';
-  if (/city/.test(text)) return 'city';
-  if (/state|province|region/.test(text)) return 'state';
+  if (/postal|zip|post code/.test(text)) return 'postalCode';
+  if (/street|address line|address/.test(text)) return 'street';
+  if (/city|town|locality/.test(text)) return 'city';
+  if (/state|province|region|county/.test(text)) return 'state';
   if (/country/.test(text)) return 'country';
   return 'fullName';
 };
@@ -31,7 +31,7 @@ function classifyField(field = {}) {
   if (/race|ethnicity|gender|veteran|disability|voluntary self/.test(text)) return 'sensitive_voluntary_disclosure';
   if (/signature|certify|attest|legal agreement|terms and conditions/.test(text)) return 'legal_signature';
   if (field.inputType === 'file') return 'file_upload';
-  if (/email|phone|first name|last name|given name|family name|full name|address|street|city|state|province|postal|zip|country|linkedin|github|portfolio/.test(text)) return 'identity_contact';
+  if (/email|phone|mobile|telephone|cell|first name|last name|given name|forename|family name|surname|full name|address|street|city|town|locality|state|province|region|county|postal|zip|post code|country|linkedin|github|portfolio/.test(text)) return 'identity_contact';
   if (/authorized|sponsorship|visa/.test(text)) return 'work_authorization';
   if (/salary|compensation|relocat|travel|start date/.test(text)) return 'compensation';
   if (field.elementType === 'textarea' || /why are you|describe|cover letter|additional information/.test(text)) return 'free_text';

@@ -14,6 +14,7 @@ const {
   selectTopJobsPerProvider,
 } = require('../electron/job-search.cjs');
 const { fallbackSearchBrief, buildProviderLanes } = require('../electron/job-search-planner.cjs');
+const { parseUsLocation, formatLocationForProvider, formatLocationScope } = require('../electron/location-format.cjs');
 
 function aiSearchPlan(brief, includeAdzuna = false) {
   return {
@@ -156,6 +157,33 @@ test('Adzuna failure does not hide successful USAJOBS results', async () => {
   } finally { global.fetch = originalFetch; }
 });
 
+test('Adzuna sends five planned role titles as five separate what requests', async () => {
+  const originalFetch = global.fetch;
+  const queries = [];
+  const expected = ['Forward Deployed Engineer', 'AI Implementation Engineer', 'Solutions Engineer AI', 'Applied AI Engineer', 'Technical Solutions Engineer'];
+  global.fetch = async (url) => {
+    const value = String(url);
+    assert.match(value, /api\.adzuna\.com/);
+    queries.push(new URL(value).searchParams.get('what'));
+    return { ok: true, status: 200, json: async () => ({ results: [], count: 0 }) };
+  };
+  try {
+    const result = await searchJobs({
+      profile: {},
+      credentials: { adzunaAppId: 'app-1', adzunaApiKey: 'key-1' },
+      plan: {
+        source: 'ai',
+        searchBrief: { targetIntent: expected[0], jobFamilies: [expected[0]], locations: [] },
+        providerLanes: [],
+        adzunaQueries: expected.map((what, index) => ({ laneId: `adzuna-${index + 1}`, what })),
+        publicQueries: { remotive: [], dice: [] },
+      },
+    });
+    assert.deepEqual(queries, expected);
+    assert.equal(result.sourceStats.find((entry) => entry.key === 'adzuna').requestsAttempted, 5);
+  } finally { global.fetch = originalFetch; }
+});
+
 test('retrieval score favors title and skills and hard exclusions remove aviation', () => {
   const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'], excludedKeywords: ['aviation'] }, {});
   const relevant = normalizeUsaJobsItem(usaItem(), { laneId: 'title-1', type: 'position-title', positionTitle: 'Computer Scientist' });
@@ -199,17 +227,17 @@ test('network failure is retryable and safe', async () => {
   } finally { global.fetch = originalFetch; }
 });
 
-test('retrieval starts all five providers before waiting and reports every provider', async () => {
+test('retrieval starts all four providers before waiting and reports every provider', async () => {
   const originalFetch = global.fetch; const started = []; const releases = []; let released = false;
-  global.fetch = async (url) => { started.push(String(url)); if (!released) await new Promise((resolve) => releases.push(resolve)); if (String(url).includes('usajobs')) return { ok: true, status: 200, json: async () => ({ SearchResult: { SearchResultItems: [], SearchResultCountAll: 0 } }) }; if (String(url).includes('adzuna')) return { ok: true, status: 200, json: async () => ({ results: [], count: 0 }) }; if (String(url).includes('remotive')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) }; return { ok: true, status: 200, json: async () => ({ data: [] }) }; };
+  global.fetch = async (url) => { started.push(String(url)); if (!released) await new Promise((resolve) => releases.push(resolve)); if (String(url).includes('usajobs')) return { ok: true, status: 200, json: async () => ({ SearchResult: { SearchResultItems: [], SearchResultCountAll: 0 } }) }; if (String(url).includes('adzuna')) return { ok: true, status: 200, json: async () => ({ results: [], count: 0 }) }; if (String(url).includes('remotive')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) }; return { ok: true, status: 200, json: async () => ({ jobs: [] }) }; };
   try {
-    const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {}); const plan = { ...aiSearchPlan(brief, true), publicQueries: { remotive: [{ laneId: 'r', search: 'AI engineer' }], arbeitnow: [{ laneId: 'a', searchTerms: ['AI'] }], dice: [{ laneId: 'd', keyword: 'AI engineer' }] } };
+    const brief = fallbackSearchBrief({ targetRoles: ['AI engineer'] }, {}); const plan = { ...aiSearchPlan(brief, true), publicQueries: { remotive: [{ laneId: 'r', search: 'AI engineer' }], dice: [{ laneId: 'd', keyword: 'AI engineer' }] } };
     const pending = searchJobs({ profile: {}, credentials: { usajobsEmail: 'x@y.com', usajobsApiKey: 'x', adzunaAppId: 'x', adzunaApiKey: 'x' }, plan });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.ok(started.some((url) => url.includes('usajobs'))); assert.ok(started.some((url) => url.includes('adzuna'))); assert.ok(started.some((url) => url.includes('remotive'))); assert.ok(started.some((url) => url.includes('arbeitnow'))); assert.ok(started.some((url) => url.includes('mcp.dice.com')));
+    assert.ok(started.some((url) => url.includes('usajobs'))); assert.ok(started.some((url) => url.includes('adzuna'))); assert.ok(started.some((url) => url.includes('remotive'))); assert.ok(started.some((url) => url.includes('mcp.dice.com')));
     released = true; while (releases.length) releases.shift()();
     const result = await pending;
-    assert.deepEqual(result.providerResults.map((entry) => entry.provider), ['usajobs', 'adzuna', 'remotive', 'arbeitnow', 'dice']);
+    assert.deepEqual(result.providerResults.map((entry) => entry.provider), ['usajobs', 'adzuna', 'remotive', 'dice']);
   } finally { global.fetch = originalFetch; }
 });
 
@@ -242,12 +270,11 @@ test('Remotive continues with distinct query variants until it has 20 qualified 
       const poor = query === 'data scientist';
       return { ok: true, status: 200, json: async () => ({ 'job-count': 20, jobs: Array.from({ length: 20 }, (_, index) => remotiveJob(`${poor ? 'poor' : 'good'}-${index}`, poor ? 'Customer Success Manager' : 'Machine Learning Engineer', poor ? 'Own account renewals.' : 'Build Python machine learning systems.')) }) };
     }
-    if (value.includes('arbeitnow')) return { ok: true, status: 200, json: async () => ({ data: [] }) };
     throw new Error(`Unexpected request: ${value}`);
   };
   try {
     const brief = { jobFamilies: ['Machine Learning Engineer'], mustHaveSkills: ['python'], remotePreference: 'any', locations: [] };
-    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'narrow', search: 'data scientist' }], arbeitnow: [{ laneId: 'feed', searchTerms: ['machine learning'] }] } }, refineQuery: async ({ provider }) => provider === 'remotive' ? { laneId: 'ai-refined', search: 'Machine Learning Engineer' } : null });
+    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'narrow', search: 'data scientist' }] } }, refineQuery: async ({ provider }) => provider === 'remotive' ? { laneId: 'ai-refined', search: 'Machine Learning Engineer' } : null });
     const remotive = result.sourceStats.find((entry) => entry.key === 'remotive');
     assert.deepEqual(remotiveQueries.slice(0, 2), ['data scientist', 'Machine Learning Engineer']);
     assert.equal(remotive.requestsAttempted, 2);
@@ -272,12 +299,11 @@ test('a query-capable provider uses all five request slots when it never reaches
       remotiveCalls += 1;
       return { ok: true, status: 200, json: async () => ({ 'job-count': 20, jobs: Array.from({ length: 20 }, (_, index) => ({ id: `unqualified-${remotiveCalls}-${index}`, title: 'Customer Success Manager', description: 'Own renewals.', company_name: 'Example', candidate_required_location: 'Remote', url: `https://example.test/${remotiveCalls}/${index}` })) }) };
     }
-    if (value.includes('arbeitnow')) return { ok: true, status: 200, json: async () => ({ data: [] }) };
     throw new Error(`Unexpected request: ${value}`);
   };
   try {
     const brief = { targetIntent: 'AI engineer', jobFamilies: ['Machine Learning Engineer', 'Data Scientist', 'Platform Engineer'], mustHaveSkills: ['python', 'aws'], remotePreference: 'any', locations: [] };
-    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'narrow', search: 'narrow role' }], arbeitnow: [{ laneId: 'feed', searchTerms: ['machine learning'] }] } }, refineQuery: async ({ provider, attemptedLanes }) => provider === 'remotive' ? { laneId: `ai-${attemptedLanes.length + 1}`, search: `AI tailored query ${attemptedLanes.length + 1}` } : null });
+    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'narrow', search: 'narrow role' }] } }, refineQuery: async ({ provider, attemptedLanes }) => provider === 'remotive' ? { laneId: `ai-${attemptedLanes.length + 1}`, search: `AI tailored query ${attemptedLanes.length + 1}` } : null });
     const remotive = result.sourceStats.find((entry) => entry.key === 'remotive');
     assert.equal(remotiveCalls, MAX_PROVIDER_REQUESTS);
     assert.equal(remotive.requestsAttempted, MAX_PROVIDER_REQUESTS);
@@ -286,25 +312,13 @@ test('a query-capable provider uses all five request slots when it never reaches
   } finally { global.fetch = originalFetch; }
 });
 
-test('Arbeitnow advances feed pages through the same five-request quality budget', async () => {
-  const originalFetch = global.fetch; const pages = [];
-  global.fetch = async (url) => {
-    const value = String(url);
-    if (value.includes('arbeitnow')) {
-      pages.push(Number(new URL(value).searchParams.get('page')));
-      return { ok: true, status: 200, json: async () => ({ data: Array.from({ length: 100 }, (_, index) => ({ slug: `page-${pages.at(-1)}-${index}`, title: 'Customer Success Manager', description: 'Own renewals.', company_name: 'Example', location: 'Remote', url: `https://example.test/${pages.at(-1)}/${index}` })) }) };
-    }
-    if (value.includes('remotive.com')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) };
-    throw new Error(`Unexpected request: ${value}`);
-  };
-  try {
-    const brief = { jobFamilies: ['Machine Learning Engineer'], mustHaveSkills: ['python'], remotePreference: 'any', locations: [] };
-    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'remote', search: 'machine learning' }], arbeitnow: [{ laneId: 'feed', searchTerms: ['machine learning'] }] } } });
-    const arbeitnow = result.sourceStats.find((entry) => entry.key === 'arbeitnow');
-    assert.deepEqual(pages, [1, 2, 3, 4, 5]);
-    assert.equal(arbeitnow.requestsAttempted, MAX_PROVIDER_REQUESTS);
-    assert.equal(arbeitnow.qualifiedCount, 0);
-  } finally { global.fetch = originalFetch; }
+test('selected US locations normalize to each provider contract', () => {
+  const parsed = parseUsLocation('Oklahoma City, OK');
+  assert.deepEqual({ city: parsed.city, stateCode: parsed.stateCode, stateName: parsed.stateName }, { city: 'Oklahoma City', stateCode: 'OK', stateName: 'Oklahoma' });
+  assert.equal(formatLocationForProvider(parsed, 'usajobs'), 'Oklahoma City, Oklahoma');
+  assert.equal(formatLocationForProvider(parsed, 'adzuna'), 'Oklahoma City, OK');
+  assert.equal(formatLocationForProvider(parsed, 'dice'), 'Oklahoma City, OK');
+  assert.equal(formatLocationScope({ locationName: 'Oklahoma City, OK', radiusMiles: 100 }, 'usajobs').locationName, 'Oklahoma City, Oklahoma');
 });
 
 test('pipeline jobs are excluded from later AI-ranking candidates by provider and listing ID', () => {
@@ -324,28 +338,4 @@ test('remote candidates remain eligible and receive a modest retrieval preferenc
   const local = { ...remote, externalId: 'local', location: 'Dallas, TX', remoteType: 'onsite' };
   assert.ok(qualificationReason(remote, brief) === null);
   assert.equal(calculateRetrievalScore(remote, brief) > calculateRetrievalScore(local, brief), true);
-});
-
-test('Arbeitnow evaluates matching candidates from later feed pages instead of truncating before qualification', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async (url) => {
-    const value = String(url);
-    if (value.includes('arbeitnow')) {
-      const page = Number(new URL(value).searchParams.get('page'));
-      const ordinary = Array.from({ length: 99 }, (_, index) => ({ slug: `ordinary-${page}-${index}`, title: 'Account Manager', description: 'Own renewals.', company_name: 'Example', location: 'Remote', url: `https://example.test/${page}/${index}` }));
-      const special = { slug: 'later-match', title: 'Machine Learning Engineer', description: 'Build Python machine learning systems.', company_name: 'Example', location: 'Remote', url: 'https://example.test/later-match' };
-      return { ok: true, status: 200, json: async () => ({ data: page === 4 ? [...ordinary, special] : [...ordinary, { ...ordinary[0], slug: `ordinary-${page}-99` }] }) };
-    }
-    if (value.includes('remotive.com')) return { ok: true, status: 200, json: async () => ({ jobs: [] }) };
-    throw new Error(`Unexpected request: ${value}`);
-  };
-  try {
-    const brief = { jobFamilies: ['Machine Learning Engineer'], mustHaveSkills: ['python'], remotePreference: 'any', locations: [] };
-    const result = await searchJobs({ plan: { source: 'ai', searchBrief: brief, providerLanes: [], adzunaQueries: [], publicQueries: { remotive: [{ laneId: 'remote', search: 'machine learning' }], arbeitnow: [{ laneId: 'feed', searchTerms: ['machine learning engineer'] }] } } });
-    const arbeitnow = result.sourceStats.find((entry) => entry.key === 'arbeitnow');
-    assert.equal(arbeitnow.retrievedRaw, 500);
-    assert.equal(arbeitnow.uniqueCount, 1);
-    assert.equal(arbeitnow.qualifiedCount, 1);
-    assert.ok(result.jobs.some((job) => job.externalId === 'later-match'));
-  } finally { global.fetch = originalFetch; }
 });

@@ -54,7 +54,10 @@ function buildCoverLetterClaimLedger(job = {}, evidenceCatalog = {}) {
       : { requirement, category: 'gap_unsupported', evidenceIds: [], evidence: [] };
   };
   const matches = requirements.map(classify);
-  const approvedClaims = evidence.filter((item) => /\b(built|designed|maintained|partnered|translated|production|api|workflow|debug|agent|llm|automation|context engineering|model routing|independent|operated|clarified|shipped|observed)\b/i.test(item.text)).slice(0, 40);
+  // Candidate resume lines that state concrete work are all eligible claims. Keep
+  // this intentionally broad: a narrow verb list made valid evidence such as
+  // "Added Gmail ingestion" impossible to approve after generation.
+  const approvedClaims = evidence.filter((item) => /\b(built|designed|maintained|partnered|translated|production|api|workflow|debug|agent|llm|automation|context engineering|model routing|independent|operated|clarified|shipped|observed|added|implemented|engineered|developed|modernized|reviewed|investigated|scraped)\b/i.test(item.text)).slice(0, 40);
   const jobTerms = requirementTerms(`${job.roleTitle || ''} ${array(job.requirements).join(' ')}`).slice(0, 30);
   const narrativeEvidence = approvedClaims.map((item) => {
     const normalized = normalize(item.text);

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
+import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
 import JobsView from './JobsView.jsx';
 import GroupedEmailMonitorPanel from './jobs/EmailMonitorPanel.jsx';
 import WorkspaceSettingsModal from './WorkspaceSettingsModal.jsx';
@@ -624,7 +624,7 @@ function App() {
   return <div className="app" ref={appRef} data-theme={theme}>
     {googleVoiceNotification && <div className="google-voice-toast" role="status" onClick={openGoogleVoiceFromNotification}><PhoneCall size={18}/><span><b>{googleVoiceNotification.title || 'Google Voice'}</b><small>{googleVoiceNotification.body || 'New call or message'}</small></span><button type="button" aria-label="Dismiss Google Voice notification" onClick={(event) => { event.stopPropagation(); setGoogleVoiceNotification(null); }}><X size={15}/></button></div>}
     <aside className="sidebar">
-      <div className="brand"><div className="brand-icon" aria-hidden="true"><Star className="brand-star" size={19} fill="currentColor" strokeWidth={1.8}/></div><div><b>North Star</b><small>Command center</small></div></div>
+      <div className="brand"><div className="brand-icon" aria-hidden="true"><img className="brand-star" src="/norht_Star_icon.png" alt="" /></div><div><b>North Star</b><small>Command center</small></div></div>
       <div className="nav-label">COMMAND CENTER</div>
       <nav>
         <button className={view === 'today' ? 'nav active' : 'nav'} onClick={() => setView('today')}><Flame size={17}/> Today’s Focus</button>

@@ -15,6 +15,7 @@
     "@langchain/openai": "^1.5.8",
     "@vitejs/plugin-react": "latest",
     "better-sqlite3": "^13.0.3",
+    "country-state-city": "^3.2.1",
     "drizzle-orm": "^0.45.2",
     "langsmith": "^0.8.11",
     "lucide-react": "latest",

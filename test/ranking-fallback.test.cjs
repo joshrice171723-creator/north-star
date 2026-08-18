@@ -9,8 +9,10 @@ test('job search keeps deterministic candidates when final AI selection fails', 
   assert.match(source, /showing deterministic provider candidates/);
   assert.match(source, /ranked = found\.jobs\.map/);
   assert.doesNotMatch(source, /No jobs were selected/);
-  assert.match(source, /ai_returned_no_qualifying_selections/);
-  assert.match(source, /showing the best retrieved candidates/);
+  assert.doesNotMatch(source, /ai_returned_no_qualifying_selections/);
+  assert.match(source, /showing deterministic provider candidates/);
+  assert.match(source, /assessments/);
+  assert.match(source, /aiAssessments/);
 });
 
 // Verify the fallback score shape used by the main-process projection.
@@ -32,8 +34,15 @@ test('AI final selections are explicitly typed', () => {
 
 test('OpenRouter permits the final selector to request 20k output tokens', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
-  assert.match(source, /OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS = 20_000/);
+  assert.match(source, /OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS = 50_000/);
   assert.match(source, /Math\.min\(Number\(options\.max_tokens\).*OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS/);
+});
+
+test('OpenRouter unreadable 200 bodies fail before selection repair', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  assert.doesNotMatch(source, /response\.json\(\)\.catch\(\(\) => \(\{\}\)\)/);
+  assert.match(source, /openrouter_invalid_response_body/);
+  assert.match(source, /openrouter_empty_message/);
 });
 
 test('frontend does not mix retrieval fallbacks into successful AI results', () => {

@@ -17,7 +17,8 @@ function normalizeEmploymentTypes(values) {
 function diceParams(lane = {}, scope = {}, page = 1, brief = {}) {
   const keyword = text(lane.keyword || lane.search || brief.jobFamilies?.[0] || brief.targetIntent || 'technology', 120);
   const params = { keyword, jobs_per_page: Math.max(1, Math.min(100, Number(lane.jobsPerPage || lane.jobs_per_page) || 50)), page_number: Math.max(1, Number(page) || 1) };
-  const location = text(lane.location || scope.locationName, 160); if (location) params.location = location;
+  // A selected profile location wins over planner wording so Dice uses the canonical pair.
+  const location = text(scope.locationName || lane.location, 160); if (location) params.location = location;
   // Dice's public documentation lists "miles", but the live MCP schema
   // validates the abbreviated enum value "mi" (or "km") only.
   const radius = Number(lane.radius || brief.radiusMiles); if (Number.isFinite(radius) && radius >= 1) { params.radius = Math.min(100, radius); params.radius_unit = 'mi'; }

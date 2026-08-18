@@ -71,4 +71,8 @@ function installApiAuditFetch() {
   };
 }
 
-module.exports = { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose };
+// Audio payloads contain a user's voice and must not be copied into the job-search
+// API audit log. Callers can use this only for intentionally non-audited requests.
+const getUninstrumentedFetch = () => originalFetch;
+
+module.exports = { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch };

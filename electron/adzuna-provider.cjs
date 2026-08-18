@@ -17,7 +17,8 @@ function buildAdzunaParams(lane = {}, scope = {}, page = 1, brief = {}) {
   });
   const query = lane.what || lane.positionTitle || lane.keyword || brief.targetIntent || brief.jobFamilies?.[0] || 'technology';
   params.set('what', text(query, 120));
-  const location = lane.where || scope.locationName;
+  // A selected profile location wins over planner wording so Adzuna stays anchored to it.
+  const location = scope.locationName || lane.where;
   if (location && !/^[A-Za-z]{2}$/.test(String(location).trim())) params.set('where', text(location, 160));
   const salary = Number.isInteger(lane.salaryMin) ? lane.salaryMin : brief.minimumSalary;
   if (Number.isInteger(salary) && salary > 0) params.set('salary_min', String(salary));

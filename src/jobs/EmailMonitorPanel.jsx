@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Ban, BriefcaseBusiness, ChevronDown, CircleAlert, ExternalLink, Mail, Search } from 'lucide-react';
 import './emailMonitor.css';
+import { appliedJobs } from './emailJobFilter.js';
 
 const readableEmailBody = (body) => {
   const source = String(body || '');
@@ -14,7 +15,7 @@ const isAssigned = (email) => !email.isExcluded && (email.linkedJobIds || []).le
 const jobLabel = (job) => `${job.company} - ${job.roleTitle}`;
 const jobsForEmail = (jobs, email) => { const linkedJobId = (email.linkedJobIds || [])[0]; if (!linkedJobId || jobs.some((job) => job.id === linkedJobId)) return jobs; return [{ id: linkedJobId, company: 'Assigned pipeline job', roleTitle: linkedJobId }, ...jobs]; };
 
-export default function EmailMonitorPanel({ jobs = [] }) {
+export default function EmailMonitorPanel({ jobs: allJobs = [] }) {
   const [source, setSource] = useState({ configured: false, email: '' }); const [emails, setEmails] = useState([]); const [includeExcluded, setIncludeExcluded] = useState(false); const [view, setView] = useState('review'); const [selectedEmail, setSelectedEmail] = useState(null); const [query, setQuery] = useState(''); const [results, setResults] = useState([]); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const [expanded, setExpanded] = useState(false);
   const load = async () => { const [savedSource, savedEmails] = await Promise.all([window.desktopShell?.getEmailSource?.(), window.desktopShell?.listJobEmails?.({ jobOnly: true, includeExcluded, limit: 50 })]); if (savedSource) setSource(savedSource); setEmails(savedEmails || []); };
   useEffect(() => { load().catch((cause) => setMessage(cause?.message || 'Could not load email monitor.')); }, [includeExcluded]);
@@ -26,6 +27,7 @@ export default function EmailMonitorPanel({ jobs = [] }) {
   const blockSender = async (sender) => { setBusy(true); try { await window.desktopShell?.blockJobEmailSender?.({ senderKey: sender.senderKey, sender: sender.sender }); setSelectedEmail(null); await load(); setMessage(`Blocked ${sender.sender || sender.senderKey}.`); } catch (cause) { setMessage(cause?.message || 'Could not block sender.'); } finally { setBusy(false); } };
   const openInGmail = async (email) => { try { await window.desktopShell?.openGmailEmail?.({ externalId: email.external_id, threadId: email.thread_id }); } catch (cause) { setMessage(cause?.message || 'Could not open this email in Gmail.'); } };
   const viewEmails = useMemo(() => view === 'assigned' ? emails.filter(isAssigned) : view === 'not-relevant' ? emails.filter((email) => email.isExcluded) : emails.filter(needsReview), [emails, view]);
+  const jobs = useMemo(() => appliedJobs(allJobs), [allJobs]);
   const senderGroups = useMemo(() => [...viewEmails.reduce((groups, email) => { const key = email.senderKey || email.sender || 'unknown-sender'; const group = groups.get(key) || { senderKey: key, sender: email.sender || 'Unknown sender', emails: [] }; group.emails.push(email); groups.set(key, group); return groups; }, new Map()).values()], [viewEmails]);
   const counts = { review: emails.filter(needsReview).length, assigned: emails.filter(isAssigned).length, 'not-relevant': emails.filter((email) => email.isExcluded).length };
   const searchContext = async () => setResults(query.trim() ? await window.desktopShell?.searchJobEmails?.(query, 10) : []);
