@@ -42,3 +42,20 @@ user-data/
 *.har
 *.trace
 screenshots/
+
+# Local portfolio/demo data and generated application documents
+Job Applications/
+output/
+tmp/
+*.pdf
+*.docx
+*.jpeg
+*Screenshot*.png
+*Codex Image*.png
+
+# Personal resume and cover-letter exports
+Joshua_*
+cover_letter-*
+
+# Local-only brand exports; the app uses the checked-in public asset instead
+north_Star_logo.png
