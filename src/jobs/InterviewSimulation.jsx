@@ -4,7 +4,7 @@ import './interviewSimulation.css';
 import './interviewResearch.css';
 
 // Allow a longer natural pause before ending an answer so brief pauses do not cut the candidate off.
-const SILENCE_MS = 1500; const SPEECH_THRESHOLD = 0.035;
+const SILENCE_MS = 4000; const SPEECH_THRESHOLD = 0.035;
 const audioFormat = (mime = '') => mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : mime.includes('mp4') ? 'm4a' : 'webm';
 const labels = { interviewType: [['behavioral', 'Behavioral'], ['technical', 'Technical'], ['mixed', 'Mixed']], difficulty: [['practice', 'Practice'], ['realistic', 'Realistic'], ['challenging', 'Challenging']], interviewerStyle: [['supportive', 'Supportive'], ['professional', 'Professional'], ['skeptical', 'Skeptical']] };
 const defaultSettings = { interviewType: 'mixed', difficulty: 'realistic', interviewerStyle: 'professional' };
