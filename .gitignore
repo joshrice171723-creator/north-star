@@ -59,3 +59,10 @@ cover_letter-*
 
 # Local-only brand exports; the app uses the checked-in public asset instead
 north_Star_logo.png
+
+# Internal working notes kept locally, outside the portfolio surface
+plans/
+skills/
+ACADEMY_CAPTURE_PHASE.md
+BUG_REPORT.md
+HERMES_HANDOFF_*.md
