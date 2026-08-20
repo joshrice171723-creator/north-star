@@ -3,7 +3,8 @@ import { Mic, Play, Square, Trophy, X } from 'lucide-react';
 import './interviewSimulation.css';
 import './interviewResearch.css';
 
-const SILENCE_MS = 900; const SPEECH_THRESHOLD = 0.035;
+// Allow a longer natural pause before ending an answer so brief pauses do not cut the candidate off.
+const SILENCE_MS = 1500; const SPEECH_THRESHOLD = 0.035;
 const audioFormat = (mime = '') => mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : mime.includes('mp4') ? 'm4a' : 'webm';
 const labels = { interviewType: [['behavioral', 'Behavioral'], ['technical', 'Technical'], ['mixed', 'Mixed']], difficulty: [['practice', 'Practice'], ['realistic', 'Realistic'], ['challenging', 'Challenging']], interviewerStyle: [['supportive', 'Supportive'], ['professional', 'Professional'], ['skeptical', 'Skeptical']] };
 const defaultSettings = { interviewType: 'mixed', difficulty: 'realistic', interviewerStyle: 'professional' };
