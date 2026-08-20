@@ -1,25 +1,53 @@
 # North Star
 
-A native Electron desktop AI Executive Coach Command Center with a protected Learning & Development module for the **Claude Certified Architect – Professional (CCAR-P)** credential.
+North Star is a native Electron desktop workspace for turning professional development into an accountable, evidence-based practice. It combines a structured learning path, daily focus, follow-through tracking, AI coaching, job discovery, and application preparation in one local-first command center.
 
-## Product scope
+This repository is presented as a portfolio project. The product is intentionally opinionated: it keeps durable user data local, protects credentials in the Electron main process, and separates generated practice from official learning content.
 
-North Star is intended to guide the learner through an ordered study path while keeping official Anthropic preparation, local progress, notes, and clearly labeled app-created practice in one focused workspace.
+## What it demonstrates
 
-- Ordered official preparation curriculum
-- Professional Prep Course and supplemental preparation library
-- Local progress tracking and notes
-- App-created practice drills clearly separated from Anthropic content
-- Resizable three-pane workspace with the Anthropic Academy loaded natively on the right
+- React and Electron architecture with a narrow preload bridge
+- Local SQLite persistence with versioned migrations
+- Multi-provider job search, ranking, filtering, and diagnostics
+- AI-assisted coaching and document generation with explicit audit boundaries
+- Controlled application workflows with confirmation gates and file isolation
+- A three-pane desktop workspace that can load external learning surfaces natively
+- Automated coverage across core domain logic and critical user flows
 
-The app must not expose credentials in the renderer, logs, documents, commits, or diagnostics. Explicitly approved provider credentials are handled only in the Electron main process and encrypted with OS-backed storage.
+## Product areas
 
-## Development
+| Area | Purpose |
+| --- | --- |
+| Today | Focus the day around a small set of commitments and next actions |
+| Learning | Follow an ordered certification curriculum with local progress and notes |
+| Jobs | Search, normalize, rank, and inspect opportunities across providers |
+| Applications | Organize documents and plan browser-assisted application steps |
+| Follow-through | Track commitments, check-ins, and evidence of progress |
+| Coach | Generate contextual prompts and practice conversations without exposing secrets to the renderer |
+
+## Architecture
+
+```text
+React renderer (src/)
+        │ narrow IPC bridge
+Electron preload (electron/preload.cjs)
+        │
+Electron main process (electron/main.cjs)
+        ├── SQLite database + migrations
+        ├── provider integrations and job ranking
+        ├── document and application workflows
+        └── credential storage through OS-backed safe storage
+```
+
+The renderer owns presentation and interaction state. Provider credentials, filesystem access, database writes, external navigation, and AI calls remain in the main process. Local runtime data is stored outside the repository.
+
+## Run locally
 
 Requirements: Node.js and npm.
 
 ```bash
 npm install
+Copy-Item .env.example .env
 npm run build
 npm run desktop
 ```
@@ -30,34 +58,25 @@ For a production-style local launch:
 npm run desktop:prod
 ```
 
-## Project structure
+The Google sign-in flow requires a desktop OAuth client with the Gmail API enabled. Add its values to the gitignored `.env` file before starting the app.
 
-- `src/main.jsx` — React application and study-workspace state
-- `src/styles.css` — renderer styling
-- `electron/main.cjs` — Electron main process and native Academy view
-- `electron/preload.cjs` — narrow renderer/main IPC bridge
-- `PROJECT_BRIEF.md` — compact project rules and navigation
-- `.hermes/DOCUMENT_INDEX.md` — selective document-loading map
+## Verification
 
-## Git workflow
+```bash
+npm run build
+npm test
+```
 
-- `main` is the stable branch.
-- Use short-lived branches such as `feat/curriculum-progress` or `fix/academy-pane`.
-- Make small commits. For exploratory work, do not create/run tests after every act; use risk-based checkpoints. Before merge, run the full applicable verification.
-- Do not commit `node_modules`, `dist`, local secrets, or user data.
+The test suite covers the application domain, provider adapters, ranking fallbacks, persistence contracts, document handling, and key presentation behavior.
 
-## Status
+## Repository conventions
 
-The active objective is selected by the user. Read `PROJECT_BRIEF.md`, then `.hermes/DOCUMENT_INDEX.md`; do not infer priority from this README or load every plan.
+- `src/` contains the React renderer and UI/domain helpers.
+- `electron/` contains the privileged desktop process, integrations, persistence, and migrations.
+- `test/` contains automated regression coverage.
+- `.hermes/` contains durable project decisions and product context.
+- Local resumes, generated PDFs, application exports, temporary files, and secrets are intentionally excluded from version control.
 
 ## License
 
-Private project. All rights reserved unless changed by the repository owner.
-Gmail sign-in requires one-time Google Cloud setup. Create an OAuth client of type **Desktop app** in a Google Cloud project with the Gmail API enabled, then add the downloaded client values to the gitignored local `.env`:
-
-```dotenv
-GMAIL_OAUTH_CLIENT_ID=your-desktop-client-id.apps.googleusercontent.com
-GMAIL_OAUTH_CLIENT_SECRET=your-desktop-client-secret
-```
-
-Restart the app after changing `.env`, then use **Sign in with Google**. The app opens the Google consent window, captures the local callback, and stores the refresh token through Electron safe storage. Users do not need to find or paste an API key.
+Private portfolio project. All rights reserved unless changed by the repository owner.
