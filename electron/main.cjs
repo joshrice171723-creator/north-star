@@ -1267,7 +1267,14 @@ function registerDatabaseIpc() {
     const root = path.resolve(String(workspaceRoot || ''));
     if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error('Choose a valid Codex workspace folder first.');
     if (codexSession?.process && !codexSession.process.killed) return { connected: true, threadId: codexSession.threadId, workspaceRoot: codexSession.workspaceRoot };
-    const child = spawn('codex', ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    let child;
+    try {
+      child = spawn('codex', ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    } catch (error) {
+      // Windows Store-packaged executables can be visible on PATH but refuse child-process launches.
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') throw new Error('Windows blocked North Star from launching the installed Codex executable. Install a standalone Codex CLI or choose a launchable CLI path.');
+      throw error;
+    }
     const session = { process: child, nextId: 1, pending: new Map(), threadId: null, workspaceRoot: root };
     codexSession = session;
     const output = readline.createInterface({ input: child.stdout });
@@ -1279,7 +1286,7 @@ function registerDatabaseIpc() {
       } catch { /* Ignore non-JSON process noise. */ }
     });
     child.stderr.on('data', (chunk) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/log', params: { text: String(chunk).trim() } }); });
-    child.on('error', (error) => { for (const pending of session.pending.values()) pending.reject(error); session.pending.clear(); if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: error.message } }); });
+    child.on('error', (error) => { const launchError = error?.code === 'EPERM' || error?.code === 'EACCES' ? new Error('Windows blocked North Star from launching the installed Codex executable. Install a standalone Codex CLI or choose a launchable CLI path.') : error; for (const pending of session.pending.values()) pending.reject(launchError); session.pending.clear(); if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: launchError.message } }); });
     child.on('close', () => { if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/closed', params: {} }); });
     const request = (method, params = {}) => new Promise((resolve, reject) => { const id = session.nextId++; session.pending.set(id, { resolve, reject }); child.stdin.write(`${JSON.stringify({ method, id, params })}\n`); });
     const notify = (method, params = {}) => child.stdin.write(`${JSON.stringify({ method, params })}\n`);
