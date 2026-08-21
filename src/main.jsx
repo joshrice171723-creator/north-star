@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Target, Trash2, X } from 'lucide-react';
+import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView from './JobsView.jsx';
 import InterviewPrepView from './InterviewPrepView.jsx';
 import GroupedEmailMonitorPanel from './jobs/EmailMonitorPanel.jsx';
