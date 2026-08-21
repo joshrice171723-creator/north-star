@@ -1279,7 +1279,7 @@ function createLocalVideo(input = {}) {
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30',
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12', '-t', '12',
-    '-vf', `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='${textPath.replace(/\\/g, '/')}' :fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local MVP draft  |  12 seconds':fontcolor=0xaab4c3:fontsize=22:x=70:y=630`,
+    '-vf', `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='${textPath.replace(/\\/g, '/').replace(/:/g, '\\:')}':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local MVP draft  |  12 seconds':fontcolor=0xaab4c3:fontsize=22:x=70:y=630`,
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { encoding: 'utf8', windowsHide: true });
