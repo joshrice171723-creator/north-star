@@ -68,7 +68,6 @@ const curriculum = [
 
 const prompts = ['Explain this lesson simply', 'Quiz me on what I studied', 'Give me an architecture scenario'];
 const STORAGE_KEY = 'claude-architect-study-workspace-v1';
-const CODEX_STORAGE_KEY = 'north-star-codex-workspace-v1';
 const PROJECT_STATUSES = [['backlog','Backlog'],['todo','To do'],['in-progress','In progress'],['blocked','Blocked'],['done','Done']];
 const TASK_PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['urgent', 'Urgent']];
 const priorityLabel = (priority) => TASK_PRIORITIES.find(([value]) => value === priority)?.[1] || 'Medium';
@@ -313,19 +312,11 @@ function CodexWorkspace() {
   const [workspace, setWorkspace] = useState(null);
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState([]);
-  const [logs, setLogs] = useState([]);
-  const [panel, setPanel] = useState('conversation');
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(CODEX_STORAGE_KEY) || 'null');
-      if (saved?.root) setWorkspace({ root: saved.root, files: Array.isArray(saved.files) ? saved.files : [] });
-    } catch { /* Persisted Codex workspace state is optional and safe to ignore if malformed. */ }
-  }, []);
-  useEffect(() => { window.desktopShell?.getCodexStatus?.().then(setStatus).catch(() => setStatus({ available: false })); return window.desktopShell?.onCodexEvent?.((event) => { if (event.method === 'process/closed' || event.method === 'process/error') { setConnected(false); setBusy(false); } const text = event.params?.delta || event.params?.text || event.params?.message || event.params?.item?.text || ''; if (event.method === 'process/log' || event.method === 'process/error') { if (text) setLogs((current) => [...current, { method: event.method, text: String(text) }]); if (event.method === 'process/error') setError(text || 'Codex process error.'); return; } if (event.method === 'process/closed') return; if (text) setMessages((current) => [...current, { method: event.method, text: String(text) }]); }); }, []);
-  const chooseWorkspace = async () => { setError(''); const result = await window.desktopShell?.chooseCodexWorkspace?.(); if (!result?.canceled) { setWorkspace(result); setMessages([]); try { localStorage.setItem(CODEX_STORAGE_KEY, JSON.stringify({ root: result.root, files: result.files })); } catch { /* Workspace persistence is best-effort and never blocks selection. */ } } };
+  useEffect(() => { window.desktopShell?.getCodexStatus?.().then(setStatus).catch(() => setStatus({ available: false })); return window.desktopShell?.onCodexEvent?.((event) => { if (event.method === 'process/closed' || event.method === 'process/error') { setConnected(false); setBusy(false); } const text = event.params?.delta || event.params?.text || event.params?.message || event.params?.item?.text || ''; if (text) setMessages((current) => [...current, { method: event.method, text: String(text) }]); }); }, []);
+  const chooseWorkspace = async () => { setError(''); const result = await window.desktopShell?.chooseCodexWorkspace?.(); if (!result?.canceled) { setWorkspace(result); setMessages([]); } };
   const connect = async () => { if (!workspace) { setError('Choose a workspace folder first.'); return; } setBusy(true); setError(''); try { await window.desktopShell?.connectCodex?.(workspace.root); setConnected(true); } catch (cause) { setError(cause?.message || 'Codex could not connect.'); } finally { setBusy(false); } };
   const disconnect = async () => { await window.desktopShell?.disconnectCodex?.(); setConnected(false); setBusy(false); };
   const sendPrompt = async (event) => { event.preventDefault(); if (!prompt.trim()) return; setBusy(true); setError(''); setMessages((current) => [...current, { method: 'user', text: prompt.trim() }]); const outgoing = prompt; setPrompt(''); try { await window.desktopShell?.sendCodexTurn?.(outgoing); } catch (cause) { setError(cause?.message || 'Codex could not start that turn.'); } finally { setBusy(false); } };
@@ -336,11 +327,11 @@ function CodexWorkspace() {
         <h2><Code2 size={20} /> Codex workspace</h2>
         <p>Use a scoped local workspace for technical projects without changing North Star’s normal OpenRouter-powered features.</p>
       </div>
-      <span className={`codex-status${status.available ? ' available' : ''}`} title={status.error || ''}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex unavailable'}</span>
+      <span className={`codex-status${status.available ? ' available' : ''}`}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex not installed'}</span>
     </div>
       <div className="codex-notice" role="status">
       <ShieldCheck size={18} />
-      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched by North Star on this computer. You can still try the connection to see the exact launch error.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
+      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!status.available || !workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
     </div>
     <div className="codex-layout">
       <aside className="codex-file-panel">
@@ -348,9 +339,9 @@ function CodexWorkspace() {
         {workspace ? <div className="codex-file-list">{workspace.files.map((entry) => <div className="codex-file-row" key={entry.path}><span>{entry.type === 'directory' ? '▾' : '·'}</span>{entry.path}</div>)}{!workspace.files.length && <div className="codex-empty"><b>Folder is empty</b></div>}</div> : <div className="codex-empty"><FolderTree size={24} /><b>No workspace selected</b><span>Choose a folder to see a restricted file tree.</span></div>}
       </aside>
       <div className="codex-chat-panel">
-        <div className="codex-panel-head"><div className="codex-panel-tabs" role="tablist" aria-label="Codex panel"><button className={panel === 'conversation' ? 'active' : ''} type="button" role="tab" aria-selected={panel === 'conversation'} onClick={() => setPanel('conversation')}><Code2 size={15} /> Agent conversation</button><button className={panel === 'logs' ? 'active' : ''} type="button" role="tab" aria-selected={panel === 'logs'} onClick={() => setPanel('logs')}>Logs{logs.length ? ` (${logs.length})` : ''}</button></div><span className="codex-readonly">{connected ? 'Read-only workspace' : 'Not connected'}</span></div>
-        {panel === 'logs' ? <div className="codex-logs" role="tabpanel">{logs.length ? logs.map((log, index) => <div className="codex-log" key={`${log.method}-${index}`}><small>{log.method}</small><pre>{log.text}</pre></div>) : <div className="codex-empty codex-chat-empty"><b>No logs yet</b><span>Codex startup and process diagnostics will appear here.</span></div>}</div> : <>{!connected && <div className="codex-empty codex-chat-empty"><Code2 size={28} /><b>Connect Codex when you need it</b><span>Choose a workspace and connect to start a read-only thread.</span></div>}
-        {connected && <><div className="codex-messages">{messages.length ? messages.map((message, index) => <div className={`codex-message ${message.method === 'user' ? 'user' : ''}`} key={`${message.method}-${index}`}><small>{message.method === 'user' ? 'You' : 'Codex'}</small><p>{message.text}</p></div>) : <div className="codex-empty codex-chat-empty"><Code2 size={28} /><b>Connected and ready</b><span>Ask Codex to inspect the selected workspace.</span></div>}</div><form className="codex-prompt" onSubmit={sendPrompt}><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Codex to inspect this workspace…" rows="3" disabled={busy} /><button className="primary" type="submit" disabled={busy || !prompt.trim()}>{busy ? 'Working…' : 'Send prompt'}</button></form></>}</>}
+        <div className="codex-panel-head"><span><Code2 size={15} /> Agent conversation</span><span className="codex-readonly">{connected ? 'Read-only workspace' : 'Not connected'}</span></div>
+        {!connected && <div className="codex-empty codex-chat-empty"><Code2 size={28} /><b>Connect Codex when you need it</b><span>Choose a workspace and connect to start a read-only thread.</span></div>}
+        {connected && <><div className="codex-messages">{messages.length ? messages.map((message, index) => <div className={`codex-message ${message.method === 'user' ? 'user' : ''}`} key={`${message.method}-${index}`}><small>{message.method === 'user' ? 'You' : 'Codex'}</small><p>{message.text}</p></div>) : <div className="codex-empty codex-chat-empty"><Code2 size={28} /><b>Connected and ready</b><span>Ask Codex to inspect the selected workspace.</span></div>}</div><form className="codex-prompt" onSubmit={sendPrompt}><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Codex to inspect this workspace…" rows="3" disabled={busy} /><button className="primary" type="submit" disabled={busy || !prompt.trim()}>{busy ? 'Working…' : 'Send prompt'}</button></form></>}
       </div>
     </div>
     {error && <div className="codex-error" role="alert">{error}</div>}
