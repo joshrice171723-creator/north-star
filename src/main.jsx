@@ -308,6 +308,10 @@ function ThemeModal({ theme, onChange, onClose }) {
 }
 
 function CodexWorkspace() {
+  const [status, setStatus] = useState({ available: false });
+  const [workspace, setWorkspace] = useState(null);
+  useEffect(() => { window.desktopShell?.getCodexStatus?.().then(setStatus).catch(() => setStatus({ available: false })); }, []);
+  const chooseWorkspace = async () => { const result = await window.desktopShell?.chooseCodexWorkspace?.(); if (!result?.canceled) setWorkspace(result); };
   return <section className="codex-workspace">
     <div className="codex-hero">
       <div>
@@ -315,16 +319,16 @@ function CodexWorkspace() {
         <h2><Code2 size={20} /> Codex workspace</h2>
         <p>Use a scoped local workspace for technical projects without changing North Star’s normal OpenRouter-powered features.</p>
       </div>
-      <span className="codex-status"><span className="codex-status-dot" /> Not connected</span>
+      <span className={`codex-status${status.available ? ' available' : ''}`}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex not installed'}</span>
     </div>
-    <div className="codex-notice" role="status">
+      <div className="codex-notice" role="status">
       <ShieldCheck size={18} />
       <div><b>Optional for developers</b><p>North Star works normally without Codex installed. Connect it later when you want local file review, code changes, or approval-based automation.</p></div>
     </div>
     <div className="codex-layout">
       <aside className="codex-file-panel">
-        <div className="codex-panel-head"><span><FolderTree size={15} /> Workspace files</span><button className="secondary" type="button" disabled>Choose folder</button></div>
-        <div className="codex-empty"><FolderTree size={24} /><b>No workspace selected</b><span>Choose a folder to see a restricted file tree.</span></div>
+        <div className="codex-panel-head"><span><FolderTree size={15} /> Workspace files</span><button className="secondary" type="button" onClick={chooseWorkspace}>Choose folder</button></div>
+        {workspace ? <div className="codex-file-list">{workspace.files.map((entry) => <div className="codex-file-row" key={entry.path}><span>{entry.type === 'directory' ? '▾' : '·'}</span>{entry.path}</div>)}{!workspace.files.length && <div className="codex-empty"><b>Folder is empty</b></div>}</div> : <div className="codex-empty"><FolderTree size={24} /><b>No workspace selected</b><span>Choose a folder to see a restricted file tree.</span></div>}
       </aside>
       <div className="codex-chat-panel">
         <div className="codex-panel-head"><span><Code2 size={15} /> Agent conversation</span><span className="codex-readonly">Read-only until connected</span></div>
