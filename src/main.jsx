@@ -313,6 +313,8 @@ function App() {
   const [modules, setModules] = useState(() => restoreModules(savedState?.modules));
   const [roadmap, setRoadmap] = useState(() => emptyRoadmap());
   const [jobs, setJobs] = useState([]);
+  const [videoTopic, setVideoTopic] = useState('');
+  const [videoFactoryState, setVideoFactoryState] = useState({ status: 'idle', result: null, error: '' });
   const [jobDetailsOpen, setJobDetailsOpen] = useState(false);
   const [roadmapStatus, setRoadmapStatus] = useState({ state: 'loading', message: 'Loading the local roadmap…' });
   const [selectedProjectId, setSelectedProjectId] = useState(null);
@@ -475,6 +477,16 @@ function App() {
     if (result?.ok) setStudyMaterials(result.materials);
     const reviews = await window.desktopShell?.getAcademyStudyReviews?.();
     if (reviews?.ok) setStudyReviews(reviews.reviews || {});
+  };
+  const createVideoFactoryDraft = async () => {
+    if (!videoTopic.trim()) { setVideoFactoryState({ status: 'error', result: null, error: 'Enter a topic first.' }); return; }
+    setVideoFactoryState({ status: 'working', result: null, error: '' });
+    try {
+      const result = await window.desktopShell?.createVideoFactoryDraft?.({ topic: videoTopic });
+      setVideoFactoryState(result?.ok ? { status: 'complete', result, error: '' } : { status: 'error', result: null, error: result?.error || 'Video generation failed.' });
+    } catch (error) {
+      setVideoFactoryState({ status: 'error', result: null, error: error?.message || 'Video generation failed.' });
+    }
   };
   const generateFlashcards = async () => {
     if (!selectedCaptureIds.length) { setCaptureState({ status: 'error', message: 'Select one or more saved captures first.' }); return; }
@@ -655,7 +667,7 @@ function App() {
         <section className="hero"><div><span className="eyebrow">NORTH STAR · COMMAND CENTER</span><h1>See what matters. Choose what moves. <Star className="hero-star" size={23} fill="currentColor" strokeWidth={1.8}/></h1><p>A calm, local-first operating picture for priorities, projects, decisions, learning, and follow-through.</p></div><div className="progress"><strong>{progress}%</strong><small>learning module completion</small></div></section>
       )}
         {view === 'jobs' && <>{!jobDetailsOpen && <GroupedEmailMonitorPanel jobs={jobs} />}<JobsView jobs={jobs} onRefresh={refreshJobs} onDetailChange={setJobDetailsOpen} /></>}
-        {view === 'interview-prep' && <InterviewPrepView jobs={jobs} />}
+        {view === 'interview-prep' && <InterviewPrepView jobs={jobs} onOpenJobs={() => setView('jobs')} />}
         {view === 'today' && (roadmapStatus.state === 'loading'
           ? <section className="database-state"><div className="loading-spinner" aria-hidden="true"/><h2>Loading your local roadmap…</h2><p>Reading the canonical hierarchy from SQLite.</p></section>
           : roadmapStatus.state === 'error'
