@@ -1259,8 +1259,8 @@ async function searchGreenhouseBoardForCandidate(boardUrl) {
 
 function registerDatabaseIpc() {
   ipcMain.handle('codex:status', () => {
-    try { execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['codex'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
-    catch { return { available: false }; }
+    try { execFileSync('codex', ['--version'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
+    catch (error) { return { available: false, error: error?.message || 'Codex could not be launched from this app.' }; }
   });
   ipcMain.handle('codex:connect', async (event, workspaceRoot) => {
     assertTrustedRenderer(event);
@@ -1279,7 +1279,7 @@ function registerDatabaseIpc() {
       } catch { /* Ignore non-JSON process noise. */ }
     });
     child.stderr.on('data', (chunk) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/log', params: { text: String(chunk).trim() } }); });
-    child.on('error', (error) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: error.message } }); });
+    child.on('error', (error) => { for (const pending of session.pending.values()) pending.reject(error); session.pending.clear(); if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: error.message } }); });
     child.on('close', () => { if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/closed', params: {} }); });
     const request = (method, params = {}) => new Promise((resolve, reject) => { const id = session.nextId++; session.pending.set(id, { resolve, reject }); child.stdin.write(`${JSON.stringify({ method, id, params })}\n`); });
     const notify = (method, params = {}) => child.stdin.write(`${JSON.stringify({ method, params })}\n`);

@@ -327,11 +327,11 @@ function CodexWorkspace() {
         <h2><Code2 size={20} /> Codex workspace</h2>
         <p>Use a scoped local workspace for technical projects without changing North Star’s normal OpenRouter-powered features.</p>
       </div>
-      <span className={`codex-status${status.available ? ' available' : ''}`}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex not installed'}</span>
+      <span className={`codex-status${status.available ? ' available' : ''}`} title={status.error || ''}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex unavailable'}</span>
     </div>
       <div className="codex-notice" role="status">
       <ShieldCheck size={18} />
-      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!status.available || !workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
+      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched by North Star on this computer.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!status.available || !workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
     </div>
     <div className="codex-layout">
       <aside className="codex-file-panel">
