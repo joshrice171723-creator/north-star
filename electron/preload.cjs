@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopShell', {
-  getCodexStatus: () => ipcRenderer.invoke('codex:status'),
-  chooseCodexWorkspace: () => ipcRenderer.invoke('codex:choose-workspace'),
   navigateAcademy: (url) => ipcRenderer.invoke('academy:navigate', url),
   captureAcademyPage: () => ipcRenderer.invoke('academy:capture-page'),
   getAcademyCaptures: () => ipcRenderer.invoke('academy:get-captures'),

@@ -2,7 +2,6 @@ const electron = require('electron');
 const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
 const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -1256,30 +1255,6 @@ async function searchGreenhouseBoardForCandidate(boardUrl) {
 }
 
 function registerDatabaseIpc() {
-  ipcMain.handle('codex:status', () => {
-    try { runCodexCommand(['--version'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
-    catch (error) { return { available: false, error: error?.message || 'Codex could not be launched from this app.' }; }
-  });
-  ipcMain.handle('codex:choose-workspace', async (event) => {
-    assertTrustedRenderer(event);
-    const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose a Codex workspace', properties: ['openDirectory', 'createDirectory'] });
-    if (result.canceled || !result.filePaths[0]) return { canceled: true };
-    const root = path.resolve(result.filePaths[0]);
-    const files = [];
-    const ignored = new Set(['.git', 'node_modules', 'dist', 'build', 'release']);
-    const visit = (directory, depth = 0) => {
-      if (depth > 4 || files.length >= 400) return;
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (ignored.has(entry.name) || entry.name.startsWith('.')) continue;
-        const absolute = path.join(directory, entry.name);
-        const relative = path.relative(root, absolute);
-        if (entry.isDirectory()) { files.push({ path: relative, type: 'directory' }); visit(absolute, depth + 1); }
-        else files.push({ path: relative, type: 'file' });
-      }
-    };
-    visit(root);
-    return { canceled: false, root, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
-  });
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
   ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
   ipcMain.handle('coach:import-roadmap', (_event, payload) => coachDatabase.importRoadmap(validateRoadmapPayload(payload)));
