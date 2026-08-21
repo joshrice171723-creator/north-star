@@ -64,6 +64,19 @@ let googleVoiceTray;
 let isQuitting = false;
 let googleVoiceSnapshot = null;
 let codexSession = null;
+function resolveCodexCommand() {
+  const localCodexBin = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin') : '';
+  const localCandidates = localCodexBin && fs.existsSync(localCodexBin)
+    ? fs.readdirSync(localCodexBin, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join(localCodexBin, entry.name, 'codex.exe')).filter((candidate) => fs.existsSync(candidate)).sort().reverse()
+    : [];
+  if (localCandidates[0]) return { executable: localCandidates[0], shell: true };
+  return { executable: 'codex', shell: false };
+}
+function runCodexCommand(args, options = {}) {
+  const command = resolveCodexCommand();
+  if (command.shell) return execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command.executable, ...args], options);
+  return execFileSync(command.executable, args, options);
+}
 const googleVoiceUrl = 'https://voice.google.com/';
 const googleVoicePartition = 'persist:google-voice-native';
 const externalAccountCredentialsPath = () => path.join(app.getPath('userData'), 'external-application-credentials.json');
@@ -1259,7 +1272,7 @@ async function searchGreenhouseBoardForCandidate(boardUrl) {
 
 function registerDatabaseIpc() {
   ipcMain.handle('codex:status', () => {
-    try { execFileSync('codex', ['--version'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
+    try { runCodexCommand(['--version'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
     catch (error) { return { available: false, error: error?.message || 'Codex could not be launched from this app.' }; }
   });
   ipcMain.handle('codex:connect', async (event, workspaceRoot) => {
@@ -1269,7 +1282,11 @@ function registerDatabaseIpc() {
     if (codexSession?.process && !codexSession.process.killed) return { connected: true, threadId: codexSession.threadId, workspaceRoot: codexSession.workspaceRoot };
     let child;
     try {
-      child = spawn('codex', ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      const command = resolveCodexCommand();
+      // The per-user Windows Codex runtime is a launchable executable, but Node must invoke it through cmd.exe.
+      child = command.shell
+        ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command.executable, 'app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+        : spawn(command.executable, ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch (error) {
       // Windows Store-packaged executables can be visible on PATH but refuse child-process launches.
       if (error?.code === 'EPERM' || error?.code === 'EACCES') throw new Error('Windows blocked North Star from launching the installed Codex executable. Install a standalone Codex CLI or choose a launchable CLI path.');
