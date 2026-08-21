@@ -642,6 +642,7 @@ function App() {
       <nav>
         <button className={view === 'today' ? 'nav active' : 'nav'} onClick={() => setView('today')}><Flame size={17}/> Today’s Focus</button>
         <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => setView('command-center')}><ListChecks size={17}/> Command center</button>
+        <button className={view === 'command-center' ? 'nav active' : 'nav'} onClick={() => { setView('command-center'); setTimeout(() => document.querySelector('.video-factory-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0); }}><Play size={17}/> Video Factory</button>
         <button className={view === 'follow-through' ? 'nav active' : 'nav'} onClick={() => setView('follow-through')}><Check size={17}/> Follow-through <em>{followThroughView.counts.review}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><Target size={17}/> Projects <em>{roadmap.projects.filter((project) => project.kind === 'project' && !project.archived).length}</em></button>
         <button className={view === 'projects' ? 'nav active' : 'nav'} onClick={() => { setView('projects'); }}><FileText size={17}/> Archive <em>{roadmap.projects.filter((project) => project.kind === 'project' && project.archived).length}</em></button>
