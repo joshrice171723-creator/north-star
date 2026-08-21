@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopShell', {
   createVideoFactoryDraft: (input) => ipcRenderer.invoke('video-factory:create', input),
+  listVideoFactoryVideos: () => ipcRenderer.invoke('video-factory:list'),
+  openVideoFactoryFolder: () => ipcRenderer.invoke('video-factory:open-folder'),
+  deleteVideoFactoryVideo: (id) => ipcRenderer.invoke('video-factory:delete', id),
   navigateAcademy: (url) => ipcRenderer.invoke('academy:navigate', url),
   captureAcademyPage: () => ipcRenderer.invoke('academy:capture-page'),
   getAcademyCaptures: () => ipcRenderer.invoke('academy:get-captures'),

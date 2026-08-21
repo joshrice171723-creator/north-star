@@ -1286,11 +1286,53 @@ function createLocalVideo(input = {}) {
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) {
     throw new Error(`Local video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   }
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
+}
+
+function videoFactoryRoot() {
+  return path.join(app.getPath('userData'), 'video-factory');
+}
+
+function listLocalVideos() {
+  const factoryRoot = videoFactoryRoot();
+  if (!fs.existsSync(factoryRoot)) return [];
+  return fs.readdirSync(factoryRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^video-\d+$/.test(entry.name))
+    .map((entry) => {
+      const directory = path.join(factoryRoot, entry.name);
+      const outputPath = path.join(directory, 'video.mp4');
+      const topicPath = path.join(directory, 'topic.txt');
+      if (!fs.existsSync(outputPath)) return null;
+      const stats = fs.statSync(outputPath);
+      return {
+        id: entry.name,
+        topic: fs.existsSync(topicPath) ? fs.readFileSync(topicPath, 'utf8').trim() : 'Untitled video',
+        outputPath,
+        videoUrl: pathToFileURL(outputPath).toString(),
+        createdAt: stats.birthtime.toISOString(),
+        sizeBytes: stats.size,
+        durationSeconds: 12
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function deleteLocalVideo(id) {
+  if (typeof id !== 'string' || !/^video-\d+$/.test(id)) throw new Error('Invalid video id.');
+  const factoryRoot = videoFactoryRoot();
+  const directory = path.resolve(factoryRoot, id);
+  if (path.dirname(directory) !== path.resolve(factoryRoot)) throw new Error('Invalid video location.');
+  if (!fs.existsSync(directory)) throw new Error('Video not found.');
+  fs.rmSync(directory, { recursive: true, force: true });
+  return { ok: true, id };
 }
 
 function registerDatabaseIpc() {
   ipcMain.handle('video-factory:create', (event, input) => { assertTrustedRenderer(event); return createLocalVideo(input); });
+  ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
+  ipcMain.handle('video-factory:open-folder', (event) => { assertTrustedRenderer(event); const error = shell.openPath(videoFactoryRoot()); if (error) return error.then((message) => { if (message) throw new Error(message); return { ok: true }; }); return { ok: true }; });
+  ipcMain.handle('video-factory:delete', (event, id) => { assertTrustedRenderer(event); return deleteLocalVideo(id); });
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
   ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
   ipcMain.handle('coach:import-roadmap', (_event, payload) => coachDatabase.importRoadmap(validateRoadmapPayload(payload)));
