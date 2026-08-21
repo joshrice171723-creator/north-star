@@ -2,10 +2,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopShell', {
   getCodexStatus: () => ipcRenderer.invoke('codex:status'),
   chooseCodexWorkspace: () => ipcRenderer.invoke('codex:choose-workspace'),
-  connectCodex: (workspaceRoot) => ipcRenderer.invoke('codex:connect', workspaceRoot),
-  sendCodexTurn: (prompt) => ipcRenderer.invoke('codex:turn', prompt),
-  disconnectCodex: () => ipcRenderer.invoke('codex:disconnect'),
-  onCodexEvent: (listener) => { const handler = (_event, payload) => listener(payload); ipcRenderer.on('codex:event', handler); return () => ipcRenderer.removeListener('codex:event', handler); },
   navigateAcademy: (url) => ipcRenderer.invoke('academy:navigate', url),
   captureAcademyPage: () => ipcRenderer.invoke('academy:capture-page'),
   getAcademyCaptures: () => ipcRenderer.invoke('academy:get-captures'),

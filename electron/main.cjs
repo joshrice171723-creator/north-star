@@ -2,8 +2,7 @@ const electron = require('electron');
 const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFileSync, spawn } = require('child_process');
-const readline = require('readline');
+const { execFileSync } = require('child_process');
 const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -63,20 +62,6 @@ let googleVoiceMonitorTimer;
 let googleVoiceTray;
 let isQuitting = false;
 let googleVoiceSnapshot = null;
-let codexSession = null;
-function resolveCodexCommand() {
-  const localCodexBin = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin') : '';
-  const localCandidates = localCodexBin && fs.existsSync(localCodexBin)
-    ? fs.readdirSync(localCodexBin, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join(localCodexBin, entry.name, 'codex.exe')).filter((candidate) => fs.existsSync(candidate)).sort().reverse()
-    : [];
-  if (localCandidates[0]) return { executable: localCandidates[0], shell: true };
-  return { executable: 'codex', shell: false };
-}
-function runCodexCommand(args, options = {}) {
-  const command = resolveCodexCommand();
-  if (command.shell) return execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command.executable, ...args], options);
-  return execFileSync(command.executable, args, options);
-}
 const googleVoiceUrl = 'https://voice.google.com/';
 const googleVoicePartition = 'persist:google-voice-native';
 const externalAccountCredentialsPath = () => path.join(app.getPath('userData'), 'external-application-credentials.json');
@@ -1275,55 +1260,6 @@ function registerDatabaseIpc() {
     try { runCodexCommand(['--version'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
     catch (error) { return { available: false, error: error?.message || 'Codex could not be launched from this app.' }; }
   });
-  ipcMain.handle('codex:connect', async (event, workspaceRoot) => {
-    assertTrustedRenderer(event);
-    const root = path.resolve(String(workspaceRoot || ''));
-    if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error('Choose a valid Codex workspace folder first.');
-    if (codexSession?.process && !codexSession.process.killed) return { connected: true, threadId: codexSession.threadId, workspaceRoot: codexSession.workspaceRoot };
-    let child;
-    try {
-      const command = resolveCodexCommand();
-      // The per-user Windows Codex runtime is a launchable executable, but Node must invoke it through cmd.exe.
-      child = command.shell
-        ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command.executable, 'app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-        : spawn(command.executable, ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-    } catch (error) {
-      // Windows Store-packaged executables can be visible on PATH but refuse child-process launches.
-      if (error?.code === 'EPERM' || error?.code === 'EACCES') throw new Error('Windows blocked North Star from launching the installed Codex executable. Install a standalone Codex CLI or choose a launchable CLI path.');
-      throw error;
-    }
-    const session = { process: child, nextId: 1, pending: new Map(), threadId: null, workspaceRoot: root };
-    codexSession = session;
-    const output = readline.createInterface({ input: child.stdout });
-    output.on('line', (line) => {
-      try {
-        const message = JSON.parse(line);
-        if (message.id && session.pending.has(message.id)) { const pending = session.pending.get(message.id); session.pending.delete(message.id); message.error ? pending.reject(new Error(message.error.message || 'Codex request failed.')) : pending.resolve(message.result); }
-        else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: message.method || 'message', params: message.params || {} });
-      } catch { /* Ignore non-JSON process noise. */ }
-    });
-    child.stderr.on('data', (chunk) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/log', params: { text: String(chunk).trim() } }); });
-    child.on('error', (error) => { const launchError = error?.code === 'EPERM' || error?.code === 'EACCES' ? new Error('Windows blocked North Star from launching the installed Codex executable. Install a standalone Codex CLI or choose a launchable CLI path.') : error; for (const pending of session.pending.values()) pending.reject(launchError); session.pending.clear(); if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: launchError.message } }); });
-    child.on('close', () => { if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/closed', params: {} }); });
-    const request = (method, params = {}) => new Promise((resolve, reject) => { const id = session.nextId++; session.pending.set(id, { resolve, reject }); child.stdin.write(`${JSON.stringify({ method, id, params })}\n`); });
-    const notify = (method, params = {}) => child.stdin.write(`${JSON.stringify({ method, params })}\n`);
-    await request('initialize', { clientInfo: { name: 'north-star', title: 'North Star', version: '0.1.0' } });
-    notify('initialized', {});
-    const result = await request('thread/start', { cwd: root });
-    session.threadId = result?.thread?.id || null;
-    return { connected: true, threadId: session.threadId, workspaceRoot: root };
-  });
-  ipcMain.handle('codex:turn', async (event, prompt) => {
-    assertTrustedRenderer(event);
-    if (!codexSession?.process || !codexSession.threadId) throw new Error('Connect a Codex workspace first.');
-    const text = String(prompt || '').trim();
-    if (!text || text.length > 4000) throw new Error('Enter a prompt between 1 and 4,000 characters.');
-    const id = codexSession.nextId++;
-    codexSession.pending.set(id, { resolve: () => {}, reject: () => {} });
-    codexSession.process.stdin.write(`${JSON.stringify({ method: 'turn/start', id, params: { threadId: codexSession.threadId, input: [{ type: 'text', text }] } })}\n`);
-    return { started: true };
-  });
-  ipcMain.handle('codex:disconnect', (event) => { assertTrustedRenderer(event); if (codexSession?.process && !codexSession.process.killed) codexSession.process.kill(); codexSession = null; return { disconnected: true }; });
   ipcMain.handle('codex:choose-workspace', async (event) => {
     assertTrustedRenderer(event);
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose a Codex workspace', properties: ['openDirectory', 'createDirectory'] });
