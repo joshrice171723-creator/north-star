@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopShell', {
+  createVideoFactoryDraft: (input) => ipcRenderer.invoke('video-factory:create', input),
   navigateAcademy: (url) => ipcRenderer.invoke('academy:navigate', url),
   captureAcademyPage: () => ipcRenderer.invoke('academy:capture-page'),
   getAcademyCaptures: () => ipcRenderer.invoke('academy:get-captures'),
@@ -83,6 +84,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,generateInterviewDrill: (input) => ipcRenderer.invoke('jobs:interview:drill', input)
   ,improveInterviewAnswer: (input) => ipcRenderer.invoke('jobs:interview:answer-coach', input)
   ,exportInterviewReport: (input) => ipcRenderer.invoke('jobs:interview:report', input)
+  ,exportInterviewTranscript: (input) => ipcRenderer.invoke('jobs:interview:transcript', input)
   ,confirmJobApplicationSubmission: (input) => ipcRenderer.invoke('jobs:applications:confirm-submission', input)
   ,generateApplicationDocument: (input) => ipcRenderer.invoke('jobs:documents:generate', input)
   ,uploadApplicationDocument: (input) => ipcRenderer.invoke('jobs:documents:upload', input)
