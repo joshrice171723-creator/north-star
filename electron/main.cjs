@@ -970,6 +970,20 @@ async function scoreInterviewSimulation(input = {}) {
   coachDatabase.applications.recordEvent({ applicationId, eventType: 'interview_simulation_completed', summary: `Interview simulation scored ${score.overallScore}/100.`, metadata: { settings, score, transcript } });
   return score;
 }
+async function generateInterviewFlashcards(input = {}) {
+  const applicationId = validateApplicationId(input.applicationId);
+  const { job } = interviewContext(applicationId);
+  const transcript = Array.isArray(input.transcript) ? input.transcript.slice(-30).map((entry) => ({ speaker: entry.speaker, text: String(entry.text || '').slice(0, 2500) })) : [];
+  const score = input.score && typeof input.score === 'object' ? input.score : {};
+  const response = await openRouterChat([
+    { role: 'system', content: 'Create personalized interview-prep flashcards from the candidate transcript and evaluation. Focus only on skills or answer patterns that need work. Return JSON only: {"flashcards":[{"front":"","back":""}]}. Create at most 5 concise cards. Each front should be a practice question or prompt; each back should give a specific correction, framework, or reminder grounded in the evaluation. Never invent candidate facts or company facts.' },
+    { role: 'user', content: `JOB:\n${JSON.stringify({ company: job.company, roleTitle: job.roleTitle, description: String(job.description || '').slice(0, 10000), requirements: job.requirements || [] })}\nEVALUATION:\n${JSON.stringify({ categories: score.categories || {}, star: score.star || {}, redFlags: score.redFlags || [], improvements: score.improvements || [], nextDrills: score.nextDrills || [] })}\nTRANSCRIPT:\n${JSON.stringify(transcript)}\nEND_DATA` },
+  ], { auditPurpose: 'interview_personalized_flashcards', response_format: { type: 'json_object' }, max_tokens: 900 });
+  if (!response?.ok) throw new Error(response?.error || 'Could not generate interview flashcards.');
+  let result; try { result = JSON.parse(response.message?.content || '{}'); } catch { throw new Error('The interview flashcards response was not valid JSON.'); }
+  // Keep generated study prompts short and bounded because they are rendered directly in the interview panel.
+  return { flashcards: (Array.isArray(result.flashcards) ? result.flashcards : []).slice(0, 5).map((card) => ({ front: String(card?.front || '').slice(0, 300), back: String(card?.back || '').slice(0, 700) })).filter((card) => card.front && card.back) };
+}
 async function generateInterviewDrill(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const { job, resume } = interviewContext(applicationId);
   const category = String(input.category || 'evidence').slice(0, 80);
@@ -1334,6 +1348,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:interview:respond', async (event, input) => { assertTrustedRenderer(event); return generateInterviewSimulationResponse(input || {}); });
   ipcMain.handle('jobs:interview:research', async (event, input) => { assertTrustedRenderer(event); return researchInterviewRole(input || {}); });
   ipcMain.handle('jobs:interview:score', async (event, input) => { assertTrustedRenderer(event); return scoreInterviewSimulation(input || {}); });
+  ipcMain.handle('jobs:interview:flashcards', async (event, input) => { assertTrustedRenderer(event); return generateInterviewFlashcards(input || {}); });
   ipcMain.handle('jobs:interview:drill', async (event, input) => { assertTrustedRenderer(event); return generateInterviewDrill(input || {}); });
   ipcMain.handle('jobs:interview:answer-coach', async (event, input) => { assertTrustedRenderer(event); return improveInterviewAnswer(input || {}); });
   ipcMain.handle('jobs:interview:report', async (event, input) => { assertTrustedRenderer(event); return exportInterviewReport(input || {}); });

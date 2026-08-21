@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,generateInterviewResponse: (input) => ipcRenderer.invoke('jobs:interview:respond', input)
   ,researchInterviewRole: (input) => ipcRenderer.invoke('jobs:interview:research', input)
   ,scoreInterviewSimulation: (input) => ipcRenderer.invoke('jobs:interview:score', input)
+  ,generateInterviewFlashcards: (input) => ipcRenderer.invoke('jobs:interview:flashcards', input)
   ,generateInterviewDrill: (input) => ipcRenderer.invoke('jobs:interview:drill', input)
   ,improveInterviewAnswer: (input) => ipcRenderer.invoke('jobs:interview:answer-coach', input)
   ,exportInterviewReport: (input) => ipcRenderer.invoke('jobs:interview:report', input)
