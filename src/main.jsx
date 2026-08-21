@@ -334,13 +334,13 @@ function CodexWorkspace() {
       <div>
         <span className="eyebrow">OPTIONAL ADVANCED WORKSPACE</span>
         <h2><Code2 size={20} /> Codex workspace</h2>
-        <p>Use a scoped local workspace for technical projects with local file review and streamed agent progress.</p>
+        <p>Use a scoped local workspace for technical projects without changing North Star’s normal OpenRouter-powered features.</p>
       </div>
       <span className={`codex-status${status.available ? ' available' : ''}`} title={status.error || ''}><span className="codex-status-dot" /> {status.available ? 'Codex available' : 'Codex unavailable'}</span>
     </div>
       <div className="codex-notice" role="status">
       <ShieldCheck size={18} />
-      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched here. You can still try the connection to see the exact launch error.' : 'Connect Codex when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
+      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched by North Star on this computer. You can still try the connection to see the exact launch error.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
     </div>
     <div className="codex-layout">
       <aside className="codex-file-panel">
@@ -820,13 +820,4 @@ function App() {
     {showThemeSettings && <WorkspaceSettingsModal theme={theme} themes={THEMES} onThemeChange={setTheme} onClose={() => setShowThemeSettings(false)} />}
   </div>;
 }
-function CodexOnlyApp() {
-  return <div className="app codex-only-app" data-theme="graphite">
-    <main className="main">
-      <header><div className="crumb"><span>CODEX</span><ChevronRight size={14}/><b>Codex workspace</b></div></header>
-      <div className="main-scroll"><CodexWorkspace /></div>
-    </main>
-  </div>;
-}
-
-createRoot(document.getElementById('root')).render(<CodexOnlyApp />);
+createRoot(document.getElementById('root')).render(<App />);
