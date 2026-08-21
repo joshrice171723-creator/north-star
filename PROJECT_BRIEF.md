@@ -71,11 +71,12 @@ Completed phases and older plans are historical references, not automatic instru
 3. Work on one bounded objective only.
 4. State the smallest safe approach before editing.
 5. Make focused changes and validate at meaningful checkpoints.
-6. Do not automatically create tests or run the full suite after every exploratory act. Batch related work; use focused checks for behavior, persistence, networking, security, and shared logic.
-7. Before commit, add/update regression tests for completed behavior and run relevant focused validation. Before merge, run the full applicable verification suite.
-8. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` only when durable state changes.
-9. Update this brief only when product direction, constraints, navigation, or stable current state changes.
-10. Stop when the approved objective is complete. Do not silently begin the next phase.
+6. Treat every newly requested section as standalone; do not include, combine, or modify other sections unless the user explicitly asks for them.
+7. Do not automatically create tests or run the full suite after every exploratory act. Batch related work; use focused checks for behavior, persistence, networking, security, and shared logic.
+8. Before commit, add/update regression tests for completed behavior and run relevant focused validation. Before merge, run the full applicable verification suite.
+9. Update `.hermes/PROJECT_STATUS.md` and `.hermes/DECISIONS.md` only when durable state changes.
+10. Update this brief only when product direction, constraints, navigation, or stable current state changes.
+11. Stop when the approved objective is complete. Do not silently begin the next phase.
 
 ## Standard verification
 
