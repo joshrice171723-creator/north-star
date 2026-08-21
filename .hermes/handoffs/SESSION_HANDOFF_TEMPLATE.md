@@ -8,10 +8,10 @@ Copy this prompt into a new session after replacing the bracketed objective.
 You are continuing work on the AI Executive Coach Command Center.
 
 Work only in:
-C:\Users\joshr\OneDrive\Desktop\hermes\anthropic-certification-native
+C:\Users\joshr\OneDrive\Desktop\north-star\anthropic-certification-native
 
 Do not modify or use:
-C:\Users\joshr\OneDrive\Desktop\hermes\anthropic-certification
+C:\Users\joshr\OneDrive\Desktop\north-star\anthropic-certification
 
 Before making changes:
 

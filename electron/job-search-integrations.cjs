@@ -29,7 +29,7 @@ function publicConfig(env = process.env) {
   return {
     langChain: { configured: Boolean(env.OPENROUTER_API_KEY || env.LANGCHAIN_API_KEY), provider: 'OpenRouter via LangChain' },
     langGraph: { configured: true, workflow: 'job-search' },
-    langSmith: { configured: Boolean(env.LANGCHAIN_API_KEY), project: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'hermes-job-search' },
+    langSmith: { configured: Boolean(env.LANGCHAIN_API_KEY), project: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'north-star-job-search' },
     n8n: { configured: Boolean(env.N8N_JOB_SEARCH_WEBHOOK_URL), workflow: env.N8N_JOB_SEARCH_WORKFLOW_NAME || 'job-search-events' },
   };
 }
@@ -43,7 +43,7 @@ function createLangChainOpenRouterModel({ apiKey = process.env.OPENROUTER_API_KE
     temperature: 0.3,
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
-      defaultHeaders: { 'X-Title': 'Hermes Job Search' },
+      defaultHeaders: { 'X-Title': 'North Star Job Search' },
     },
   });
 }
@@ -95,7 +95,7 @@ function createLangSmithRunClient({ env = process.env, client } = {}) {
     async start({ runId, inputs, metadata = {} }) {
       if (!configured) return null;
       if (!langsmith) { const { Client } = loadLangSmith(); langsmith = new Client({ apiKey: env.LANGCHAIN_API_KEY, apiUrl: env.LANGCHAIN_ENDPOINT || DEFAULT_LANGSMITH_ENDPOINT }); }
-      await langsmith.createRun({ id: runId, name: 'hermes-job-search', run_type: 'chain', project_name: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'hermes-job-search', inputs, extra: { metadata } });
+      await langsmith.createRun({ id: runId, name: 'north-star-job-search', run_type: 'chain', project_name: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'north-star-job-search', inputs, extra: { metadata } });
       return runId;
     },
     async end({ runId, outputs, error }) {

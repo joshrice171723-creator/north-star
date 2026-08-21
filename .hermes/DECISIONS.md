@@ -79,11 +79,11 @@ Record decisions that future sessions should not casually reopen. If a decision 
 **Reason:** A reliable visual board is the first concrete operating workflow in the command center and provides the foundation for later prioritization and coaching.
 **Consequence:** The board remains the complete work inventory and its compatibility boundaries remain protected. The active execution boundary is now `AICC-PHA-023` and its feature roadmap; do not use this historical decision to defer Today’s Focus or grounded coach implementation.
 
-## D012 — Board state is designed for a future Hermes/OR document layer
+## D012 — Board state is designed for a future North Star/OR document layer
 
 **Status:** Active future-facing constraint
-**Decision:** Keep Projects + Tasks + Kanban records structured, stable-ID based, local-first, and attributable so a future Hermes AI layer can read the board together with OR documents and produce explainable recommendations without hidden mutation.
-**Reason:** The user wants Hermes to eventually work from the board in conjunction with OR documents. The board should therefore be a trustworthy source of structured work state, not a presentation-only mockup.
+**Decision:** Keep Projects + Tasks + Kanban records structured, stable-ID based, local-first, and attributable so a future North Star AI layer can read the board together with OR documents and produce explainable recommendations without hidden mutation.
+**Reason:** The user wants North Star to eventually work from the board in conjunction with OR documents. The board should therefore be a trustworthy source of structured work state, not a presentation-only mockup.
 **Consequence:** Do not add AI automation, document ingestion, cloud sync, credentials, or autonomous writes in the current Kanban phase. Future integrations must use explicit document provenance, read-only context by default, user approval for mutations, and reversible changes.
 
 ## D013 — Today View is a derived, read-only window over roadmap records

@@ -21,7 +21,7 @@ function requireApiKey(apiKey) {
 }
 
 function requestHeaders(apiKey) {
-  return { Authorization: `Bearer ${requireApiKey(apiKey)}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://anthropic.skilljar.com/', 'X-Title': 'Hermes Voice Test' };
+  return { Authorization: `Bearer ${requireApiKey(apiKey)}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://anthropic.skilljar.com/', 'X-Title': 'North Star Voice Test' };
 }
 
 async function readJsonResponse(response, fallback) {

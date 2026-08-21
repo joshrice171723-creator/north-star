@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-08-08
 
-**Current feature constraint:** The Today’s Focus phase (`AICC-PHA-023`) includes a bounded grounded AI Executive ADHD Coach. The deterministic roadmap derivation remains authoritative; provider recommendations must be validated, explainable, privacy-bounded, and user-approved before mutation. Broader Hermes/OR document ingestion, cloud sync, and autonomous behavior remain outside this feature.
-**Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
+**Current feature constraint:** The Today’s Focus phase (`AICC-PHA-023`) includes a bounded grounded AI Executive ADHD Coach. The deterministic roadmap derivation remains authoritative; provider recommendations must be validated, explainable, privacy-bounded, and user-approved before mutation. Broader North Star/OR document ingestion, cloud sync, and autonomous behavior remain outside this feature.
+**Active project:** `C:/Users/joshr/OneDrive/Desktop/north-star/anthropic-certification-native`
 **Branch observed:** `main`
 **Current phase:** Release 1 phase `AICC-PHA-023` — Today’s Focus and Dependency-Aware Coaching. Planning is expanded to include the grounded coach implementation, and execution begins at `AICC-TSK-067`; prior Follow-through work remains implemented with automated verification passed and interactive Electron acceptance as a manual handoff.
 

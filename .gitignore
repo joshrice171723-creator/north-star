@@ -26,7 +26,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Hermes runtime files are ignored, but durable project documentation is versioned
+# North Star runtime files are ignored, but durable project documentation is versioned
 .hermes/*
 !.hermes/PRODUCT_VISION.md
 !.hermes/PROJECT_STATUS.md

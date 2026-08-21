@@ -3,7 +3,7 @@
 > **Read this file first in every new session.** It is the compact project index. Do not read every linked document; use `.hermes/DOCUMENT_INDEX.md` to select one relevant document.
 
 **Last updated:** 2026-08-10
-**Active project:** `C:/Users/joshr/OneDrive/Desktop/hermes/anthropic-certification-native`
+**Active project:** `C:/Users/joshr/OneDrive/Desktop/north-star/anthropic-certification-native`
 
 ## Product identity
 

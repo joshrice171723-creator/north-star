@@ -58,7 +58,7 @@ async function searchDice({ lane = {}, scope = {}, page = 1, brief = {} }) {
     // Dice documents a Streamable HTTP MCP endpoint. Initialize each bounded
     // search session before calling search_jobs so this works with servers
     // that require the negotiated MCP session header.
-    const initialized = await timeoutFetch(DICE_MCP_URL, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'hermes-job-search', version: '1.0.0' } } }) });
+    const initialized = await timeoutFetch(DICE_MCP_URL, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'north-star-job-search', version: '1.0.0' } } }) });
     diagnostics.httpStatus = initialized.status;
     if (!initialized.ok) return { jobs: [], resultCount: 0, rawResultCount: 0, totalAvailable: 0, diagnostics: { ...diagnostics, durationMs: Date.now() - started }, error: { code: initialized.status === 429 ? 'rate_limited' : 'provider_error', message: `Dice MCP returned HTTP ${initialized.status}.`, retryable: initialized.status !== 401 && initialized.status !== 403 } };
     await readMcpJson(initialized);
