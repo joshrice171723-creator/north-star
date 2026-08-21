@@ -953,7 +953,7 @@ async function scoreInterviewSimulation(input = {}) {
   const { job, resume, coverLetter } = interviewContext(applicationId);
   const settings = interviewSettings(input.settings);
   const research = input.research && typeof input.research === 'object' ? input.research : null;
-  const transcript = Array.isArray(input.transcript) ? input.transcript.slice(-30).map((entry) => ({ speaker: entry.speaker, text: String(entry.text || '').slice(0, 2500) })) : [];
+  const transcript = Array.isArray(input.transcript) ? input.transcript.map((entry) => ({ speaker: entry.speaker, text: String(entry.text || '').slice(0, 2500) })) : [];
   if (!transcript.some((entry) => entry.speaker === 'candidate' || entry.speaker === 'you')) throw new Error('Answer at least one interview question before scoring.');
   const response = await openRouterChat([
     { role: 'system', content: 'Score a mock interview using only the supplied job, candidate documents, settings, and transcript. Return JSON only with this shape: {"overallScore":0,"categories":{"relevance":0,"evidence":0,"structure":0,"roleDepth":0,"conciseness":0},"star":{"situation":false,"task":false,"action":false,"result":false},"redFlags":[],"strengths":[],"improvements":[],"nextDrills":[]}. Detect STAR coverage for behavioral answers. Identify vague claims, unsupported experience, overlong answers, and conflicts with the supplied documents. Mention resume-grounded evidence when present. Scores are integers from 0 to 100. Keep each list to at most 4 short items. Do not judge accent, identity, or protected characteristics.' },
@@ -1002,8 +1002,14 @@ async function improveInterviewAnswer(input = {}) {
 async function exportInterviewReport(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const { job } = interviewContext(applicationId); const score = input.score || {}; const transcript = Array.isArray(input.transcript) ? input.transcript : [];
   const report = `# Interview Preparation Report\n\n## ${job.roleTitle} at ${job.company}\n\nGenerated: ${new Date().toLocaleString()}\n\n## Score\nOverall: ${score.overallScore ?? 'N/A'}/100\n\n${Object.entries(score.categories || {}).map(([key, value]) => `- ${key}: ${value}/100`).join('\n')}\n\n## STAR coverage\n${Object.entries(score.star || {}).map(([key, value]) => `- ${key}: ${value ? 'present' : 'missing'}`).join('\n')}\n\n## Red flags\n${(score.redFlags || []).map((item) => `- ${item}`).join('\n') || '- None detected'}\n\n## Strengths\n${(score.strengths || []).map((item) => `- ${item}`).join('\n') || '- None recorded'}\n\n## Improvement plan\n${(score.improvements || []).map((item) => `- ${item}`).join('\n') || '- None recorded'}\n\n## Transcript\n${transcript.map((entry) => `**${entry.speaker === 'candidate' ? 'You' : 'Interviewer'}:** ${entry.text}`).join('\n\n')}`;
-  const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export interview preparation report', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-report.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
+  const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export full interview transcript', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-transcript.txt`, filters: [{ name: 'Text file', extensions: ['txt'] }] });
   if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, report, 'utf8'); return { savedPath: chosen.filePath };
+}
+async function exportInterviewTranscript(input = {}) {
+  const applicationId = validateApplicationId(input.applicationId); const { job } = interviewContext(applicationId); const transcript = Array.isArray(input.transcript) ? input.transcript : [];
+  const content = [`Interview simulation transcript`, `${job.roleTitle} at ${job.company}`, `Exported: ${new Date().toLocaleString()}`, '', ...transcript.map((entry, index) => `${index + 1}. ${entry.speaker === 'candidate' || entry.speaker === 'you' ? 'You' : 'Interviewer'}: ${String(entry.text || '').trim()}`)].join('\n');
+  const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export full interview transcript', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-transcript.txt`, filters: [{ name: 'Text file', extensions: ['txt'] }] });
+  if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, content, 'utf8'); return { savedPath: chosen.filePath };
 }
 
 function setAcademyViewVisible(visible) {
@@ -1254,7 +1260,37 @@ async function searchGreenhouseBoardForCandidate(boardUrl) {
   };
 }
 
+function createLocalVideo(input = {}) {
+  const topic = typeof input.topic === 'string' ? input.topic.trim().slice(0, 240) : '';
+  if (!topic) throw new Error('Enter a topic for the video.');
+
+  const factoryRoot = path.join(app.getPath('userData'), 'video-factory');
+  const jobId = `video-${Date.now()}`;
+  const jobDirectory = path.join(factoryRoot, jobId);
+  fs.mkdirSync(jobDirectory, { recursive: true });
+  const textPath = path.join(jobDirectory, 'topic.txt');
+  const outputPath = path.join(jobDirectory, 'video.mp4');
+  fs.writeFileSync(textPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
+
+  // The first MVP deliberately uses FFmpeg's deterministic title-card pipeline.
+  // It proves the one-command-to-MP4 workflow while research, TTS, and paid
+  // asset generation remain explicitly logged as future work.
+  const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const args = [
+    '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12', '-t', '12',
+    '-vf', `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='${textPath.replace(/\\/g, '/')}' :fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local MVP draft  |  12 seconds':fontcolor=0xaab4c3:fontsize=22:x=70:y=630`,
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
+  ];
+  const result = require('child_process').spawnSync(ffmpeg, args, { encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) {
+    throw new Error(`Local video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
+  }
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
+}
+
 function registerDatabaseIpc() {
+  ipcMain.handle('video-factory:create', (event, input) => { assertTrustedRenderer(event); return createLocalVideo(input); });
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
   ipcMain.handle('coach:sync-roadmap', (_event, payload) => coachDatabase.syncRoadmap(validateRoadmapPayload(payload)));
   ipcMain.handle('coach:import-roadmap', (_event, payload) => coachDatabase.importRoadmap(validateRoadmapPayload(payload)));
@@ -1352,6 +1388,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:interview:drill', async (event, input) => { assertTrustedRenderer(event); return generateInterviewDrill(input || {}); });
   ipcMain.handle('jobs:interview:answer-coach', async (event, input) => { assertTrustedRenderer(event); return improveInterviewAnswer(input || {}); });
   ipcMain.handle('jobs:interview:report', async (event, input) => { assertTrustedRenderer(event); return exportInterviewReport(input || {}); });
+  ipcMain.handle('jobs:interview:transcript', async (event, input) => { assertTrustedRenderer(event); return exportInterviewTranscript(input || {}); });
   // The remote WebContentsView is controlled only by this narrow local-renderer API.
   ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const result = await applicationBrowser.open({ applicationId: input.applicationId }); applicationBrowser.setBounds(input?.bounds); return result; });
   ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
