@@ -68,6 +68,7 @@ const curriculum = [
 
 const prompts = ['Explain this lesson simply', 'Quiz me on what I studied', 'Give me an architecture scenario'];
 const STORAGE_KEY = 'claude-architect-study-workspace-v1';
+const CODEX_STORAGE_KEY = 'north-star-codex-workspace-v1';
 const PROJECT_STATUSES = [['backlog','Backlog'],['todo','To do'],['in-progress','In progress'],['blocked','Blocked'],['done','Done']];
 const TASK_PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['urgent', 'Urgent']];
 const priorityLabel = (priority) => TASK_PRIORITIES.find(([value]) => value === priority)?.[1] || 'Medium';
@@ -315,8 +316,14 @@ function CodexWorkspace() {
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CODEX_STORAGE_KEY) || 'null');
+      if (saved?.root) setWorkspace({ root: saved.root, files: Array.isArray(saved.files) ? saved.files : [] });
+    } catch { /* Persisted Codex workspace state is optional and safe to ignore if malformed. */ }
+  }, []);
   useEffect(() => { window.desktopShell?.getCodexStatus?.().then(setStatus).catch(() => setStatus({ available: false })); return window.desktopShell?.onCodexEvent?.((event) => { if (event.method === 'process/closed' || event.method === 'process/error') { setConnected(false); setBusy(false); } const text = event.params?.delta || event.params?.text || event.params?.message || event.params?.item?.text || ''; if (text) setMessages((current) => [...current, { method: event.method, text: String(text) }]); }); }, []);
-  const chooseWorkspace = async () => { setError(''); const result = await window.desktopShell?.chooseCodexWorkspace?.(); if (!result?.canceled) { setWorkspace(result); setMessages([]); } };
+  const chooseWorkspace = async () => { setError(''); const result = await window.desktopShell?.chooseCodexWorkspace?.(); if (!result?.canceled) { setWorkspace(result); setMessages([]); try { localStorage.setItem(CODEX_STORAGE_KEY, JSON.stringify({ root: result.root, files: result.files })); } catch { /* Workspace persistence is best-effort and never blocks selection. */ } } };
   const connect = async () => { if (!workspace) { setError('Choose a workspace folder first.'); return; } setBusy(true); setError(''); try { await window.desktopShell?.connectCodex?.(workspace.root); setConnected(true); } catch (cause) { setError(cause?.message || 'Codex could not connect.'); } finally { setBusy(false); } };
   const disconnect = async () => { await window.desktopShell?.disconnectCodex?.(); setConnected(false); setBusy(false); };
   const sendPrompt = async (event) => { event.preventDefault(); if (!prompt.trim()) return; setBusy(true); setError(''); setMessages((current) => [...current, { method: 'user', text: prompt.trim() }]); const outgoing = prompt; setPrompt(''); try { await window.desktopShell?.sendCodexTurn?.(outgoing); } catch (cause) { setError(cause?.message || 'Codex could not start that turn.'); } finally { setBusy(false); } };
