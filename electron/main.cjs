@@ -2,7 +2,8 @@ const electron = require('electron');
 const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
+const readline = require('readline');
 const http = require('http');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -62,6 +63,7 @@ let googleVoiceMonitorTimer;
 let googleVoiceTray;
 let isQuitting = false;
 let googleVoiceSnapshot = null;
+let codexSession = null;
 const googleVoiceUrl = 'https://voice.google.com/';
 const googleVoicePartition = 'persist:google-voice-native';
 const externalAccountCredentialsPath = () => path.join(app.getPath('userData'), 'external-application-credentials.json');
@@ -1260,6 +1262,44 @@ function registerDatabaseIpc() {
     try { execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['codex'], { stdio: 'ignore', windowsHide: true }); return { available: true }; }
     catch { return { available: false }; }
   });
+  ipcMain.handle('codex:connect', async (event, workspaceRoot) => {
+    assertTrustedRenderer(event);
+    const root = path.resolve(String(workspaceRoot || ''));
+    if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error('Choose a valid Codex workspace folder first.');
+    if (codexSession?.process && !codexSession.process.killed) return { connected: true, threadId: codexSession.threadId, workspaceRoot: codexSession.workspaceRoot };
+    const child = spawn('codex', ['app-server'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const session = { process: child, nextId: 1, pending: new Map(), threadId: null, workspaceRoot: root };
+    codexSession = session;
+    const output = readline.createInterface({ input: child.stdout });
+    output.on('line', (line) => {
+      try {
+        const message = JSON.parse(line);
+        if (message.id && session.pending.has(message.id)) { const pending = session.pending.get(message.id); session.pending.delete(message.id); message.error ? pending.reject(new Error(message.error.message || 'Codex request failed.')) : pending.resolve(message.result); }
+        else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: message.method || 'message', params: message.params || {} });
+      } catch { /* Ignore non-JSON process noise. */ }
+    });
+    child.stderr.on('data', (chunk) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/log', params: { text: String(chunk).trim() } }); });
+    child.on('error', (error) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/error', params: { text: error.message } }); });
+    child.on('close', () => { if (codexSession === session) codexSession = null; if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('codex:event', { method: 'process/closed', params: {} }); });
+    const request = (method, params = {}) => new Promise((resolve, reject) => { const id = session.nextId++; session.pending.set(id, { resolve, reject }); child.stdin.write(`${JSON.stringify({ method, id, params })}\n`); });
+    const notify = (method, params = {}) => child.stdin.write(`${JSON.stringify({ method, params })}\n`);
+    await request('initialize', { clientInfo: { name: 'north-star', title: 'North Star', version: '0.1.0' } });
+    notify('initialized', {});
+    const result = await request('thread/start', { cwd: root });
+    session.threadId = result?.thread?.id || null;
+    return { connected: true, threadId: session.threadId, workspaceRoot: root };
+  });
+  ipcMain.handle('codex:turn', async (event, prompt) => {
+    assertTrustedRenderer(event);
+    if (!codexSession?.process || !codexSession.threadId) throw new Error('Connect a Codex workspace first.');
+    const text = String(prompt || '').trim();
+    if (!text || text.length > 4000) throw new Error('Enter a prompt between 1 and 4,000 characters.');
+    const id = codexSession.nextId++;
+    codexSession.pending.set(id, { resolve: () => {}, reject: () => {} });
+    codexSession.process.stdin.write(`${JSON.stringify({ method: 'turn/start', id, params: { threadId: codexSession.threadId, input: [{ type: 'text', text }] } })}\n`);
+    return { started: true };
+  });
+  ipcMain.handle('codex:disconnect', (event) => { assertTrustedRenderer(event); if (codexSession?.process && !codexSession.process.killed) codexSession.process.kill(); codexSession = null; return { disconnected: true }; });
   ipcMain.handle('codex:choose-workspace', async (event) => {
     assertTrustedRenderer(event);
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose a Codex workspace', properties: ['openDirectory', 'createDirectory'] });
