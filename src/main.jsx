@@ -331,7 +331,7 @@ function CodexWorkspace() {
     </div>
       <div className="codex-notice" role="status">
       <ShieldCheck size={18} />
-      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched by North Star on this computer.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!status.available || !workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
+      <div><b>{connected ? 'Codex connected' : 'Optional for developers'}</b><p>{connected ? 'Codex is connected to this selected workspace. The initial integration is read-only.' : status.error ? 'Codex is installed but cannot currently be launched by North Star on this computer. You can still try the connection to see the exact launch error.' : 'North Star works normally without Codex installed. Connect it when you want local file review and streamed agent progress.'}</p><div className="codex-actions"><button className="primary" type="button" disabled={!workspace || busy || connected} onClick={connect}>{busy && !connected ? 'Connecting…' : 'Connect Codex'}</button>{connected && <button className="secondary" type="button" onClick={disconnect}>Disconnect</button>}</div></div>
     </div>
     <div className="codex-layout">
       <aside className="codex-file-panel">
