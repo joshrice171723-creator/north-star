@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
+import { BriefcaseBusiness, BookOpen, Brain, CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, FileText, Flame, FolderOpen, LayoutDashboard, ListChecks, Pencil, PhoneCall, Play, Plus, RefreshCw, Search, Settings, Star, Target, Trash2, X } from 'lucide-react';
 import JobsView from './JobsView.jsx';
 import InterviewPrepView from './InterviewPrepView.jsx';
 import GroupedEmailMonitorPanel from './jobs/EmailMonitorPanel.jsx';
@@ -309,7 +309,30 @@ function ThemeModal({ theme, onChange, onClose }) {
 }
 
 function VideoFactoryView({ topic, setTopic, state, create }) {
-  return <section className="video-factory-panel"><div className="section-head compact"><div><span className="eyebrow">VIDEO FACTORY · LOCAL MVP</span><h2>Turn one topic into a video</h2><p>Creates a complete 12-second MP4 locally with a branded title card and audio.</p></div><span className="queue-count">No paid providers</span></div><div className="video-factory-form"><input value={topic} onChange={(event) => setTopic(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') create(); }} placeholder="What should today's video be about?" aria-label="Video topic" /><button className="primary" onClick={create} disabled={state.status === 'working'}><Play size={14}/>{state.status === 'working' ? 'Rendering…' : 'Create video'}</button></div>{state.status === 'error' && <div className="video-factory-message error" role="alert">{state.error}</div>}{state.result && <div className="video-factory-result" role="status"><div><Check size={16}/><b>Video ready</b><small>{state.result.topic}</small></div><code>{state.result.outputPath}</code></div>}<details className="video-factory-skipped"><summary>Skipped from the handoff for this MVP</summary><p>Research, citations, narration, generated B-roll, storyboard editing, cost controls, scheduling, and publishing are logged as future work. The current command produces the final local MP4 directly.</p></details></section>;
+  const [videos, setVideos] = useState([]);
+  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [libraryMessage, setLibraryMessage] = useState('');
+  const loadVideos = async () => {
+    try { setVideos(await window.desktopShell?.listVideoFactoryVideos?.() || []); setLibraryMessage(''); }
+    catch (error) { setLibraryMessage(error?.message || 'Could not load the video library.'); }
+  };
+  useEffect(() => { loadVideos(); }, [state.result]);
+  useEffect(() => { if (state.result?.videoUrl) setSelectedVideo(state.result); }, [state.result]);
+  const deleteVideo = async (video) => {
+    if (!window.confirm(`Delete “${video.topic || 'this video'}”?`)) return;
+    try {
+      await window.desktopShell?.deleteVideoFactoryVideo?.(video.id);
+      if (selectedVideo?.id === video.id) setSelectedVideo(null);
+      await loadVideos();
+    } catch (error) { setLibraryMessage(error?.message || 'Could not delete the video.'); }
+  };
+  const openFolder = async () => {
+    const result = await window.desktopShell?.openVideoFactoryFolder?.();
+    if (result?.error) setLibraryMessage(result.error);
+  };
+  const activeVideo = selectedVideo || state.result;
+  const formatSize = (bytes) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return <section className="video-factory-page"><section className="video-factory-panel"><div className="section-head compact"><div><span className="eyebrow">VIDEO FACTORY · LOCAL MVP</span><h2>Turn one topic into a video</h2><p>Creates a complete 12-second MP4 locally with a branded title card and audio.</p></div><span className="queue-count">No paid providers</span></div><div className="video-factory-form"><input value={topic} onChange={(event) => setTopic(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') create(); }} placeholder="What should today's video be about?" aria-label="Video topic" /><button className="primary" onClick={create} disabled={state.status === 'working'}><Play size={14}/>{state.status === 'working' ? 'Rendering…' : 'Create video'}</button></div>{state.status === 'error' && <div className="video-factory-message error" role="alert">{state.error}</div>}<details className="video-factory-skipped"><summary>Skipped from the handoff for this MVP</summary><p>Research, citations, narration, generated B-roll, storyboard editing, cost controls, scheduling, and publishing are logged as future work. The current command produces the final local MP4 directly.</p></details></section><section className="video-library-panel"><div className="section-head compact"><div><span className="eyebrow">LOCAL VIDEO LIBRARY</span><h2>Watch and manage your videos</h2><p>Generated MP4 files stay on this computer in the app’s local data folder.</p></div><div className="video-library-actions"><button className="secondary" onClick={loadVideos}><RefreshCw size={14}/> Refresh</button><button className="secondary" onClick={openFolder}><FolderOpen size={14}/> Open folder</button></div></div>{activeVideo?.videoUrl && <div className="video-player-wrap"><video key={activeVideo.videoUrl} controls playsInline src={activeVideo.videoUrl} /><div><b>{activeVideo.topic || 'Latest video'}</b><small>{activeVideo.durationSeconds || 12}s · Local MP4</small></div></div>}{libraryMessage && <div className="video-factory-message error" role="alert">{libraryMessage}</div>}<div className="video-library-list">{videos.length ? videos.map((video) => <article className={activeVideo?.id === video.id ? 'video-library-item selected' : 'video-library-item'} key={video.id}><button className="video-library-select" onClick={() => setSelectedVideo(video)}><Play size={14}/><span><b>{video.topic || 'Untitled video'}</b><small>{new Date(video.createdAt).toLocaleString()} · {formatSize(video.sizeBytes)}</small></span></button><button className="icon-action" onClick={() => deleteVideo(video)} aria-label={`Delete ${video.topic || 'video'}`} title="Delete video"><Trash2 size={14}/></button></article>) : <div className="video-library-empty"><Play size={18}/><span>No videos yet. Create one above to start your local library.</span></div>}</div></section></section>;
 }
 
 function App() {
