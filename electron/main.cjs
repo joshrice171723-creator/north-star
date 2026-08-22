@@ -682,6 +682,8 @@ const validateApplicationId = (value) => validateCoachId(value, 'application id'
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
 const documentGenerationInFlight = new Set();
+const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0 };
+let applicationPreparationTimer = null;
 async function generateApplicationDocument(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
   if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
@@ -2346,11 +2348,10 @@ function registerDatabaseIpc() {
     await materializeSelectedApplicationDocument(documentId);
     return selected;
   });
-  ipcMain.handle('jobs:applications:prepare', async (event, input) => {
-    assertTrustedRenderer(event);
-    const jobId = validateCoachId(input?.jobId, 'job id');
+async function prepareJobApplication(jobId) {
     const application = coachDatabase.applications.createOrResume({ jobId });
     const prepareDocument = async (documentType) => {
+      applicationPreparationState.activeStep = documentType === 'resume' ? 'Generating and validating resume' : 'Generating and validating cover letter';
       let documents = coachDatabase.applications.documents.list(application.id, documentType);
       let document = documents.find((entry) => entry.isSelected && entry.status === 'approved' && !entry.validation?.errors?.length);
       if (!document) document = documents.find((entry) => entry.status === 'approved' && !entry.validation?.errors?.length);
@@ -2372,7 +2373,35 @@ function registerDatabaseIpc() {
     const preparedApplication = coachDatabase.applications.get(application.id);
     const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
     return { application: preparedApplication, job, documents: [resume, coverLetter] };
+}
+function applicationPreparationStatus() {
+  return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers } };
+}
+async function runApplicationPreparationQueue() {
+  if (!coachDatabase || applicationPreparationState.activeJobId) return;
+  const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage));
+  const job = jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
+  if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return;
+  applicationPreparationState.activeJobId = job.id;
+  applicationPreparationState.activeStep = 'Preparing application workspace';
+  try {
+    await prepareJobApplication(job.id);
+    delete applicationPreparationState.blockers[job.id];
+    applicationPreparationState.retryAt = 0;
+  } catch (cause) {
+    applicationPreparationState.blockers[job.id] = cause?.message || 'Preparation stopped before Ready to apply.';
+    applicationPreparationState.retryAt = Date.now() + 15000;
+  } finally {
+    applicationPreparationState.activeJobId = null;
+    applicationPreparationState.activeStep = '';
+  }
+}
+  ipcMain.handle('jobs:applications:prepare', async (event, input) => {
+    assertTrustedRenderer(event);
+    const jobId = validateCoachId(input?.jobId, 'job id');
+    return prepareJobApplication(jobId);
   });
+  ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationPreparationStatus(); });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'txt', job)), filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; fs.mkdirSync(exportDirectory, { recursive: true }); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'pdf', job)), filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
@@ -2626,6 +2655,10 @@ app.whenReady().then(() => {
     }
   });
   registerDatabaseIpc();
+  // Keep preparation independent of the currently visible renderer view. The
+  // runner always drains Researching before selecting the Target backlog.
+  applicationPreparationTimer = setInterval(() => { runApplicationPreparationQueue().catch(() => {}); }, 5000);
+  runApplicationPreparationQueue().catch(() => {});
   // Poll only after a token has been explicitly configured; syncing is read-only
   // and failures are intentionally isolated so the desktop app stays available.
   emailMonitorTimer = setInterval(() => { if (readEmailCredentials().configured) syncJobEmails().catch(() => {}); }, 10 * 60 * 1000);
