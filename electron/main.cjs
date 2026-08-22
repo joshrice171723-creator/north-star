@@ -1315,6 +1315,31 @@ function createLocalVideo(input = {}) {
   return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
 }
 
+function createTestVideo() {
+  const topic = 'TEST VIDEO · Visual, caption, and audio calibration';
+  const story = 'This is a repeatable North Star video test. Watch the moving background, title wrapping, caption timing, progress bar, and audio level. The same fixture is rendered every time so future improvements can be compared against a stable baseline. Review the first seconds, the middle captions, and the final fade before changing the production pipeline.';
+  const durationSeconds = 24;
+  const factoryRoot = videoFactoryRoot();
+  const jobId = `video-${Date.now()}`;
+  const jobDirectory = path.join(factoryRoot, jobId);
+  fs.mkdirSync(jobDirectory, { recursive: true });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, createdAt: new Date().toISOString(), isTest: true, testFixtureVersion: 1 });
+  fs.writeFileSync(path.join(jobDirectory, 'topic.txt'), videoFactoryWrapText(topic), 'utf8');
+  fs.writeFileSync(path.join(jobDirectory, 'captions.srt'), videoFactoryCaptions(story, durationSeconds).srt, 'utf8');
+  fs.writeFileSync(path.join(jobDirectory, 'test-fixture.txt'), story, 'utf8');
+  const outputPath = path.join(jobDirectory, 'video.mp4');
+  const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const args = [
+    '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30',
+    '-f', 'lavfi', '-i', `sine=frequency=440:duration=${durationSeconds}`, '-t', String(durationSeconds),
+    '-vf', videoFactoryRenderFilter(durationSeconds, true),
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${durationSeconds - 0.5}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath
+  ];
+  const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Test video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
+  return { ok: true, id: jobId, topic, story, status: 'complete', isTest: true, testFixtureVersion: 1, outputPath, videoUrl: videoFactoryMediaUrl(outputPath), durationSeconds, captionCount: videoFactoryCaptions(story, durationSeconds).captions.length };
+}
+
 function videoFactorySources(input = {}) {
   const urls = [...String(input.sourceUrls || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)].map(([value]) => value.replace(/[),.;!?]+$/g, '')).filter(Boolean).slice(0, 12);
   const notes = String(input.researchNotes || '').trim().slice(0, 30000);
@@ -1724,6 +1749,11 @@ function listLocalVideos() {
       const outputPath = path.join(directory, 'video.mp4');
       const topicPath = path.join(directory, 'topic.txt');
       const researchPath = path.join(directory, 'research.md');
+      let pipeline = {};
+      const pipelinePath = videoFactoryPipelinePath(directory);
+      if (fs.existsSync(pipelinePath)) {
+        try { pipeline = JSON.parse(fs.readFileSync(pipelinePath, 'utf8')); } catch { pipeline = {}; }
+      }
       if (!fs.existsSync(outputPath)) return null;
       const stats = fs.statSync(outputPath);
       return {
@@ -1734,6 +1764,8 @@ function listLocalVideos() {
         createdAt: stats.birthtime.toISOString(),
         sizeBytes: stats.size,
         durationSeconds: videoFactoryMediaDuration(outputPath) || 12
+        ,isTest: Boolean(pipeline.isTest)
+        ,testFixtureVersion: pipeline.testFixtureVersion || null
         ,hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
         ,hasResearch: fs.existsSync(researchPath)
         ,hasCaptions: fs.existsSync(path.join(directory, 'captions.srt'))
@@ -1775,6 +1807,8 @@ function listVideoFactoryPipeline() {
         hasResearch: fs.existsSync(path.join(directory, 'research.md')),
         hasStoryboard: fs.existsSync(path.join(directory, 'storyboard.json')),
         hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
+        ,isTest: Boolean(pipeline.isTest)
+        ,testFixtureVersion: pipeline.testFixtureVersion || null
       };
     })
     .filter(Boolean)
@@ -1804,6 +1838,7 @@ function deleteLocalVideo(id) {
 
 function registerDatabaseIpc() {
   ipcMain.handle('video-factory:create', (event, input) => { assertTrustedRenderer(event); return createLocalVideo(input); });
+  ipcMain.handle('video-factory:create-test', (event) => { assertTrustedRenderer(event); return createTestVideo(); });
   ipcMain.handle('video-factory:discover', (event, input) => { assertTrustedRenderer(event); return discoverVideoFactorySources(input); });
   ipcMain.handle('video-factory:create-researched', async (event, input) => { assertTrustedRenderer(event); return createResearchVideo(input); });
   ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
