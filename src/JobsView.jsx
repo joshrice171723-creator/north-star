@@ -353,30 +353,33 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [modalJob, setModalJob] = useState(null);
   const [stageBusyId, setStageBusyId] = useState(null);
   const preparationAttempted = useRef(new Set());
+  const preparationQueueRunning = useRef(false);
   const [preparingJobIds, setPreparingJobIds] = useState(() => new Set());
   const [preparationBlockers, setPreparationBlockers] = useState({});
   useEffect(() => {
     const targetIds = new Set(jobs.filter((job) => job.stage === 'target').map((job) => job.id));
     preparationAttempted.current.forEach((jobId) => { if (!targetIds.has(jobId)) preparationAttempted.current.delete(jobId); });
     const queue = jobs.filter((job) => job.stage === 'target' && !preparationAttempted.current.has(job.id));
-    if (!queue.length || typeof window.desktopShell?.prepareJobApplication !== 'function') return undefined;
-    let cancelled = false;
+    if (!queue.length || preparationQueueRunning.current || typeof window.desktopShell?.prepareJobApplication !== 'function') return undefined;
+    preparationQueueRunning.current = true;
     const runQueue = async () => {
       for (const job of queue) {
         preparationAttempted.current.add(job.id);
         setPreparingJobIds((current) => new Set([...current, job.id]));
         try {
           const result = await window.desktopShell.prepareJobApplication({ jobId: job.id });
-          if (!cancelled) { setPreparationBlockers((current) => { const next = { ...current }; delete next[job.id]; return next; }); await onRefresh?.(); }
+          setPreparationBlockers((current) => { const next = { ...current }; delete next[job.id]; return next; });
+          await onRefresh?.();
         } catch (cause) {
-          if (!cancelled) setPreparationBlockers((current) => ({ ...current, [job.id]: cause?.message || 'Preparation stopped before Ready to apply.' }));
+          setPreparationBlockers((current) => ({ ...current, [job.id]: cause?.message || 'Preparation stopped before Ready to apply.' }));
         } finally {
           setPreparingJobIds((current) => { const next = new Set(current); next.delete(job.id); return next; });
         }
       }
+      preparationQueueRunning.current = false;
     };
     runQueue().catch(() => {});
-    return () => { cancelled = true; };
+    return undefined;
   }, [jobs, onRefresh]);
   const changeBoardStage = async (job, stage) => {
     if (stage === job.stage || stageBusyId === job.id) return;
