@@ -1289,6 +1289,79 @@ function createLocalVideo(input = {}) {
   return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
 }
 
+function videoFactorySources(input = {}) {
+  const urls = String(input.sourceUrls || '').split(/\r?\n/).map((value) => value.trim()).filter(Boolean).slice(0, 12);
+  const notes = String(input.researchNotes || '').trim().slice(0, 30000);
+  const validUrls = urls.filter((value) => {
+    try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; }
+  });
+  if (urls.length && validUrls.length !== urls.length) throw new Error('Every source must be a complete http(s) URL.');
+  return { urls: validUrls, notes };
+}
+
+async function fetchVideoFactorySourceEvidence(urls) {
+  const fetchImpl = getUninstrumentedFetch();
+  return Promise.all(urls.map(async (url, index) => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const response = await fetchImpl(url, { headers: { Accept: 'text/html,text/plain' }, signal: controller.signal });
+      clearTimeout(timeout);
+      const html = (await response.text()).slice(0, 120000);
+      const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, ' ').trim() || url;
+      const text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim().slice(0, 10000);
+      return { sourceNumber: index + 1, url, title, status: response.status, excerpt: text };
+    } catch (error) {
+      return { sourceNumber: index + 1, url, title: url, status: 'unavailable', excerpt: '', error: error?.name === 'AbortError' ? 'Timed out' : 'Could not retrieve source page' };
+    }
+  }));
+}
+
+async function createResearchVideo(input = {}) {
+  const topic = typeof input.topic === 'string' ? input.topic.trim().slice(0, 240) : '';
+  if (!topic) throw new Error('Enter a topic for the video.');
+  const sources = videoFactorySources(input);
+  if (!sources.urls.length && !sources.notes) throw new Error('Add at least one YouTube/source URL or paste research notes/transcript excerpts.');
+  const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls);
+
+  const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
+  const retrievedEvidence = sourceEvidence.map((entry) => `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}`).join('\n\n');
+  const response = await openRouterChat([
+    { role: 'system', content: 'You are a careful video research editor. Preserve provenance, distinguish facts from commentary, and never fabricate source contents.' },
+    { role: 'user', content: `${researchPrompt}\n\nRetrieved page evidence (use only as a lead; a YouTube page is not a transcript):\n${retrievedEvidence || '(none)'}` }
+  ], { auditPurpose: 'video_factory_research', max_tokens: 1800 });
+  if (!response.ok) throw new Error(response.error || 'Research and story generation failed.');
+  const packageText = response.message.content.trim();
+  const storyMatch = packageText.match(/(?:^|\n)STORY\s*\n([\s\S]*?)(?=\nSCENES\s*\n|\nFACT CHECK\s*\n|$)/i);
+  const story = (storyMatch?.[1] || packageText).replace(/^[-*]\s*/gm, '').trim().slice(0, 12000);
+  if (!story) throw new Error('Research returned no usable story.');
+
+  const factoryRoot = videoFactoryRoot();
+  const jobId = `video-${Date.now()}`;
+  const jobDirectory = path.join(factoryRoot, jobId);
+  fs.mkdirSync(jobDirectory, { recursive: true });
+  const topicPath = path.join(jobDirectory, 'topic.txt');
+  const researchPath = path.join(jobDirectory, 'research.md');
+  const sourcesPath = path.join(jobDirectory, 'sources.json');
+  const audioPath = path.join(jobDirectory, 'narration.mp3');
+  const outputPath = path.join(jobDirectory, 'video.mp4');
+  fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
+  fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
+  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, ...metadata }) => metadata) }, null, 2), 'utf8');
+
+  const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
+  fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
+  const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const args = [
+    '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
+    '-vf', "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Research-backed narrated draft':fontcolor=0xaab4c3:fontsize=22:x=70:y=630",
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
+  ];
+  const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, durationSeconds: null, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+}
+
 function videoFactoryRoot() {
   return path.join(app.getPath('userData'), 'video-factory');
 }
@@ -1302,6 +1375,7 @@ function listLocalVideos() {
       const directory = path.join(factoryRoot, entry.name);
       const outputPath = path.join(directory, 'video.mp4');
       const topicPath = path.join(directory, 'topic.txt');
+      const researchPath = path.join(directory, 'research.md');
       if (!fs.existsSync(outputPath)) return null;
       const stats = fs.statSync(outputPath);
       return {
@@ -1312,6 +1386,8 @@ function listLocalVideos() {
         createdAt: stats.birthtime.toISOString(),
         sizeBytes: stats.size,
         durationSeconds: 12
+        ,hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
+        ,hasResearch: fs.existsSync(researchPath)
       };
     })
     .filter(Boolean)
@@ -1330,6 +1406,7 @@ function deleteLocalVideo(id) {
 
 function registerDatabaseIpc() {
   ipcMain.handle('video-factory:create', (event, input) => { assertTrustedRenderer(event); return createLocalVideo(input); });
+  ipcMain.handle('video-factory:create-researched', async (event, input) => { assertTrustedRenderer(event); return createResearchVideo(input); });
   ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
   ipcMain.handle('video-factory:open-folder', (event) => { assertTrustedRenderer(event); const error = shell.openPath(videoFactoryRoot()); if (error) return error.then((message) => { if (message) throw new Error(message); return { ok: true }; }); return { ok: true }; });
   ipcMain.handle('video-factory:delete', (event, id) => { assertTrustedRenderer(event); return deleteLocalVideo(id); });
