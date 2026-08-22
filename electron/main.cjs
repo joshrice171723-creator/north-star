@@ -1299,6 +1299,54 @@ function videoFactorySources(input = {}) {
   return { urls: validUrls, notes };
 }
 
+function videoFactoryYoutubeId(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'youtu.be') return parsed.pathname.slice(1).split('/')[0] || null;
+    if (parsed.hostname.endsWith('youtube.com')) return parsed.searchParams.get('v') || parsed.pathname.match(/\/shorts\/([^/]+)/)?.[1] || null;
+  } catch {}
+  return null;
+}
+
+function videoFactoryBalancedJson(text, marker) {
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const start = text.indexOf('{', markerIndex);
+  if (start < 0) return null;
+  let depth = 0; let quoted = false; let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) { if (escaped) escaped = false; else if (character === '\\') escaped = true; else if (character === '"') quoted = false; continue; }
+    if (character === '"') quoted = true;
+    else if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) return text.slice(start, index + 1);
+  }
+  return null;
+}
+
+function videoFactoryDecodeHtml(value) {
+  return value.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)));
+}
+
+async function fetchVideoFactoryYoutubeTranscript(url, fetchImpl) {
+  const videoId = videoFactoryYoutubeId(url);
+  if (!videoId) return { available: false, reason: 'not_a_youtube_video' };
+  const watchResponse = await fetchImpl(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } });
+  if (!watchResponse.ok) return { available: false, reason: `youtube_page_${watchResponse.status}` };
+  const page = await watchResponse.text();
+  const playerJson = videoFactoryBalancedJson(page, 'ytInitialPlayerResponse');
+  let player;
+  try { player = playerJson ? JSON.parse(playerJson) : null; } catch { player = null; }
+  const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+  const track = tracks.find((entry) => entry.languageCode === 'en') || tracks[0];
+  if (!track?.baseUrl) return { available: false, reason: 'captions_not_available', title: player?.videoDetails?.title || null };
+  const transcriptResponse = await fetchImpl(track.baseUrl, { headers: { Accept: 'text/xml', 'User-Agent': 'Mozilla/5.0' } });
+  if (!transcriptResponse.ok) return { available: false, reason: `caption_track_${transcriptResponse.status}` };
+  const xml = await transcriptResponse.text();
+  const lines = [...xml.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/gi)].map((match) => videoFactoryDecodeHtml(match[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  return { available: lines.length > 0, languageCode: track.languageCode || null, title: player?.videoDetails?.title || null, text: lines.join(' ').slice(0, 50000), reason: lines.length ? null : 'caption_track_empty' };
+}
+
 async function fetchVideoFactorySourceEvidence(urls) {
   const fetchImpl = getUninstrumentedFetch();
   return Promise.all(urls.map(async (url, index) => {
@@ -1310,9 +1358,10 @@ async function fetchVideoFactorySourceEvidence(urls) {
       const html = (await response.text()).slice(0, 120000);
       const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, ' ').trim() || url;
       const text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim().slice(0, 10000);
-      return { sourceNumber: index + 1, url, title, status: response.status, excerpt: text };
+      const transcript = await fetchVideoFactoryYoutubeTranscript(url, fetchImpl).catch((error) => ({ available: false, reason: error?.message || 'caption_lookup_failed' }));
+      return { sourceNumber: index + 1, url, title: transcript.title || title, status: response.status, excerpt: text, transcript };
     } catch (error) {
-      return { sourceNumber: index + 1, url, title: url, status: 'unavailable', excerpt: '', error: error?.name === 'AbortError' ? 'Timed out' : 'Could not retrieve source page' };
+      return { sourceNumber: index + 1, url, title: url, status: 'unavailable', excerpt: '', transcript: { available: false, reason: 'source_page_unavailable' }, error: error?.name === 'AbortError' ? 'Timed out' : 'Could not retrieve source page' };
     }
   }));
 }
@@ -1325,7 +1374,7 @@ async function createResearchVideo(input = {}) {
   const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls);
 
   const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
-  const retrievedEvidence = sourceEvidence.map((entry) => `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}`).join('\n\n');
+  const retrievedEvidence = sourceEvidence.map((entry) => `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}\nCAPTION TRANSCRIPT: ${entry.transcript?.text || entry.transcript?.reason || 'No transcript retrieved.'}`).join('\n\n');
   const response = await openRouterChat([
     { role: 'system', content: 'You are a careful video research editor. Preserve provenance, distinguish facts from commentary, and never fabricate source contents.' },
     { role: 'user', content: `${researchPrompt}\n\nRetrieved page evidence (use only as a lead; a YouTube page is not a transcript):\n${retrievedEvidence || '(none)'}` }
@@ -1343,11 +1392,13 @@ async function createResearchVideo(input = {}) {
   const topicPath = path.join(jobDirectory, 'topic.txt');
   const researchPath = path.join(jobDirectory, 'research.md');
   const sourcesPath = path.join(jobDirectory, 'sources.json');
+  const transcriptsPath = path.join(jobDirectory, 'transcripts.md');
   const audioPath = path.join(jobDirectory, 'narration.mp3');
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
-  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, ...metadata }) => metadata) }, null, 2), 'utf8');
+  fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\n${entry.transcript?.text || `No caption transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
+  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptReason: transcript?.reason || null })) }, null, 2), 'utf8');
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
@@ -1359,7 +1410,7 @@ async function createResearchVideo(input = {}) {
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, durationSeconds: null, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, durationSeconds: null, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
