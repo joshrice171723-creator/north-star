@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BriefcaseBusiness, Check, ExternalLink, FileText, Mail, MessageCircle, Mic, Pencil, Plus, Search, Sparkles, Square, Trash2, X } from 'lucide-react';
+import { BriefcaseBusiness, Check, ExternalLink, FileText, LoaderCircle, Mail, MessageCircle, Mic, Pencil, Plus, Search, Sparkles, Square, Trash2, X } from 'lucide-react';
 import JobDetailsWorkspace from './jobs/JobDetailsWorkspace.jsx';
 import { scoreImportedJob } from './jobs/jobFitScoring.js';
 import { appliedJobs } from './jobs/emailJobFilter.js';
