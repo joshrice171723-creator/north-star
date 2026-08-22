@@ -2637,6 +2637,10 @@ async function runApplicationPreparationQueue() {
   ipcMain.handle('google-voice:open', () => openGoogleVoiceWindow());
   ipcMain.handle('google-voice:set-visible', (_event, visible) => setGoogleVoiceViewVisible(visible));
   ipcMain.handle('google-voice:test-notification', () => { showGoogleVoiceNotification('Google Voice monitor', 'Desktop notifications are working.'); return { ok: true }; });
+  // This runner lives with the database IPC registration so it can access the
+  // preparation implementation without leaking a second global queue.
+  applicationPreparationTimer = setInterval(() => { runApplicationPreparationQueue().catch(() => {}); }, 5000);
+  runApplicationPreparationQueue().catch(() => {});
 }
 
 app.whenReady().then(() => {
@@ -2655,10 +2659,6 @@ app.whenReady().then(() => {
     }
   });
   registerDatabaseIpc();
-  // Keep preparation independent of the currently visible renderer view. The
-  // runner always drains Researching before selecting the Target backlog.
-  applicationPreparationTimer = setInterval(() => { runApplicationPreparationQueue().catch(() => {}); }, 5000);
-  runApplicationPreparationQueue().catch(() => {});
   // Poll only after a token has been explicitly configured; syncing is read-only
   // and failures are intentionally isolated so the desktop app stays available.
   emailMonitorTimer = setInterval(() => { if (readEmailCredentials().configured) syncJobEmails().catch(() => {}); }, 10 * 60 * 1000);
