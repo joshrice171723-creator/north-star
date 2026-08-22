@@ -357,9 +357,14 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [preparingJobIds, setPreparingJobIds] = useState(() => new Set());
   const [preparationBlockers, setPreparationBlockers] = useState({});
   useEffect(() => {
-    const targetIds = new Set(jobs.filter((job) => job.stage === 'target').map((job) => job.id));
-    preparationAttempted.current.forEach((jobId) => { if (!targetIds.has(jobId)) preparationAttempted.current.delete(jobId); });
-    const queue = jobs.filter((job) => job.stage === 'target' && !preparationAttempted.current.has(job.id));
+    const activeIds = new Set(jobs.filter((job) => ['researching', 'target'].includes(job.stage)).map((job) => job.id));
+    preparationAttempted.current.forEach((jobId) => { if (!activeIds.has(jobId)) preparationAttempted.current.delete(jobId); });
+    // Researching is the active work lane. Drain user-created or previously
+    // interrupted Researching jobs before taking the next Target backlog item.
+    const queue = [
+      ...jobs.filter((job) => job.stage === 'researching'),
+      ...jobs.filter((job) => job.stage === 'target')
+    ].filter((job) => !preparationAttempted.current.has(job.id));
     if (!queue.length || preparationQueueRunning.current || typeof window.desktopShell?.prepareJobApplication !== 'function') return undefined;
     preparationQueueRunning.current = true;
     const runQueue = async () => {
@@ -372,6 +377,9 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
           await onRefresh?.();
         } catch (cause) {
           setPreparationBlockers((current) => ({ ...current, [job.id]: cause?.message || 'Preparation stopped before Ready to apply.' }));
+          // Do not pull a Target job into Researching while an earlier active
+          // job is blocked; the user must be able to resolve this boundary.
+          break;
         } finally {
           setPreparingJobIds((current) => { const next = new Set(current); next.delete(job.id); return next; });
         }
