@@ -458,7 +458,9 @@ const academyStudyMaterialPath = () => path.join(app.getPath('userData'), 'acade
 const academyStudyReviewPath = () => path.join(app.getPath('userData'), 'academy-study-review.json');
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_IMAGE_ENDPOINT = 'https://openrouter.ai/api/v1/images';
 const OPENROUTER_DEFAULT_MODEL = 'openai/gpt-5.6-luna-pro';
+const OPENROUTER_DEFAULT_IMAGE_MODEL = 'bytedance-seed/seedream-4.5';
 const OPENROUTER_MAX_MESSAGES = 100;
 const OPENROUTER_MAX_OUTPUT_TOKENS = 700;
 // Individual callers retain small defaults. The final job selector explicitly
@@ -1042,6 +1044,33 @@ async function exportInterviewReport(input = {}) {
   const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export full interview transcript', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-transcript.txt`, filters: [{ name: 'Text file', extensions: ['txt'] }] });
   if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, report, 'utf8'); return { savedPath: chosen.filePath };
 }
+
+async function openRouterImage(prompt, options = {}) {
+  const apiKey = readOpenRouterApiKey();
+  if (!apiKey) return { ok: false, error: 'OPENROUTER_API_KEY is not configured for the Electron process.' };
+  const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : (process.env.OPENROUTER_IMAGE_MODEL || OPENROUTER_DEFAULT_IMAGE_MODEL);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+  setAuditPurpose(options.auditPurpose || 'openrouter_image');
+  try {
+    const response = await fetch(OPENROUTER_IMAGE_ENDPOINT, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://anthropic.skilljar.com/', 'X-Title': 'Claude Architect Study Coach' },
+      body: JSON.stringify({ model, prompt, n: 1, resolution: '1K', aspect_ratio: '16:9', output_format: 'png' }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) return { ok: false, error: body?.error?.message || `OpenRouter image request failed (${response.status}).` };
+    const image = body?.data?.[0];
+    if (!image?.b64_json) return { ok: false, error: 'OpenRouter returned no image data.' };
+    return { ok: true, model, imageBase64: image.b64_json, mediaType: image.media_type || 'image/png', usage: body.usage || null };
+  } catch (error) {
+    return { ok: false, error: error?.name === 'AbortError' ? 'OpenRouter image generation timed out.' : (error?.message || 'OpenRouter image generation failed.') };
+  } finally {
+    clearTimeout(timeout);
+    setAuditPurpose('job-search');
+  }
+}
 function classifyOutreachReply(subject = '', body = '') { const text = `${subject} ${body}`.toLowerCase(); if (/interview|assessment|deadline|availability|schedule|next steps|phone screen/.test(text)) return 'interview'; if (/not interested|rejected|regret|unfortunately|moving forward with other/.test(text)) return 'rejection'; if (/out of office|automatic reply|do not reply|unsubscribe/.test(text)) return 'automated'; if (/interested|let's connect|lets connect|happy to chat|send availability|learn more/.test(text)) return 'positive'; if (text.trim()) return 'needs_response'; return 'unknown'; }
 function encodeMime(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64').replace(/.{1,76}/g, '$&\r\n'); }
 async function sendOutreachEmail(opportunity) {
@@ -1506,6 +1535,55 @@ function videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds) 
   return timings;
 }
 
+function videoFactoryImagePrompt(topic, scene) {
+  return [
+    'Create a cinematic 16:9 editorial visual for a technology news explainer.',
+    'Use a dark navy, electric blue, violet, and cyan palette with dramatic rim lighting, layered depth, and clear composition.',
+    'Make it look like premium documentary B-roll or a broadcast motion-graphics plate, not a poster or a flat illustration.',
+    'Do not include readable words, captions, logos, watermarks, UI text, or fake headlines; North Star adds those locally.',
+    `TOPIC: ${String(topic || '').slice(0, 240)}`,
+    `SCENE VISUAL: ${String(scene.visual || '').slice(0, 800)}`,
+  ].join('\n');
+}
+
+async function videoFactoryGenerateSceneImages(jobDirectory, topic, storyboard) {
+  const scenes = Array.isArray(storyboard) && storyboard.length ? storyboard : [];
+  const generated = [];
+  for (let index = 0; index < scenes.length; index += 1) {
+    const scene = scenes[index];
+    const response = await openRouterImage(videoFactoryImagePrompt(topic, scene), { auditPurpose: 'video_factory_scene_image' });
+    if (!response.ok) throw new Error(`Scene ${index + 1} image generation failed: ${response.error}`);
+    const extension = response.mediaType === 'image/webp' ? 'webp' : response.mediaType === 'image/jpeg' ? 'jpg' : 'png';
+    const imagePath = path.join(jobDirectory, `visual-${String(index + 1).padStart(2, '0')}.${extension}`);
+    fs.writeFileSync(imagePath, Buffer.from(response.imageBase64, 'base64'));
+    generated.push({ scene: scene.scene || index + 1, path: imagePath, model: response.model, usage: response.usage || null });
+  }
+  return generated;
+}
+
+function videoFactoryImageUsageSummary(generated = []) {
+  const cost = generated.reduce((total, image) => total + (Number(image.usage?.cost) || 0), 0);
+  return { imageCount: generated.length, imageModel: generated[0]?.model || null, imageCostUsd: Number(cost.toFixed(6)) };
+}
+
+function videoFactoryAiRenderArgs(jobDirectory, audioPath, outputPath, storyboard, durationSeconds) {
+  const timings = videoFactorySceneTimings(storyboard, durationSeconds);
+  const imagePaths = timings.map((_scene, index) => {
+    const candidates = ['png', 'jpg', 'webp'].map((extension) => path.join(jobDirectory, `visual-${String(index + 1).padStart(2, '0')}.${extension}`));
+    return candidates.find((candidate) => fs.existsSync(candidate));
+  });
+  if (imagePaths.some((imagePath) => !imagePath)) throw new Error('Generated scene visuals are incomplete. Approve the storyboard again to retry image generation.');
+  const sceneGraphs = timings.map((scene, index) => {
+    return `[${index}:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,zoompan=z='min(zoom+0.0008,1.12)':x='iw/2-(iw/zoom/2)+sin(on/85)*18':y='ih/2-(ih/zoom/2)+cos(on/110)*12':d=1:s=1280x720:fps=30,trim=duration=${(scene.endSeconds - scene.startSeconds).toFixed(2)},setpts=PTS-STARTPTS[v${index}]`;
+  }).join(';');
+  const concatInputs = timings.map((_scene, index) => `[v${index}]`).join('');
+  const filterGraph = `${sceneGraphs};${concatInputs}concat=n=${timings.length}:v=1:a=0[base];[base]${videoFactoryRenderFilter(durationSeconds, true, storyboard)}[vout]`;
+  const args = ['-y'];
+  imagePaths.forEach((imagePath, index) => args.push('-loop', '1', '-framerate', '30', '-t', (timings[index].endSeconds - timings[index].startSeconds).toFixed(2), '-i', imagePath));
+  args.push('-i', audioPath, '-filter_complex', filterGraph, '-map', '[vout]', '-map', `${imagePaths.length}:a:0`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath);
+  return args;
+}
+
 function videoFactoryRenderFilter(durationSeconds, narrated = false, storyboard = []) {
   const safeDuration = Math.max(1, Number(durationSeconds) || 1).toFixed(2);
   const captionFilter = narrated ? "subtitles=captions.srt:force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=48'" : null;
@@ -1787,21 +1865,21 @@ async function createResearchVideo(input = {}) {
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
   const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
+  const generatedVisuals = await videoFactoryGenerateSceneImages(jobDirectory, topic, storyboard);
+  const imageUsage = videoFactoryImageUsageSummary(generatedVisuals);
+  const renderTokenUsage = { ...tokenUsage, ...imageUsage };
+  fs.writeFileSync(usagePath, JSON.stringify({ generatedAt: new Date().toISOString(), ...renderTokenUsage }, null, 2), 'utf8');
   const captionData = videoFactoryCaptions(story, durationSeconds);
   fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
   fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
   videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds);
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const args = [
-    '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
-    '-vf', videoFactoryRenderFilter(durationSeconds, true, storyboard),
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath
-  ];
+  const args = videoFactoryAiRenderArgs(jobDirectory, audioPath, outputPath, storyboard, durationSeconds);
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8 + generatedVisuals.length, tokenUsage: renderTokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd + imageUsage.imageCostUsd });
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage: renderTokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd + imageUsage.imageCostUsd, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 async function approvePreparedVideo(input = {}) {
@@ -1828,14 +1906,18 @@ async function approvePreparedVideo(input = {}) {
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
   const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
+  const generatedVisuals = await videoFactoryGenerateSceneImages(jobDirectory, topic, storyboard);
+  const imageUsage = videoFactoryImageUsageSummary(generatedVisuals);
+  const renderTokenUsage = { ...tokenUsage, ...imageUsage };
+  fs.writeFileSync(usagePath, JSON.stringify({ generatedAt: new Date().toISOString(), ...renderTokenUsage }, null, 2), 'utf8');
   const captionData = videoFactoryCaptions(story, durationSeconds);
   fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
   videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds);
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const args = ['-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath, '-vf', videoFactoryRenderFilter(durationSeconds, true, storyboard), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath];
+  const args = videoFactoryAiRenderArgs(jobDirectory, audioPath, outputPath, storyboard, durationSeconds);
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Approved video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage?.estimatedCostUsd || 0 });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8 + generatedVisuals.length, tokenUsage: renderTokenUsage, estimatedCostUsd: (tokenUsage?.estimatedCostUsd || 0) + imageUsage.imageCostUsd });
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
   return { ok: true, id, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage?.estimatedCostUsd || 0, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model, skipped: ['source-footage download', 'automatic publishing'] };
 }
