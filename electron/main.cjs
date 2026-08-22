@@ -2346,6 +2346,33 @@ function registerDatabaseIpc() {
     await materializeSelectedApplicationDocument(documentId);
     return selected;
   });
+  ipcMain.handle('jobs:applications:prepare', async (event, input) => {
+    assertTrustedRenderer(event);
+    const jobId = validateCoachId(input?.jobId, 'job id');
+    const application = coachDatabase.applications.createOrResume({ jobId });
+    const prepareDocument = async (documentType) => {
+      let documents = coachDatabase.applications.documents.list(application.id, documentType);
+      let document = documents.find((entry) => entry.isSelected && entry.status === 'approved' && !entry.validation?.errors?.length);
+      if (!document) document = documents.find((entry) => entry.status === 'approved' && !entry.validation?.errors?.length);
+      if (!document) document = (await generateApplicationDocument({ applicationId: application.id, documentType })).document;
+      const current = coachDatabase.applications.documents.get(document.id);
+      const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
+      const evidenceCatalog = buildEvidenceCatalog(coachDatabase.profiles.getCurrent() || {}, coachDatabase.resumes.getMaster() || {});
+      const claimLedger = documentType === 'cover_letter' ? buildCoverLetterClaimLedger(job, evidenceCatalog) : null;
+      const validation = validateGeneratedDocument(documentType, current.content, evidenceCatalog, job, claimLedger);
+      if (validation.errors?.length || validation.valid === false) throw new Error(`${documentType === 'resume' ? 'Resume' : 'Cover letter'} needs review before it can be selected: ${validation.errors.map((issue) => issue.message).join(' ')}`);
+      coachDatabase.applications.documents.update(current.id, { validation: claimLedger ? { ...validation, claimLedger } : validation, provenance: validation.evidenceIds, status: 'draft' });
+      coachDatabase.applications.documents.approve(current.id);
+      coachDatabase.applications.documents.select(current.id);
+      await materializeSelectedApplicationDocument(current.id);
+      return coachDatabase.applications.documents.get(current.id);
+    };
+    const resume = await prepareDocument('resume');
+    const coverLetter = await prepareDocument('cover_letter');
+    const preparedApplication = coachDatabase.applications.get(application.id);
+    const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
+    return { application: preparedApplication, job, documents: [resume, coverLetter] };
+  });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'txt', job)), filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; fs.mkdirSync(exportDirectory, { recursive: true }); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'pdf', job)), filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
