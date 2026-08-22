@@ -1,5 +1,5 @@
 const electron = require('electron');
-const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification } = electron;
+const { app, BrowserWindow, BrowserView, session, ipcMain, Menu, Tray, nativeImage, clipboard, safeStorage, dialog, shell, Notification, protocol, net } = electron;
 const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
@@ -27,6 +27,10 @@ const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFil
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
 const { transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
 installApiAuditFetch();
+
+// Video files live outside the renderer's HTTP origin. A privileged local
+// scheme lets Chromium stream them without exposing arbitrary filesystem paths.
+protocol.registerSchemesAsPrivileged([{ scheme: 'video-factory', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 
 // Keep the desktop shell and tray visually consistent with the North Star brand.
 // PNG is supported by Electron for both window chrome and Windows tray icons.
@@ -1308,7 +1312,7 @@ function createLocalVideo(input = {}) {
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) {
     throw new Error(`Local video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   }
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), durationSeconds: 12, skipped: ['research', 'source citations', 'TTS narration', 'generated B-roll', 'publishing'] };
 }
 
 function videoFactorySources(input = {}) {
@@ -1646,11 +1650,15 @@ async function createResearchVideo(input = {}) {
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 7 });
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
   return path.join(app.getPath('userData'), 'video-factory');
+}
+
+function videoFactoryMediaUrl(filePath) {
+  return `video-factory://local/${Buffer.from(path.resolve(filePath), 'utf8').toString('base64url')}`;
 }
 
 const VIDEO_FACTORY_STAGES = [
@@ -1694,7 +1702,7 @@ function listLocalVideos() {
         id: entry.name,
         topic: fs.existsSync(topicPath) ? fs.readFileSync(topicPath, 'utf8').trim() : 'Untitled video',
         outputPath,
-        videoUrl: pathToFileURL(outputPath).toString(),
+        videoUrl: videoFactoryMediaUrl(outputPath),
         createdAt: stats.birthtime.toISOString(),
         sizeBytes: stats.size,
         durationSeconds: videoFactoryMediaDuration(outputPath) || 12
@@ -1733,7 +1741,7 @@ function listVideoFactoryPipeline() {
         createdAt: pipeline.createdAt || stats.birthtime.toISOString(),
         updatedAt: pipeline.updatedAt || stats.mtime.toISOString(),
         outputPath: fs.existsSync(outputPath) ? outputPath : null,
-        videoUrl: fs.existsSync(outputPath) ? pathToFileURL(outputPath).toString() : null,
+        videoUrl: fs.existsSync(outputPath) ? videoFactoryMediaUrl(outputPath) : null,
         durationSeconds: fs.existsSync(outputPath) ? videoFactoryMediaDuration(outputPath) : null,
         rightsStatus: fs.existsSync(path.join(directory, 'rights-review.json')) ? 'review_required' : 'unknown',
         hasResearch: fs.existsSync(path.join(directory, 'research.md')),
@@ -2244,6 +2252,18 @@ function registerDatabaseIpc() {
 app.whenReady().then(() => {
   migrateOpenRouterEnvironmentKey();
   coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), applicationDocumentsPath: app.getPath('documents'), seedPath: roadmapSeedPath, masterResumeSourcePath: path.join(app.getPath('userData'), 'master-resume.pdf') });
+  protocol.handle('video-factory', async (request) => {
+    try {
+      const token = new URL(request.url).pathname.split('/').filter(Boolean).pop();
+      const filePath = path.resolve(Buffer.from(token || '', 'base64url').toString('utf8'));
+      const root = path.resolve(videoFactoryRoot());
+      const relative = path.relative(root, filePath);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || path.extname(filePath).toLowerCase() !== '.mp4' || !fs.existsSync(filePath)) return new Response('Video not found.', { status: 404 });
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch {
+      return new Response('Video not found.', { status: 404 });
+    }
+  });
   registerDatabaseIpc();
   // Poll only after a token has been explicitly configured; syncing is read-only
   // and failures are intentionally isolated so the desktop app stays available.
