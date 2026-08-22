@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,uploadMasterResume: () => ipcRenderer.invoke('jobs:resume:upload')
   ,getMasterResumePdf: () => ipcRenderer.invoke('jobs:resume:pdf')
   ,startJobApplication: (input) => ipcRenderer.invoke('jobs:applications:start', input)
+  ,prepareJobApplication: (input) => ipcRenderer.invoke('jobs:applications:prepare', input)
   ,getJobApplication: (id) => ipcRenderer.invoke('jobs:applications:get', id)
   ,openJobApplicationFolder: (applicationId) => ipcRenderer.invoke('jobs:applications:open-folder', { applicationId })
   ,resolveJobApplicationFile: (input) => ipcRenderer.invoke('jobs:applications:file', input)
