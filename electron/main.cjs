@@ -1426,6 +1426,32 @@ function videoFactoryYtDlpCommand() {
   return null;
 }
 
+function discoverVideoFactorySources(input = {}) {
+  const query = String(input.query || '').trim().slice(0, 240);
+  if (!query) throw new Error('Enter a topic or angle to discover YouTube sources.');
+  const limit = Math.min(10, Math.max(1, Number.parseInt(input.limit, 10) || 6));
+  const ytdlp = videoFactoryYtDlpCommand();
+  if (!ytdlp) throw new Error('YouTube discovery requires yt-dlp. Install it locally, then try again.');
+  const search = require('child_process').spawnSync(ytdlp.command, [...ytdlp.prefix, '--flat-playlist', '--dump-single-json', '--skip-download', '--no-warnings', `ytsearch${limit}:${query}`], { encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+  if (search.error || search.status !== 0) throw new Error(search.error?.message || search.stderr?.slice(-400) || 'YouTube discovery failed.');
+  let payload;
+  try { payload = JSON.parse(search.stdout); } catch { throw new Error('YouTube discovery returned unreadable metadata.'); }
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [payload];
+  const results = entries.filter((entry) => entry?.id || entry?.webpage_url).map((entry, index) => {
+    const id = String(entry.id || '').trim();
+    const url = entry.webpage_url || (id ? `https://www.youtube.com/watch?v=${encodeURIComponent(id)}` : '');
+    return {
+      id: id || `discovery-${index + 1}`,
+      url,
+      title: String(entry.title || 'Untitled YouTube video').trim().slice(0, 240),
+      channel: String(entry.channel || entry.uploader || entry.uploader_id || 'Unknown channel').trim().slice(0, 120),
+      durationSeconds: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
+      thumbnail: typeof entry.thumbnail === 'string' ? entry.thumbnail : null
+    };
+  }).filter((entry) => entry.url);
+  return { ok: true, query, results };
+}
+
 async function fetchVideoFactoryAudioTranscript(url, sourceNumber, jobDirectory) {
   const ytdlp = videoFactoryYtDlpCommand();
   if (!ytdlp) return { available: false, source: 'audio_transcription', reason: 'audio_fallback_requires_yt_dlp' };
@@ -1597,6 +1623,7 @@ function deleteLocalVideo(id) {
 
 function registerDatabaseIpc() {
   ipcMain.handle('video-factory:create', (event, input) => { assertTrustedRenderer(event); return createLocalVideo(input); });
+  ipcMain.handle('video-factory:discover', (event, input) => { assertTrustedRenderer(event); return discoverVideoFactorySources(input); });
   ipcMain.handle('video-factory:create-researched', async (event, input) => { assertTrustedRenderer(event); return createResearchVideo(input); });
   ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
   ipcMain.handle('video-factory:open-folder', (event) => { assertTrustedRenderer(event); const error = shell.openPath(videoFactoryRoot()); if (error) return error.then((message) => { if (message) throw new Error(message); return { ok: true }; }); return { ok: true }; });
