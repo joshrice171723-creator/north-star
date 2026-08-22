@@ -467,6 +467,35 @@ const OPENROUTER_MAX_REQUEST_OUTPUT_TOKENS = 50_000;
 // The final evaluator now returns one assessment per submitted job, so the
 // transport deadline must exceed the old 45-second top-selection window.
 const OPENROUTER_TIMEOUT_MS = 90_000;
+const VIDEO_FALLBACK_INPUT_COST_PER_MILLION = 0.15;
+const VIDEO_FALLBACK_OUTPUT_COST_PER_MILLION = 0.60;
+
+function videoFactoryUsageSummary(responses = []) {
+  const usageResponses = responses.filter((response) => response?.usage);
+  const usage = usageResponses.reduce((total, response) => {
+    const details = response.usage || {};
+    total.promptTokens += Number(details.prompt_tokens ?? details.input_tokens ?? 0) || 0;
+    total.completionTokens += Number(details.completion_tokens ?? details.output_tokens ?? 0) || 0;
+    total.totalTokens += Number(details.total_tokens ?? 0) || 0;
+    const reportedCost = Number(details.cost);
+    if (Number.isFinite(reportedCost)) total.reportedCostUsd += reportedCost;
+    else total.hasMissingCost = true;
+    return total;
+  }, { promptTokens: 0, completionTokens: 0, totalTokens: 0, reportedCostUsd: 0, hasMissingCost: false });
+  usage.totalTokens = usage.totalTokens || usage.promptTokens + usage.completionTokens;
+  const hasReportedCost = usageResponses.length > 0 && !usage.hasMissingCost;
+  const estimatedCostUsd = hasReportedCost
+    ? usage.reportedCostUsd
+    : (usage.promptTokens / 1_000_000) * VIDEO_FALLBACK_INPUT_COST_PER_MILLION + (usage.completionTokens / 1_000_000) * VIDEO_FALLBACK_OUTPUT_COST_PER_MILLION;
+  return {
+    requestCount: usageResponses.length,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
+    costBasis: hasReportedCost ? 'OpenRouter reported usage cost' : 'Fallback estimate: $0.15/M input and $0.60/M output tokens',
+  };
+}
 
 function validateOpenRouterMessages(messages) {
   if (!Array.isArray(messages) || !messages.length || messages.length > OPENROUTER_MAX_MESSAGES) {
@@ -1323,7 +1352,8 @@ function createTestVideo() {
   const jobId = `video-${Date.now()}`;
   const jobDirectory = path.join(factoryRoot, jobId);
   fs.mkdirSync(jobDirectory, { recursive: true });
-  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, createdAt: new Date().toISOString(), isTest: true, testFixtureVersion: 1 });
+  const tokenUsage = videoFactoryUsageSummary([]);
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, createdAt: new Date().toISOString(), isTest: true, testFixtureVersion: 1, tokenUsage, estimatedCostUsd: 0 });
   fs.writeFileSync(path.join(jobDirectory, 'topic.txt'), videoFactoryWrapText(topic), 'utf8');
   fs.writeFileSync(path.join(jobDirectory, 'captions.srt'), videoFactoryCaptions(story, durationSeconds).srt, 'utf8');
   fs.writeFileSync(path.join(jobDirectory, 'test-fixture.txt'), story, 'utf8');
@@ -1337,7 +1367,7 @@ function createTestVideo() {
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Test video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  return { ok: true, id: jobId, topic, story, status: 'complete', isTest: true, testFixtureVersion: 1, outputPath, videoUrl: videoFactoryMediaUrl(outputPath), durationSeconds, captionCount: videoFactoryCaptions(story, durationSeconds).captions.length };
+  return { ok: true, id: jobId, topic, story, status: 'complete', isTest: true, testFixtureVersion: 1, outputPath, videoUrl: videoFactoryMediaUrl(outputPath), durationSeconds, captionCount: videoFactoryCaptions(story, durationSeconds).captions.length, tokenUsage, estimatedCostUsd: 0 };
 }
 
 function videoFactorySources(input = {}) {
@@ -1363,7 +1393,7 @@ async function videoFactoryDiscoveryIntent(topic) {
   ], { auditPurpose: 'video_factory_discovery', max_tokens: 120 });
   if (!response.ok) return { query: fallback, strategy: 'fallback', reason: response.error || 'discovery_intent_failed' };
   const query = response.message.content.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^QUERY\s*:\s*/i, '').replace(/^['"]|['"]$/g, '').trim().slice(0, 240);
-  return { query: query || fallback, strategy: query ? 'openrouter' : 'fallback', reason: query ? null : 'discovery_intent_empty' };
+  return { query: query || fallback, strategy: query ? 'openrouter' : 'fallback', reason: query ? null : 'discovery_intent_empty', usageResponses: response.usage ? [response] : [] };
 }
 
 async function videoFactoryAutoDiscovery(topic) {
@@ -1609,6 +1639,7 @@ async function fetchVideoFactorySourceEvidence(urls, jobDirectory) {
 
 async function summarizeVideoFactoryTranscriptChunks(sourceEvidence) {
   const chunks = [];
+  const usageResponses = [];
   for (const entry of sourceEvidence) {
     const sourceChunks = videoFactoryTextChunks(entry.transcript?.text);
     for (let index = 0; index < sourceChunks.length; index += 1) {
@@ -1617,9 +1648,11 @@ async function summarizeVideoFactoryTranscriptChunks(sourceEvidence) {
         { role: 'system', content: 'Extract only source-grounded facts and useful narrative beats from this transcript segment. Preserve uncertainty. Return 3 to 6 concise bullets. Do not invent context outside the segment.' },
         { role: 'user', content: `SOURCE ${entry.sourceNumber}, TRANSCRIPT CHUNK ${index + 1} OF ${sourceChunks.length}:\n${chunk}` }
       ], { auditPurpose: 'video_factory_transcript_chunk', max_tokens: 700 });
+      if (response.usage) usageResponses.push(response);
       chunks.push({ sourceNumber: entry.sourceNumber, chunkNumber: index + 1, chunkCount: sourceChunks.length, text: chunk, summary: response.ok ? response.message.content.trim() : chunk.slice(0, 4000), summarized: response.ok, error: response.ok ? null : response.error });
     }
   }
+  chunks.usageResponses = usageResponses;
   return chunks;
 }
 
@@ -1660,6 +1693,7 @@ async function createResearchVideo(input = {}) {
     { role: 'user', content: `${researchPrompt}\n\nRetrieved page evidence (use only as a lead; a YouTube page is not a transcript):\n${retrievedEvidence || '(none)'}` }
   ], { auditPurpose: 'video_factory_research', max_tokens: 1800 });
   if (!response.ok) throw new Error(response.error || 'Research and story generation failed.');
+  const usageResponses = [...(discovery?.usageResponses || []), ...(transcriptChunks.usageResponses || []), response];
   const packageText = response.message.content.trim();
   const storyMatch = packageText.match(/(?:^|\n)STORY\s*\n([\s\S]*?)(?=\nSCENES\s*\n|\nFACT CHECK\s*\n|$)/i);
   const story = (storyMatch?.[1] || packageText).replace(/^[-*]\s*/gm, '').trim().slice(0, 12000);
@@ -1675,6 +1709,7 @@ async function createResearchVideo(input = {}) {
   const storyboardPath = path.join(jobDirectory, 'storyboard.json');
   const captionsPath = path.join(jobDirectory, 'captions.srt');
   const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
+  const usagePath = path.join(jobDirectory, 'usage.json');
   const audioPath = path.join(jobDirectory, 'narration.mp3');
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(topicPath, videoFactoryWrapText(topic), 'utf8');
@@ -1682,6 +1717,8 @@ async function createResearchVideo(input = {}) {
   fs.writeFileSync(youtubePackagePath, JSON.stringify({ generatedAt: new Date().toISOString(), topic, ...youtubePackage, rightsStatus: 'review_required' }, null, 2), 'utf8');
   fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
   fs.writeFileSync(transcriptChunksPath, JSON.stringify({ generatedAt: new Date().toISOString(), chunks: transcriptChunks }, null, 2), 'utf8');
+  const tokenUsage = videoFactoryUsageSummary(usageResponses);
+  fs.writeFileSync(usagePath, JSON.stringify({ generatedAt: new Date().toISOString(), ...tokenUsage }, null, 2), 'utf8');
   fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
@@ -1701,9 +1738,9 @@ async function createResearchVideo(input = {}) {
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 7 });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd });
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
@@ -1766,6 +1803,8 @@ function listLocalVideos() {
         durationSeconds: videoFactoryMediaDuration(outputPath) || 12
         ,isTest: Boolean(pipeline.isTest)
         ,testFixtureVersion: pipeline.testFixtureVersion || null
+        ,tokenUsage: pipeline.tokenUsage || null
+        ,estimatedCostUsd: Number.isFinite(Number(pipeline.estimatedCostUsd)) ? Number(pipeline.estimatedCostUsd) : null
         ,hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
         ,hasResearch: fs.existsSync(researchPath)
         ,hasCaptions: fs.existsSync(path.join(directory, 'captions.srt'))
@@ -1809,6 +1848,8 @@ function listVideoFactoryPipeline() {
         hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
         ,isTest: Boolean(pipeline.isTest)
         ,testFixtureVersion: pipeline.testFixtureVersion || null
+        ,tokenUsage: pipeline.tokenUsage || null
+        ,estimatedCostUsd: Number.isFinite(Number(pipeline.estimatedCostUsd)) ? Number(pipeline.estimatedCostUsd) : null
       };
     })
     .filter(Boolean)
