@@ -426,6 +426,9 @@ async function syncJobEmails() {
     if (!response.ok) continue;
     const normalized = normalizeGmailMessage(await response.json(), { pipelineSignals });
     const savedEmail = coachDatabase.email.upsert({ provider: 'gmail', ...normalized });
+    // Match replies locally and deterministically: the outreach database uses
+    // Gmail thread ID first, then recipient email when a thread is unavailable.
+    coachDatabase.outreach.recordReply({ threadId: normalized.threadId, recipient: normalized.sender, classification: classifyOutreachReply(normalized.subject, normalized.body) });
     const assignment = coachDatabase.email.autoAssignApplication(savedEmail);
     if (assignment.linked) autoAssigned += 1;
     if (assignment.created) autoCreated += 1;
@@ -1005,6 +1008,7 @@ async function exportInterviewReport(input = {}) {
   const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export full interview transcript', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-transcript.txt`, filters: [{ name: 'Text file', extensions: ['txt'] }] });
   if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, report, 'utf8'); return { savedPath: chosen.filePath };
 }
+function classifyOutreachReply(subject = '', body = '') { const text = `${subject} ${body}`.toLowerCase(); if (/interview|assessment|deadline|availability|schedule|next steps|phone screen/.test(text)) return 'interview'; if (/not interested|rejected|regret|unfortunately|moving forward with other/.test(text)) return 'rejection'; if (/out of office|automatic reply|do not reply|unsubscribe/.test(text)) return 'automated'; if (/interested|let's connect|lets connect|happy to chat|send availability|learn more/.test(text)) return 'positive'; if (text.trim()) return 'needs_response'; return 'unknown'; }
 function encodeMime(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64').replace(/.{1,76}/g, '$&\r\n'); }
 async function sendOutreachEmail(opportunity) {
   let credentials = readEmailCredentials();
