@@ -1467,12 +1467,22 @@ async function fetchVideoFactoryAudioTranscript(url, sourceNumber, jobDirectory)
   const chunkPaths = fs.existsSync(chunksDirectory) ? fs.readdirSync(chunksDirectory).filter((name) => /^chunk-\d+\.mp3$/i.test(name)).sort().map((name) => path.join(chunksDirectory, name)) : [];
   if (segment.error || segment.status !== 0 || !chunkPaths.length) return { available: false, source: 'audio_transcription', reason: segment.error?.message || segment.stderr?.slice(-300) || 'audio_segment_failed' };
   const transcriptParts = [];
-  for (const chunkPath of chunkPaths) {
-    const audio = { format: 'mp3', data: fs.readFileSync(chunkPath).toString('base64') };
-    const transcript = await transcribeAudioLong({ apiKey: readOpenRouterApiKey(), audio, fetchImpl: getUninstrumentedFetch() });
-    transcriptParts.push(transcript.text);
+  const failedChunks = [];
+  for (const [index, chunkPath] of chunkPaths.entries()) {
+    try {
+      const audio = { format: 'mp3', data: fs.readFileSync(chunkPath).toString('base64') };
+      const transcript = await transcribeAudioLong({ apiKey: readOpenRouterApiKey(), audio, fetchImpl: getUninstrumentedFetch() });
+      if (transcript.text?.trim()) transcriptParts.push(transcript.text.trim());
+      else failedChunks.push(index + 1);
+    } catch (error) {
+      // Keep successful segments when one provider request fails; a 60-minute
+      // source should produce auditable partial evidence instead of losing all
+      // prior transcription work to one bad chunk.
+      failedChunks.push(index + 1);
+    }
   }
-  return { available: transcriptParts.length > 0, source: 'audio_transcription', text: transcriptParts.join(' ').trim(), audioPath, chunkCount: chunkPaths.length, reason: transcriptParts.length ? null : 'audio_transcript_empty' };
+  const available = transcriptParts.length > 0;
+  return { available, partial: available && failedChunks.length > 0, source: 'audio_transcription', text: transcriptParts.join(' ').trim(), audioPath, chunkCount: chunkPaths.length, failedChunkCount: failedChunks.length, failedChunks, reason: available ? (failedChunks.length ? 'audio_transcript_partial' : null) : 'audio_transcript_empty' };
 }
 
 async function fetchVideoFactorySourceEvidence(urls, jobDirectory) {
@@ -1553,7 +1563,7 @@ async function createResearchVideo(input = {}) {
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
   fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
   fs.writeFileSync(transcriptChunksPath, JSON.stringify({ generatedAt: new Date().toISOString(), chunks: transcriptChunks }, null, 2), 'utf8');
-  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
+  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
@@ -1572,7 +1582,7 @@ async function createResearchVideo(input = {}) {
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: entry.transcript?.available ? 'complete' : 'needs_transcript', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, reason: entry.transcript?.available ? null : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
+  const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
   return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
