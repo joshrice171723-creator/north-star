@@ -1289,6 +1289,7 @@ function createLocalVideo(input = {}) {
   const jobId = `video-${Date.now()}`;
   const jobDirectory = path.join(factoryRoot, jobId);
   fs.mkdirSync(jobDirectory, { recursive: true });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'rendered', status: 'complete', topic, createdAt: new Date().toISOString() });
   const textPath = path.join(jobDirectory, 'topic.txt');
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(textPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
@@ -1588,6 +1589,7 @@ async function createResearchVideo(input = {}) {
   const jobId = `video-${Date.now()}`;
   const jobDirectory = path.join(factoryRoot, jobId);
   fs.mkdirSync(jobDirectory, { recursive: true });
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'researching', status: 'in_progress', topic, createdAt: new Date().toISOString() });
   const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls, jobDirectory);
   const transcriptChunks = await summarizeVideoFactoryTranscriptChunks(sourceEvidence);
 
@@ -1634,6 +1636,7 @@ async function createResearchVideo(input = {}) {
   fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
   // Research can inform the story automatically, but reusing source footage remains an explicit human approval step.
   fs.writeFileSync(rightsReviewPath, JSON.stringify({ status: 'review_required', sourceReuseApproved: false, note: 'No source footage was downloaded or embedded. Review permission before reusing any source clips, screenshots, or excerpts.', sources: sourceEvidence.map(({ sourceNumber, url, title }) => ({ sourceNumber, url, title, footageStatus: 'not_downloaded', permission: 'unreviewed' })) }, null, 2), 'utf8');
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 7 });
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
@@ -1648,6 +1651,31 @@ async function createResearchVideo(input = {}) {
 
 function videoFactoryRoot() {
   return path.join(app.getPath('userData'), 'video-factory');
+}
+
+const VIDEO_FACTORY_STAGES = [
+  ['idea', 'Idea'],
+  ['researching', 'Researching'],
+  ['scripted', 'Script + storyboard'],
+  ['rendered', 'Draft rendered'],
+  ['review', 'Review'],
+  ['approved', 'Approved'],
+  ['published', 'Published']
+];
+
+function videoFactoryPipelinePath(directory) {
+  return path.join(directory, 'pipeline.json');
+}
+
+function saveVideoFactoryPipeline(directory, updates = {}) {
+  const pipelinePath = videoFactoryPipelinePath(directory);
+  let current = {};
+  if (fs.existsSync(pipelinePath)) {
+    try { current = JSON.parse(fs.readFileSync(pipelinePath, 'utf8')); } catch { current = {}; }
+  }
+  const next = { ...current, ...updates, updatedAt: new Date().toISOString() };
+  fs.writeFileSync(pipelinePath, JSON.stringify(next, null, 2), 'utf8');
+  return next;
 }
 
 function listLocalVideos() {
@@ -1681,6 +1709,53 @@ function listLocalVideos() {
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+function listVideoFactoryPipeline() {
+  const factoryRoot = videoFactoryRoot();
+  if (!fs.existsSync(factoryRoot)) return [];
+  return fs.readdirSync(factoryRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^video-\d+$/.test(entry.name))
+    .map((entry) => {
+      const directory = path.join(factoryRoot, entry.name);
+      const topicPath = path.join(directory, 'topic.txt');
+      if (!fs.existsSync(topicPath)) return null;
+      let pipeline = {};
+      const pipelinePath = videoFactoryPipelinePath(directory);
+      if (fs.existsSync(pipelinePath)) {
+        try { pipeline = JSON.parse(fs.readFileSync(pipelinePath, 'utf8')); } catch { pipeline = {}; }
+      }
+      const outputPath = path.join(directory, 'video.mp4');
+      const stats = fs.statSync(topicPath);
+      return {
+        id: entry.name,
+        topic: fs.readFileSync(topicPath, 'utf8').trim() || 'Untitled video',
+        stage: pipeline.stage || (fs.existsSync(outputPath) ? 'review' : 'idea'),
+        status: pipeline.status || (fs.existsSync(outputPath) ? 'complete' : 'in_progress'),
+        createdAt: pipeline.createdAt || stats.birthtime.toISOString(),
+        updatedAt: pipeline.updatedAt || stats.mtime.toISOString(),
+        outputPath: fs.existsSync(outputPath) ? outputPath : null,
+        videoUrl: fs.existsSync(outputPath) ? pathToFileURL(outputPath).toString() : null,
+        durationSeconds: fs.existsSync(outputPath) ? videoFactoryMediaDuration(outputPath) : null,
+        rightsStatus: fs.existsSync(path.join(directory, 'rights-review.json')) ? 'review_required' : 'unknown',
+        hasResearch: fs.existsSync(path.join(directory, 'research.md')),
+        hasStoryboard: fs.existsSync(path.join(directory, 'storyboard.json')),
+        hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function updateVideoFactoryPipeline(input = {}) {
+  const id = typeof input.id === 'string' ? input.id : '';
+  const stage = typeof input.stage === 'string' ? input.stage : '';
+  if (!/^video-\d+$/.test(id) || !VIDEO_FACTORY_STAGES.some(([value]) => value === stage)) throw new Error('Invalid video pipeline update.');
+  const factoryRoot = videoFactoryRoot();
+  const directory = path.resolve(factoryRoot, id);
+  if (path.dirname(directory) !== path.resolve(factoryRoot) || !fs.existsSync(directory)) throw new Error('Video pipeline job not found.');
+  const pipeline = saveVideoFactoryPipeline(directory, { stage, status: stage === 'published' ? 'published' : 'in_progress' });
+  return { ok: true, id, ...pipeline };
+}
+
 function deleteLocalVideo(id) {
   if (typeof id !== 'string' || !/^video-\d+$/.test(id)) throw new Error('Invalid video id.');
   const factoryRoot = videoFactoryRoot();
@@ -1696,6 +1771,8 @@ function registerDatabaseIpc() {
   ipcMain.handle('video-factory:discover', (event, input) => { assertTrustedRenderer(event); return discoverVideoFactorySources(input); });
   ipcMain.handle('video-factory:create-researched', async (event, input) => { assertTrustedRenderer(event); return createResearchVideo(input); });
   ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
+  ipcMain.handle('video-factory:pipeline:list', (event) => { assertTrustedRenderer(event); return listVideoFactoryPipeline(); });
+  ipcMain.handle('video-factory:pipeline:update', (event, input) => { assertTrustedRenderer(event); return updateVideoFactoryPipeline(input); });
   ipcMain.handle('video-factory:open-folder', (event) => { assertTrustedRenderer(event); const error = shell.openPath(videoFactoryRoot()); if (error) return error.then((message) => { if (message) throw new Error(message); return { ok: true }; }); return { ok: true }; });
   ipcMain.handle('video-factory:delete', (event, id) => { assertTrustedRenderer(event); return deleteLocalVideo(id); });
   ipcMain.handle('coach:bootstrap', () => coachDatabase.bootstrap());
