@@ -1306,13 +1306,35 @@ function createLocalVideo(input = {}) {
 }
 
 function videoFactorySources(input = {}) {
-  const urls = String(input.sourceUrls || '').split(/\r?\n/).map((value) => value.trim()).filter(Boolean).slice(0, 12);
+  const urls = [...String(input.sourceUrls || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)].map(([value]) => value.replace(/[),.;!?]+$/g, '')).filter(Boolean).slice(0, 12);
   const notes = String(input.researchNotes || '').trim().slice(0, 30000);
   const validUrls = urls.filter((value) => {
     try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; }
   });
   if (urls.length && validUrls.length !== urls.length) throw new Error('Every source must be a complete http(s) URL.');
   return { urls: validUrls, notes };
+}
+
+function videoFactoryFallbackDiscoveryQuery(topic) {
+  const cleaned = String(topic || '').replace(/https?:\/\/[^\s<>"'`]+/gi, ' ').replace(/\b(summar(?:y|ise|ize)|this|that|the|a|an|video|clip|short|long|in|under|within|for|minute|minutes|min|mins)\b/gi, ' ').replace(/\b\d+\b/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned || 'AI technology science explainer documentary';
+}
+
+async function videoFactoryDiscoveryIntent(topic) {
+  const fallback = videoFactoryFallbackDiscoveryQuery(topic);
+  const response = await openRouterChat([
+    { role: 'system', content: 'You are a YouTube discovery editor. Turn a user video request into one concise search query for source videos worth summarizing. Preserve any real subject in the request. If the request only contains formatting instructions with no subject, choose an evergreen AI, technology, or science explainer topic with strong research potential. Return exactly one line beginning with QUERY: and no other text.' },
+    { role: 'user', content: `User request: ${String(topic || '').trim().slice(0, 240)}` }
+  ], { auditPurpose: 'video_factory_discovery', max_tokens: 120 });
+  if (!response.ok) return { query: fallback, strategy: 'fallback', reason: response.error || 'discovery_intent_failed' };
+  const query = response.message.content.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^QUERY\s*:\s*/i, '').replace(/^['"]|['"]$/g, '').trim().slice(0, 240);
+  return { query: query || fallback, strategy: query ? 'openrouter' : 'fallback', reason: query ? null : 'discovery_intent_empty' };
+}
+
+async function videoFactoryAutoDiscovery(topic) {
+  const intent = await videoFactoryDiscoveryIntent(topic);
+  const discovery = discoverVideoFactorySources({ query: intent.query, limit: 6 });
+  return { ...intent, results: discovery.results, selected: discovery.results.slice(0, 3) };
 }
 
 function videoFactoryYoutubeId(url) {
@@ -1549,8 +1571,14 @@ function videoFactoryYoutubePackage(packageText, topic) {
 async function createResearchVideo(input = {}) {
   const topic = typeof input.topic === 'string' ? input.topic.trim().slice(0, 240) : '';
   if (!topic) throw new Error('Enter a topic for the video.');
-  const sources = videoFactorySources(input);
-  if (!sources.urls.length && !sources.notes) throw new Error('Add at least one YouTube/source URL or paste research notes/transcript excerpts.');
+  let sources = videoFactorySources(input);
+  let discovery = null;
+  if (!sources.urls.length && !sources.notes) {
+    discovery = await videoFactoryAutoDiscovery(topic);
+    const selectedUrls = discovery.selected.map((entry) => entry.url).filter(Boolean);
+    if (!selectedUrls.length) throw new Error(`I could not find source videos for “${discovery.query}”. Add a link or a more specific topic and try again.`);
+    sources = { ...sources, urls: selectedUrls };
+  }
   const factoryRoot = videoFactoryRoot();
   const jobId = `video-${Date.now()}`;
   const jobDirectory = path.join(factoryRoot, jobId);
@@ -1590,7 +1618,7 @@ async function createResearchVideo(input = {}) {
   fs.writeFileSync(youtubePackagePath, JSON.stringify({ generatedAt: new Date().toISOString(), topic, ...youtubePackage, rightsStatus: 'review_required' }, null, 2), 'utf8');
   fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
   fs.writeFileSync(transcriptChunksPath, JSON.stringify({ generatedAt: new Date().toISOString(), chunks: transcriptChunks }, null, 2), 'utf8');
-  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
+  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
@@ -1610,7 +1638,7 @@ async function createResearchVideo(input = {}) {
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
