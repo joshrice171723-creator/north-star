@@ -24,7 +24,7 @@ const { applicationExportDirectory, applicationExportFilename, ensureApplication
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
-const { transcribeAudio, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
+const { transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
 installApiAuditFetch();
 
 // Keep the desktop shell and tray visually consistent with the North Star brand.
@@ -1388,10 +1388,68 @@ async function fetchVideoFactoryYoutubeTranscript(url, fetchImpl) {
   if (!transcriptResponse.ok) return { available: false, reason: `caption_track_${transcriptResponse.status}` };
   const xml = await transcriptResponse.text();
   const lines = [...xml.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/gi)].map((match) => videoFactoryDecodeHtml(match[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
-  return { available: lines.length > 0, languageCode: track.languageCode || null, title: player?.videoDetails?.title || null, text: lines.join(' ').slice(0, 50000), reason: lines.length ? null : 'caption_track_empty' };
+  const text = lines.join(' ');
+  return { available: lines.length > 0, languageCode: track.languageCode || null, title: player?.videoDetails?.title || null, text: text.slice(0, 500000), truncated: text.length > 500000, source: 'captions', reason: lines.length ? null : 'caption_track_empty' };
 }
 
-async function fetchVideoFactorySourceEvidence(urls) {
+function videoFactoryTextChunks(text, maxChars = 12000) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const chunks = [];
+  let start = 0;
+  while (start < normalized.length) {
+    let end = Math.min(normalized.length, start + maxChars);
+    if (end < normalized.length) {
+      const boundary = normalized.lastIndexOf(' ', end);
+      if (boundary > start + Math.floor(maxChars * 0.65)) end = boundary;
+    }
+    chunks.push(normalized.slice(start, end).trim());
+    start = end;
+    while (normalized[start] === ' ') start += 1;
+  }
+  return chunks;
+}
+
+function videoFactoryYtDlpCommand() {
+  const candidates = ['yt-dlp.exe', 'yt-dlp'];
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+  for (const candidate of candidates) {
+    const found = require('child_process').spawnSync(locator, [candidate], { encoding: 'utf8', windowsHide: true });
+    if (found.status === 0 && found.stdout?.trim()) return { command: found.stdout.trim().split(/\r?\n/)[0], prefix: [] };
+  }
+  const python = require('child_process').spawnSync(locator, [process.platform === 'win32' ? 'python.exe' : 'python3'], { encoding: 'utf8', windowsHide: true });
+  const pythonPath = python.status === 0 ? python.stdout.trim().split(/\r?\n/)[0] : '';
+  if (pythonPath) {
+    const moduleCheck = require('child_process').spawnSync(pythonPath, ['-m', 'yt_dlp', '--version'], { encoding: 'utf8', windowsHide: true });
+    if (moduleCheck.status === 0) return { command: pythonPath, prefix: ['-m', 'yt_dlp'] };
+  }
+  return null;
+}
+
+async function fetchVideoFactoryAudioTranscript(url, sourceNumber, jobDirectory) {
+  const ytdlp = videoFactoryYtDlpCommand();
+  if (!ytdlp) return { available: false, source: 'audio_transcription', reason: 'audio_fallback_requires_yt_dlp' };
+  const sourcePrefix = path.join(jobDirectory, `source-${sourceNumber}-audio`);
+  const downloadTemplate = `${sourcePrefix}.%(ext)s`;
+  const download = require('child_process').spawnSync(ytdlp.command, [...ytdlp.prefix, '--no-playlist', '--no-part', '--max-filesize', '250M', '-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '5', '-o', downloadTemplate, url], { cwd: jobDirectory, encoding: 'utf8', windowsHide: true, timeout: 180000 });
+  const audioPath = fs.readdirSync(jobDirectory).map((name) => path.join(jobDirectory, name)).find((candidate) => candidate.startsWith(sourcePrefix) && candidate.toLowerCase().endsWith('.mp3'));
+  if (download.error || download.status !== 0 || !audioPath) return { available: false, source: 'audio_transcription', reason: download.error?.message || download.stderr?.slice(-300) || 'audio_download_failed' };
+  const chunksDirectory = path.join(jobDirectory, `source-${sourceNumber}-audio-chunks`);
+  fs.mkdirSync(chunksDirectory, { recursive: true });
+  const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const segment = require('child_process').spawnSync(ffmpeg, ['-y', '-i', audioPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '48k', '-f', 'segment', '-segment_time', '480', '-reset_timestamps', '1', path.join(chunksDirectory, 'chunk-%03d.mp3')], { cwd: jobDirectory, encoding: 'utf8', windowsHide: true, timeout: 180000 });
+  const chunkPaths = fs.existsSync(chunksDirectory) ? fs.readdirSync(chunksDirectory).filter((name) => /^chunk-\d+\.mp3$/i.test(name)).sort().map((name) => path.join(chunksDirectory, name)) : [];
+  if (segment.error || segment.status !== 0 || !chunkPaths.length) return { available: false, source: 'audio_transcription', reason: segment.error?.message || segment.stderr?.slice(-300) || 'audio_segment_failed' };
+  const transcriptParts = [];
+  for (const chunkPath of chunkPaths) {
+    const audio = { format: 'mp3', data: fs.readFileSync(chunkPath).toString('base64') };
+    const transcript = await transcribeAudioLong({ apiKey: readOpenRouterApiKey(), audio, fetchImpl: getUninstrumentedFetch() });
+    transcriptParts.push(transcript.text);
+  }
+  return { available: transcriptParts.length > 0, source: 'audio_transcription', text: transcriptParts.join(' ').trim(), audioPath, chunkCount: chunkPaths.length, reason: transcriptParts.length ? null : 'audio_transcript_empty' };
+}
+
+async function fetchVideoFactorySourceEvidence(urls, jobDirectory) {
   const fetchImpl = getUninstrumentedFetch();
   return Promise.all(urls.map(async (url, index) => {
     try {
@@ -1402,12 +1460,30 @@ async function fetchVideoFactorySourceEvidence(urls) {
       const html = (await response.text()).slice(0, 120000);
       const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, ' ').trim() || url;
       const text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim().slice(0, 10000);
-      const transcript = await fetchVideoFactoryYoutubeTranscript(url, fetchImpl).catch((error) => ({ available: false, reason: error?.message || 'caption_lookup_failed' }));
+      let transcript = await fetchVideoFactoryYoutubeTranscript(url, fetchImpl).catch((error) => ({ available: false, reason: error?.message || 'caption_lookup_failed' }));
+      if (!transcript.available) transcript = await fetchVideoFactoryAudioTranscript(url, index + 1, jobDirectory).catch((error) => ({ available: false, source: 'audio_transcription', reason: error?.message || 'audio_transcription_failed' }));
       return { sourceNumber: index + 1, url, title: transcript.title || title, status: response.status, excerpt: text, transcript };
     } catch (error) {
-      return { sourceNumber: index + 1, url, title: url, status: 'unavailable', excerpt: '', transcript: { available: false, reason: 'source_page_unavailable' }, error: error?.name === 'AbortError' ? 'Timed out' : 'Could not retrieve source page' };
+      const transcript = await fetchVideoFactoryAudioTranscript(url, index + 1, jobDirectory).catch((fallbackError) => ({ available: false, source: 'audio_transcription', reason: fallbackError?.message || 'audio_transcription_failed' }));
+      return { sourceNumber: index + 1, url, title: url, status: 'unavailable', excerpt: '', transcript: transcript.available ? transcript : { available: false, source: transcript.source || 'captions', reason: transcript.reason || (error?.name === 'AbortError' ? 'source_page_timeout' : 'source_page_unavailable') }, error: error?.name === 'AbortError' ? 'Timed out' : 'Could not retrieve source page' };
     }
   }));
+}
+
+async function summarizeVideoFactoryTranscriptChunks(sourceEvidence) {
+  const chunks = [];
+  for (const entry of sourceEvidence) {
+    const sourceChunks = videoFactoryTextChunks(entry.transcript?.text);
+    for (let index = 0; index < sourceChunks.length; index += 1) {
+      const chunk = sourceChunks[index];
+      const response = await openRouterChat([
+        { role: 'system', content: 'Extract only source-grounded facts and useful narrative beats from this transcript segment. Preserve uncertainty. Return 3 to 6 concise bullets. Do not invent context outside the segment.' },
+        { role: 'user', content: `SOURCE ${entry.sourceNumber}, TRANSCRIPT CHUNK ${index + 1} OF ${sourceChunks.length}:\n${chunk}` }
+      ], { auditPurpose: 'video_factory_transcript_chunk', max_tokens: 700 });
+      chunks.push({ sourceNumber: entry.sourceNumber, chunkNumber: index + 1, chunkCount: sourceChunks.length, text: chunk, summary: response.ok ? response.message.content.trim() : chunk.slice(0, 4000), summarized: response.ok, error: response.ok ? null : response.error });
+    }
+  }
+  return chunks;
 }
 
 async function createResearchVideo(input = {}) {
@@ -1415,10 +1491,18 @@ async function createResearchVideo(input = {}) {
   if (!topic) throw new Error('Enter a topic for the video.');
   const sources = videoFactorySources(input);
   if (!sources.urls.length && !sources.notes) throw new Error('Add at least one YouTube/source URL or paste research notes/transcript excerpts.');
-  const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls);
+  const factoryRoot = videoFactoryRoot();
+  const jobId = `video-${Date.now()}`;
+  const jobDirectory = path.join(factoryRoot, jobId);
+  fs.mkdirSync(jobDirectory, { recursive: true });
+  const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls, jobDirectory);
+  const transcriptChunks = await summarizeVideoFactoryTranscriptChunks(sourceEvidence);
 
   const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 to 6 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals. Add [SOURCE n] when a suggestion depends on a supplied source. Label any clip, footage, screenshot, or excerpt as RIGHTS REVIEW REQUIRED.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
-  const retrievedEvidence = sourceEvidence.map((entry) => `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}\nCAPTION TRANSCRIPT: ${entry.transcript?.text || entry.transcript?.reason || 'No transcript retrieved.'}`).join('\n\n');
+  const retrievedEvidence = sourceEvidence.map((entry) => {
+    const summaries = transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).map((chunk) => `TRANSCRIPT CHUNK ${chunk.chunkNumber}/${chunk.chunkCount}:\n${chunk.summary}`).join('\n\n');
+    return `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}\nTRANSCRIPT SOURCE: ${entry.transcript?.source || 'unavailable'}\nTRANSCRIPT EVIDENCE:\n${summaries || entry.transcript?.reason || 'No transcript retrieved.'}`;
+  }).join('\n\n');
   const response = await openRouterChat([
     { role: 'system', content: 'You are a careful video research editor. Preserve provenance, distinguish facts from commentary, and never fabricate source contents.' },
     { role: 'user', content: `${researchPrompt}\n\nRetrieved page evidence (use only as a lead; a YouTube page is not a transcript):\n${retrievedEvidence || '(none)'}` }
@@ -1429,14 +1513,11 @@ async function createResearchVideo(input = {}) {
   const story = (storyMatch?.[1] || packageText).replace(/^[-*]\s*/gm, '').trim().slice(0, 12000);
   if (!story) throw new Error('Research returned no usable story.');
 
-  const factoryRoot = videoFactoryRoot();
-  const jobId = `video-${Date.now()}`;
-  const jobDirectory = path.join(factoryRoot, jobId);
-  fs.mkdirSync(jobDirectory, { recursive: true });
   const topicPath = path.join(jobDirectory, 'topic.txt');
   const researchPath = path.join(jobDirectory, 'research.md');
   const sourcesPath = path.join(jobDirectory, 'sources.json');
   const transcriptsPath = path.join(jobDirectory, 'transcripts.md');
+  const transcriptChunksPath = path.join(jobDirectory, 'transcript-chunks.json');
   const storyboardPath = path.join(jobDirectory, 'storyboard.json');
   const captionsPath = path.join(jobDirectory, 'captions.srt');
   const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
@@ -1444,8 +1525,9 @@ async function createResearchVideo(input = {}) {
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
-  fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\n${entry.transcript?.text || `No caption transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
-  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptReason: transcript?.reason || null })) }, null, 2), 'utf8');
+  fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
+  fs.writeFileSync(transcriptChunksPath, JSON.stringify({ generatedAt: new Date().toISOString(), chunks: transcriptChunks }, null, 2), 'utf8');
+  fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
@@ -1464,7 +1546,7 @@ async function createResearchVideo(input = {}) {
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
