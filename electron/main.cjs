@@ -1328,6 +1328,50 @@ function videoFactoryDecodeHtml(value) {
   return value.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)));
 }
 
+function videoFactoryMediaDuration(mediaPath) {
+  const ffprobe = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+  const result = require('child_process').spawnSync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', mediaPath], { encoding: 'utf8', windowsHide: true });
+  const duration = Number.parseFloat(String(result.stdout || '').trim());
+  return Number.isFinite(duration) && duration > 0 ? Number(duration.toFixed(2)) : null;
+}
+
+function videoFactoryTimestamp(seconds) {
+  const safeSeconds = Math.max(0, seconds);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const wholeSeconds = Math.floor(safeSeconds % 60);
+  const milliseconds = Math.round((safeSeconds - Math.floor(safeSeconds)) * 1000);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
+function videoFactoryCaptions(story, durationSeconds) {
+  const words = story.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const chunks = [];
+  for (let index = 0; index < words.length; index += 10) chunks.push(words.slice(index, index + 10).join(' '));
+  const totalWords = Math.max(1, words.length);
+  let cursor = 0;
+  const captions = chunks.map((text, index) => {
+    const end = index === chunks.length - 1 ? durationSeconds : cursor + (durationSeconds * text.split(' ').length / totalWords);
+    const caption = { index: index + 1, startSeconds: Number(cursor.toFixed(2)), endSeconds: Number(end.toFixed(2)), text };
+    cursor = end;
+    return caption;
+  });
+  const srt = captions.map((caption) => `${caption.index}\n${videoFactoryTimestamp(caption.startSeconds)} --> ${videoFactoryTimestamp(caption.endSeconds)}\n${caption.text}\n`).join('\n');
+  return { captions, srt };
+}
+
+function videoFactoryStoryboard(packageText) {
+  const scenesMatch = packageText.match(/(?:^|\n)SCENES\s*\n([\s\S]*?)(?=\nFACT CHECK\s*\n|$)/i);
+  const sceneText = scenesMatch?.[1] || '';
+  const lines = [...sceneText.matchAll(/^\s*(?:[-*]|\d+[.)])\s*(.+)$/gm)].map((match) => match[1].trim()).filter(Boolean);
+  return (lines.length ? lines : sceneText.split(/\n+/).map((line) => line.trim()).filter(Boolean)).slice(0, 8).map((visual, index) => ({
+    scene: index + 1,
+    visual: visual.replace(/^[-*]\s*/, ''),
+    sourceRefs: [...visual.matchAll(/\[\s*(?:SOURCE\s*)?(\d+)\s*\]/gi)].map((match) => Number(match[1])),
+    rightsReviewRequired: /\b(clip|footage|screenshot|source video|excerpt)\b/i.test(visual)
+  }));
+}
+
 async function fetchVideoFactoryYoutubeTranscript(url, fetchImpl) {
   const videoId = videoFactoryYoutubeId(url);
   if (!videoId) return { available: false, reason: 'not_a_youtube_video' };
@@ -1373,7 +1417,7 @@ async function createResearchVideo(input = {}) {
   if (!sources.urls.length && !sources.notes) throw new Error('Add at least one YouTube/source URL or paste research notes/transcript excerpts.');
   const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls);
 
-  const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
+  const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 to 6 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals. Add [SOURCE n] when a suggestion depends on a supplied source. Label any clip, footage, screenshot, or excerpt as RIGHTS REVIEW REQUIRED.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
   const retrievedEvidence = sourceEvidence.map((entry) => `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}\nCAPTION TRANSCRIPT: ${entry.transcript?.text || entry.transcript?.reason || 'No transcript retrieved.'}`).join('\n\n');
   const response = await openRouterChat([
     { role: 'system', content: 'You are a careful video research editor. Preserve provenance, distinguish facts from commentary, and never fabricate source contents.' },
@@ -1393,6 +1437,9 @@ async function createResearchVideo(input = {}) {
   const researchPath = path.join(jobDirectory, 'research.md');
   const sourcesPath = path.join(jobDirectory, 'sources.json');
   const transcriptsPath = path.join(jobDirectory, 'transcripts.md');
+  const storyboardPath = path.join(jobDirectory, 'storyboard.json');
+  const captionsPath = path.join(jobDirectory, 'captions.srt');
+  const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
   const audioPath = path.join(jobDirectory, 'narration.mp3');
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
@@ -1402,15 +1449,22 @@ async function createResearchVideo(input = {}) {
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
+  const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
+  const captionData = videoFactoryCaptions(story, durationSeconds);
+  const storyboard = videoFactoryStoryboard(packageText);
+  fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
+  fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
+  // Research can inform the story automatically, but reusing source footage remains an explicit human approval step.
+  fs.writeFileSync(rightsReviewPath, JSON.stringify({ status: 'review_required', sourceReuseApproved: false, note: 'No source footage was downloaded or embedded. Review permission before reusing any source clips, screenshots, or excerpts.', sources: sourceEvidence.map(({ sourceNumber, url, title }) => ({ sourceNumber, url, title, footageStatus: 'not_downloaded', permission: 'unreviewed' })) }, null, 2), 'utf8');
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
-    '-vf', "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Research-backed narrated draft':fontcolor=0xaab4c3:fontsize=22:x=70:y=630",
+    '-vf', "subtitles=captions.srt:force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=42',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Research-backed narrated draft':fontcolor=0xaab4c3:fontsize=22:x=70:y=630",
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, durationSeconds: null, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
@@ -1436,9 +1490,12 @@ function listLocalVideos() {
         videoUrl: pathToFileURL(outputPath).toString(),
         createdAt: stats.birthtime.toISOString(),
         sizeBytes: stats.size,
-        durationSeconds: 12
+        durationSeconds: videoFactoryMediaDuration(outputPath) || 12
         ,hasNarration: fs.existsSync(path.join(directory, 'narration.mp3'))
         ,hasResearch: fs.existsSync(researchPath)
+        ,hasCaptions: fs.existsSync(path.join(directory, 'captions.srt'))
+        ,hasStoryboard: fs.existsSync(path.join(directory, 'storyboard.json'))
+        ,rightsStatus: fs.existsSync(path.join(directory, 'rights-review.json')) ? 'review_required' : 'unknown'
       };
     })
     .filter(Boolean)
