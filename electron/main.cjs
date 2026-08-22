@@ -1522,6 +1522,14 @@ async function summarizeVideoFactoryTranscriptChunks(sourceEvidence) {
   return chunks;
 }
 
+function videoFactoryYoutubePackage(packageText, topic) {
+  const section = packageText.match(/(?:^|\n)YOUTUBE PACKAGE\s*\n([\s\S]*?)(?=\n?$)/i)?.[1] || '';
+  const title = section.match(/^\s*TITLE:\s*(.+)$/im)?.[1]?.trim() || topic;
+  const description = section.match(/^\s*DESCRIPTION:\s*([\s\S]*?)(?=^\s*TAGS:\s*|$)/im)?.[1]?.trim() || '';
+  const tags = (section.match(/^\s*TAGS:\s*(.+)$/im)?.[1] || '').split(',').map((tag) => tag.trim().replace(/^#/, '')).filter(Boolean).slice(0, 20);
+  return { title: title.slice(0, 100), description: description.slice(0, 5000), tags };
+}
+
 async function createResearchVideo(input = {}) {
   const topic = typeof input.topic === 'string' ? input.topic.trim().slice(0, 240) : '';
   if (!topic) throw new Error('Enter a topic for the video.');
@@ -1534,7 +1542,7 @@ async function createResearchVideo(input = {}) {
   const sourceEvidence = await fetchVideoFactorySourceEvidence(sources.urls, jobDirectory);
   const transcriptChunks = await summarizeVideoFactoryTranscriptChunks(sourceEvidence);
 
-  const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 to 6 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals. Add [SOURCE n] when a suggestion depends on a supplied source. Label any clip, footage, screenshot, or excerpt as RIGHTS REVIEW REQUIRED.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
+  const researchPrompt = `Create a source-grounded short video package about: ${topic}\n\nSources (use these as references; do not invent details):\n${sources.urls.map((url, index) => `${index + 1}. ${url}`).join('\n') || '(none supplied)'}\n\nResearch notes or transcript excerpts:\n${sources.notes || '(none supplied)'}\n\nReturn plain text with exactly these sections:\nRESEARCH\n- 3 to 6 concise factual findings. Mark anything uncertain as UNCERTAIN.\nSTORY\n- A compelling narrated story of 180 to 260 words. Do not claim you watched or downloaded a source.\nSCENES\n- 4 to 6 numbered visual suggestions using title cards, source screenshots, charts, or clearly labeled illustrative visuals. Add [SOURCE n] when a suggestion depends on a supplied source. Label any clip, footage, screenshot, or excerpt as RIGHTS REVIEW REQUIRED.\nFACT CHECK\n- A short list of claims that need the editor's review before publishing.\nYOUTUBE PACKAGE\nTITLE: One accurate, curiosity-driven title under 100 characters.\nDESCRIPTION: A concise description with the main takeaway and a note that source permissions must be reviewed before reuse.\nTAGS: 8 to 12 comma-separated search tags.\nEvery factual finding must end with one or more source numbers in brackets, such as [1]. Commentary must be labeled COMMENTARY.`;
   const retrievedEvidence = sourceEvidence.map((entry) => {
     const summaries = transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).map((chunk) => `TRANSCRIPT CHUNK ${chunk.chunkNumber}/${chunk.chunkCount}:\n${chunk.summary}`).join('\n\n');
     return `SOURCE ${entry.sourceNumber}: ${entry.url}\nTITLE: ${entry.title}\nRETRIEVAL: ${entry.status}\nEXCERPT: ${entry.excerpt || entry.error || 'No page text retrieved.'}\nTRANSCRIPT SOURCE: ${entry.transcript?.source || 'unavailable'}\nTRANSCRIPT EVIDENCE:\n${summaries || entry.transcript?.reason || 'No transcript retrieved.'}`;
@@ -1548,9 +1556,11 @@ async function createResearchVideo(input = {}) {
   const storyMatch = packageText.match(/(?:^|\n)STORY\s*\n([\s\S]*?)(?=\nSCENES\s*\n|\nFACT CHECK\s*\n|$)/i);
   const story = (storyMatch?.[1] || packageText).replace(/^[-*]\s*/gm, '').trim().slice(0, 12000);
   if (!story) throw new Error('Research returned no usable story.');
+  const youtubePackage = videoFactoryYoutubePackage(packageText, topic);
 
   const topicPath = path.join(jobDirectory, 'topic.txt');
   const researchPath = path.join(jobDirectory, 'research.md');
+  const youtubePackagePath = path.join(jobDirectory, 'youtube-package.json');
   const sourcesPath = path.join(jobDirectory, 'sources.json');
   const transcriptsPath = path.join(jobDirectory, 'transcripts.md');
   const transcriptChunksPath = path.join(jobDirectory, 'transcript-chunks.json');
@@ -1561,6 +1571,7 @@ async function createResearchVideo(input = {}) {
   const outputPath = path.join(jobDirectory, 'video.mp4');
   fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
+  fs.writeFileSync(youtubePackagePath, JSON.stringify({ generatedAt: new Date().toISOString(), topic, ...youtubePackage, rightsStatus: 'review_required' }, null, 2), 'utf8');
   fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
   fs.writeFileSync(transcriptChunksPath, JSON.stringify({ generatedAt: new Date().toISOString(), chunks: transcriptChunks }, null, 2), 'utf8');
   fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
@@ -1583,7 +1594,7 @@ async function createResearchVideo(input = {}) {
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
-  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+  return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: pathToFileURL(outputPath).toString(), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
