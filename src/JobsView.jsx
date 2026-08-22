@@ -352,43 +352,23 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [stageFilter, setStageFilter] = useState('all');
   const [modalJob, setModalJob] = useState(null);
   const [stageBusyId, setStageBusyId] = useState(null);
-  const preparationAttempted = useRef(new Set());
-  const preparationQueueRunning = useRef(false);
   const [preparingJobIds, setPreparingJobIds] = useState(() => new Set());
   const [preparationBlockers, setPreparationBlockers] = useState({});
   useEffect(() => {
-    const activeIds = new Set(jobs.filter((job) => ['researching', 'target'].includes(job.stage)).map((job) => job.id));
-    preparationAttempted.current.forEach((jobId) => { if (!activeIds.has(jobId)) preparationAttempted.current.delete(jobId); });
-    // Researching is the active work lane. Drain user-created or previously
-    // interrupted Researching jobs before taking the next Target backlog item.
-    const queue = [
-      ...jobs.filter((job) => job.stage === 'researching'),
-      ...jobs.filter((job) => job.stage === 'target')
-    ].filter((job) => !preparationAttempted.current.has(job.id));
-    if (!queue.length || preparationQueueRunning.current || typeof window.desktopShell?.prepareJobApplication !== 'function') return undefined;
-    preparationQueueRunning.current = true;
-    const runQueue = async () => {
-      for (const job of queue) {
-        preparationAttempted.current.add(job.id);
-        setPreparingJobIds((current) => new Set([...current, job.id]));
-        try {
-          const result = await window.desktopShell.prepareJobApplication({ jobId: job.id });
-          setPreparationBlockers((current) => { const next = { ...current }; delete next[job.id]; return next; });
-          await onRefresh?.();
-        } catch (cause) {
-          setPreparationBlockers((current) => ({ ...current, [job.id]: cause?.message || 'Preparation stopped before Ready to apply.' }));
-          // Do not pull a Target job into Researching while an earlier active
-          // job is blocked; the user must be able to resolve this boundary.
-          break;
-        } finally {
-          setPreparingJobIds((current) => { const next = new Set(current); next.delete(job.id); return next; });
-        }
-      }
-      preparationQueueRunning.current = false;
+    let disposed = false;
+    const sync = async () => {
+      try {
+        const status = await window.desktopShell?.getApplicationPreparationStatus?.();
+        if (disposed || !status) return;
+        setPreparingJobIds(status.activeJobId ? new Set([status.activeJobId]) : new Set());
+        setPreparationBlockers(status.blockers || {});
+      } catch { /* status polling is best-effort while Electron is starting */ }
     };
-    runQueue().catch(() => {});
-    return undefined;
-  }, [jobs, onRefresh]);
+    sync();
+    const statusTimer = window.setInterval(sync, 2000);
+    const refreshTimer = window.setInterval(() => { onRefresh?.().catch?.(() => {}); }, 5000);
+    return () => { disposed = true; window.clearInterval(statusTimer); window.clearInterval(refreshTimer); };
+  }, [onRefresh]);
   const changeBoardStage = async (job, stage) => {
     if (stage === job.stage || stageBusyId === job.id) return;
     setStageBusyId(job.id);
