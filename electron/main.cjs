@@ -2687,6 +2687,6 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { isQuitting = true; if (emailMonitorTimer) clearInterval(emailMonitorTimer); stopGoogleVoiceMonitor(); try { googleVoiceTray?.destroy(); } catch {} try { coachDatabase?.close(); } catch { /* best effort */ } });
+app.on('will-quit', () => { isQuitting = true; if (emailMonitorTimer) clearInterval(emailMonitorTimer); if (applicationPreparationTimer) clearInterval(applicationPreparationTimer); stopGoogleVoiceMonitor(); try { googleVoiceTray?.destroy(); } catch {} try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };
