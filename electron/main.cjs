@@ -1486,7 +1486,9 @@ function videoFactoryRenderFilter(durationSeconds, narrated = false) {
     "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70",
     "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SOURCE-GROUNDED EXPLAINER':fontcolor=0xaab4c3:fontsize=18:x=70:y=118:enable='between(t,0,3)'",
     "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)'",
-    `drawbox=x=70:y=675:w='(w-140)*t/${safeDuration}':h=5:color=0x8bd5ff@0.9:t=fill`,
+    // The progress bar depends on the current timestamp, so force drawbox to
+    // evaluate its width per frame instead of during filter initialization.
+    `drawbox=x=70:y=675:w='(w-140)*t/${safeDuration}':h=5:color=0x8bd5ff@0.9:t=fill:eval=frame`,
     `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local draft · review before publishing':fontcolor=0xaab4c3:fontsize=20:x=70:y=700:enable='between(t,${Math.max(0, Number(durationSeconds) - 3).toFixed(2)},${safeDuration})'`,
   ].filter(Boolean).join(',');
 }
