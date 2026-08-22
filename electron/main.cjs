@@ -16,6 +16,7 @@ const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { publicConfig } = require('./job-search-integrations.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
+const { discoverOutreachContacts } = require('./outreach-discovery.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
@@ -1999,6 +2000,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('outreach:reply', (_event, input) => coachDatabase.outreach.recordReply(input || {}));
   ipcMain.handle('outreach:followups', () => coachDatabase.outreach.followups());
   ipcMain.handle('outreach:metrics', () => coachDatabase.outreach.metrics());
+  ipcMain.handle('outreach:discover', async (event, input) => { assertTrustedRenderer(event); return discoverOutreachContacts(input || {}); });
   ipcMain.handle('jobs:detail:emails:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.listForJob(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:emails:seen', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.markJobSeen(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:activity:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.activity.list(validateJobDetailId(jobId)); });

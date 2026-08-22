@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,recordOutreachReply: (input) => ipcRenderer.invoke('outreach:reply', input)
   ,listOutreachFollowups: () => ipcRenderer.invoke('outreach:followups')
   ,getOutreachMetrics: () => ipcRenderer.invoke('outreach:metrics')
+  ,discoverOutreachContacts: (input) => ipcRenderer.invoke('outreach:discover', input || {})
   ,getGoogleVoiceStatus: () => ipcRenderer.invoke('google-voice:get')
   ,setGoogleVoiceEnabled: (enabled) => ipcRenderer.invoke('google-voice:set-enabled', Boolean(enabled))
   ,openGoogleVoice: () => ipcRenderer.invoke('google-voice:open')
