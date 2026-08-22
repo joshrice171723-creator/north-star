@@ -342,6 +342,14 @@ function saveLangSmithSettings(input = {}) {
 function clearLangSmithSettings() { try { fs.rmSync(langSmithCredentialsPath(), { force: true }); } catch {} return langSmithStatus(); }
 function langSmithStatus() { const settings = readLangSmithSettings(); return { configured: Boolean(settings.apiKey), enabled: settings.enabled, project: settings.project, environmentConfigured: settings.environmentConfigured, secureStorageAvailable: settings.secureStorageAvailable }; }
 function langSmithEnvironment() { const settings = readLangSmithSettings(); return { ...process.env, LANGCHAIN_API_KEY: settings.apiKey, LANGCHAIN_PROJECT: settings.project, LANGCHAIN_TRACING_V2: settings.enabled ? 'true' : 'false' }; }
+function redactLangSmithValue(value, key = '') {
+  if (/api.?key|authorization|access.?token|refresh.?token|client.?secret|password|credential|^secret$/i.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') return value.replace(/([?&](?:api[_-]?key|token|access_token|refresh_token|client_secret|password)=)[^&\s]+/gi, '$1[REDACTED]').replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED]');
+  if (Array.isArray(value)) return value.map((entry) => redactLangSmithValue(entry, key));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [entryKey, redactLangSmithValue(entryValue, entryKey)]));
+  return value;
+}
+function langSmithDebugPayload(value) { return redactLangSmithValue(value); }
 const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
 const gmailOAuthCredentialsPath = () => path.join(app.getPath('userData'), 'gmail-oauth-client-credentials.json');
 function readStoredGmailOAuthCredentials() { try { const parsed = JSON.parse(fs.readFileSync(gmailOAuthCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
@@ -2421,12 +2429,13 @@ function registerDatabaseIpc() {
     const runId = coachDatabase.createJobSearchRun();
     setAuditRun(runId);
     const langsmith = createLangSmithRunClient({ env: langSmithEnvironment() });
-    // Keep LangSmith useful for lifecycle debugging without exporting resumes,
-    // job descriptions, prompts, provider payloads, or other user content.
+    // This is an explicitly enabled developer trace: include the complete
+    // job-search lifecycle so failures can be reproduced from one trace.
+    // Credential-shaped fields are scrubbed before anything leaves the app.
     // LangSmith requires a UUID-shaped trace ID; the SQLite ID intentionally has
     // a human-readable prefix, so keep the two identifiers separate.
     const langsmithRunId = crypto.randomUUID();
-    await langsmith.start({ runId: langsmithRunId, inputs: { hasProfile: Boolean(profile), targetRoleCount: profile?.targetRoles?.length || 0, targetLocationCount: profile?.targetLocations?.length || 0, interestCount: profile?.interests?.length || 0 }, metadata: { product: 'north-star', workflow: 'job-search', localRunId: runId } }).catch(() => {});
+    await langsmith.start({ runId: langsmithRunId, inputs: langSmithDebugPayload({ profile, resume, searchInput: input }), metadata: { product: 'north-star', workflow: 'job-search', traceMode: 'developer-full', localRunId: runId } }).catch(() => {});
     let plan;
     try {
       plan = process.env.HERMES_AI_SEARCH_PLANNING !== 'false'
@@ -2439,7 +2448,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId: langsmithRunId, error: warning }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, outputs: langSmithDebugPayload({ status: 'planning_failed', error: warning, attempts, apiCalls }) }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'search_planning_failed', message: warning },
@@ -2479,7 +2488,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId: langsmithRunId, error: warning }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, outputs: langSmithDebugPayload({ status: 'retrieval_failed', error: warning, plan, attempts, apiCalls }) }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'job_search_failed', message: warning },
@@ -2509,7 +2518,7 @@ function registerDatabaseIpc() {
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', resultCount: 0, warning: found.warning || found.error.message || 'No jobs were returned.' });
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId: langsmithRunId, outputs: { status: 'retrieval_failed', resultCount: 0 } }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, outputs: langSmithDebugPayload({ status: 'retrieval_failed', error: found.error, warning: found.warning, plan, attempts, apiCalls, jobs: found.jobs, sourceStats: found.sourceStats }) }).catch(() => {});
       return { ok: false, ...found, searchPlan: plan, apiCalls };
     }
     const retrievalApiCalls = coachDatabase.listApiCalls(runId);
@@ -2559,11 +2568,11 @@ function registerDatabaseIpc() {
       ? [found.warning, 'Final AI selection was unavailable; showing deterministic provider candidates.'].filter(Boolean).join(' ')
       : found.warning;
     coachDatabase.finishJobSearchRun(runId, { resultCount: ranked.length, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
-    await langsmith.end({ runId: langsmithRunId, outputs: { status: rankingError ? 'completed_with_ranking_fallback' : 'completed', retrievedCount: found.jobs.length, selectedCount: ranked.length, rankingStatus } }).catch(() => {});
     const apiCalls = coachDatabase.listApiCalls(runId);
     const rankingBatches = coachDatabase.listJobSearchRankingBatches(runId);
-    clearAuditRun();
     const rankingDiagnostics = ranked.rankingDiagnostics || rankingError?.diagnostics || null;
+    await langsmith.end({ runId: langsmithRunId, outputs: langSmithDebugPayload({ status: rankingError ? 'completed_with_ranking_fallback' : 'completed', plan, retrieval: { jobs: found.jobs, sourceStats: found.sourceStats, warning: found.warning }, ranking: { matches: ranked, assessments, status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics }, attempts, rankingBatches, apiCalls }) }).catch(() => {});
+    clearAuditRun();
     return { ok: true, ...found, sourceStats, warning, jobs: found.jobs, matches: ranked, searchPlan: plan, apiCalls, rankingBatches, counts: { ...found.counts, aiAssessed: rankingDiagnostics?.assessedCount ?? assessments.filter((entry) => entry.scoreType === 'ai-selection').length, aiReturned: rankingDiagnostics?.aiReturnedCount ?? assessments.filter((entry) => entry.scoreType === 'ai-selection').length, finalSelected: rankingDiagnostics?.returnedCount || 0, displayed: ranked.length }, ranking: { status: rankingStatus, error: rankingError, diagnostics: rankingDiagnostics, assessments } };
   });
   ipcMain.handle('openrouter:chat', (_event, messages, options) => openRouterChat(messages, options));
