@@ -309,14 +309,23 @@ function ThemeModal({ theme, onChange, onClose }) {
   </div>;
 }
 
+const VIDEO_FACTORY_STAGES = [['idea', 'Idea'], ['researching', 'Researching'], ['scripted', 'Script + storyboard'], ['rendered', 'Draft rendered'], ['review', 'Review'], ['approved', 'Approved'], ['published', 'Published']];
+
 function VideoFactoryView({ topic, setTopic, sourceUrls, setSourceUrls, researchNotes, setResearchNotes, state, create }) {
   const [videos, setVideos] = useState([]);
+  const [pipeline, setPipeline] = useState([]);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [libraryMessage, setLibraryMessage] = useState('');
   const [discovery, setDiscovery] = useState({ status: 'idle', results: [], selected: [], error: '' });
   const loadVideos = async () => {
-    try { setVideos(await window.desktopShell?.listVideoFactoryVideos?.() || []); setLibraryMessage(''); }
+    try { setVideos(await window.desktopShell?.listVideoFactoryVideos?.() || []); setPipeline(await window.desktopShell?.listVideoFactoryPipeline?.() || []); setLibraryMessage(''); }
     catch (error) { setLibraryMessage(error?.message || 'Could not load the video library.'); }
+  };
+  const movePipelineJob = async (video, stage) => {
+    try {
+      await window.desktopShell?.updateVideoFactoryPipeline?.({ id: video.id, stage });
+      setPipeline(await window.desktopShell?.listVideoFactoryPipeline?.() || []);
+    } catch (error) { setLibraryMessage(error?.message || 'Could not update the video pipeline.'); }
   };
   useEffect(() => { loadVideos(); }, [state.result]);
   useEffect(() => { if (state.result?.videoUrl) setSelectedVideo(state.result); }, [state.result]);
@@ -352,6 +361,7 @@ function VideoFactoryView({ topic, setTopic, sourceUrls, setSourceUrls, research
   const formatSize = (bytes) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
   const coverageLabel = (source) => source.status === 'partial' ? 'Partial transcript' : source.transcriptSource === 'captions' ? 'Captions' : source.transcriptSource === 'audio_transcription' ? 'Audio transcription' : 'Needs transcript';
   return <section className="video-factory-page">
+    <section className="video-pipeline-panel"><div className="section-head compact"><div><span className="eyebrow">VIDEO FACTORY PIPELINE</span><h2>Move each video from idea to publish</h2><p>Like the job-search board, every video stays in a visible stage. Review is the default stop after local rendering; publishing remains a manual, approval-gated step.</p></div><span className="queue-count">{pipeline.length} video{pipeline.length === 1 ? '' : 's'} in queue</span></div><div className="video-pipeline-board">{VIDEO_FACTORY_STAGES.map(([stage, label]) => { const items = pipeline.filter((video) => video.stage === stage); return <section className="video-pipeline-column" key={stage}><div className="column-heading"><b>{label}</b><span>{items.length}</span></div>{items.map((video) => <article className="video-pipeline-card" key={video.id}><b>{video.topic}</b><small>{video.status === 'published' ? 'Published' : video.rightsStatus === 'review_required' ? 'Rights review pending' : video.hasResearch ? 'Research package saved' : 'Local draft'}</small><select value={video.stage} aria-label={`Move ${video.topic} to pipeline stage`} onChange={(event) => movePipelineJob(video, event.target.value)}>{VIDEO_FACTORY_STAGES.map(([value, optionLabel]) => <option key={value} value={value}>{optionLabel}</option>)}</select>{stage === 'published' && <em>Publishing action is still manual.</em>}</article>)}{!items.length && <div className="video-pipeline-empty">No videos</div>}</section>; })}</div></section>
     <section className="video-factory-panel">
       <div className="section-head compact"><div><span className="eyebrow">VIDEO FACTORY · RESEARCH WORKFLOW</span><h2>Turn sources into a narrated story</h2><p>Start with a topic or discover YouTube sources. North Star retrieves available captions, falls back to audio-only transcription when possible, combines evidence in chunks, and creates a cited story, storyboard, timed captions, narration, and local draft.</p></div><span className="queue-count">OpenRouter + local FFmpeg</span></div>
       <label className="video-factory-field"><span>Topic or angle <small>links are optional — the factory can choose source videos</small></span><input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="e.g. summarise the latest AI agents news in 5 minutes" aria-label="Video topic" /><div className="video-factory-discovery-actions"><button className="secondary" type="button" onClick={discoverSources} disabled={discovery.status === 'working' || state.status === 'working'}><Search size={14}/>{discovery.status === 'working' ? 'Discovering…' : 'Discover YouTube sources'}</button><small>Metadata only; no source video is downloaded.</small></div></label>
