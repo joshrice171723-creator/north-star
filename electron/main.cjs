@@ -2423,7 +2423,10 @@ function registerDatabaseIpc() {
     const langsmith = createLangSmithRunClient({ env: langSmithEnvironment() });
     // Keep LangSmith useful for lifecycle debugging without exporting resumes,
     // job descriptions, prompts, provider payloads, or other user content.
-    await langsmith.start({ runId, inputs: { hasProfile: Boolean(profile), targetRoleCount: profile?.targetRoles?.length || 0, targetLocationCount: profile?.targetLocations?.length || 0, interestCount: profile?.interests?.length || 0 }, metadata: { product: 'north-star', workflow: 'job-search', localRunId: runId } }).catch(() => {});
+    // LangSmith requires a UUID-shaped trace ID; the SQLite ID intentionally has
+    // a human-readable prefix, so keep the two identifiers separate.
+    const langsmithRunId = crypto.randomUUID();
+    await langsmith.start({ runId: langsmithRunId, inputs: { hasProfile: Boolean(profile), targetRoleCount: profile?.targetRoles?.length || 0, targetLocationCount: profile?.targetLocations?.length || 0, interestCount: profile?.interests?.length || 0 }, metadata: { product: 'north-star', workflow: 'job-search', localRunId: runId } }).catch(() => {});
     let plan;
     try {
       plan = process.env.HERMES_AI_SEARCH_PLANNING !== 'false'
@@ -2436,7 +2439,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId, error: warning }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, error: warning }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'search_planning_failed', message: warning },
@@ -2476,7 +2479,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId, error: warning }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, error: warning }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'job_search_failed', message: warning },
@@ -2506,7 +2509,7 @@ function registerDatabaseIpc() {
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', resultCount: 0, warning: found.warning || found.error.message || 'No jobs were returned.' });
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
-      await langsmith.end({ runId, outputs: { status: 'retrieval_failed', resultCount: 0 } }).catch(() => {});
+      await langsmith.end({ runId: langsmithRunId, outputs: { status: 'retrieval_failed', resultCount: 0 } }).catch(() => {});
       return { ok: false, ...found, searchPlan: plan, apiCalls };
     }
     const retrievalApiCalls = coachDatabase.listApiCalls(runId);
@@ -2556,7 +2559,7 @@ function registerDatabaseIpc() {
       ? [found.warning, 'Final AI selection was unavailable; showing deterministic provider candidates.'].filter(Boolean).join(' ')
       : found.warning;
     coachDatabase.finishJobSearchRun(runId, { resultCount: ranked.length, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
-    await langsmith.end({ runId, outputs: { status: rankingError ? 'completed_with_ranking_fallback' : 'completed', retrievedCount: found.jobs.length, selectedCount: ranked.length, rankingStatus } }).catch(() => {});
+    await langsmith.end({ runId: langsmithRunId, outputs: { status: rankingError ? 'completed_with_ranking_fallback' : 'completed', retrievedCount: found.jobs.length, selectedCount: ranked.length, rankingStatus } }).catch(() => {});
     const apiCalls = coachDatabase.listApiCalls(runId);
     const rankingBatches = coachDatabase.listJobSearchRankingBatches(runId);
     clearAuditRun();
