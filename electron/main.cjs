@@ -2360,7 +2360,7 @@ function registerDatabaseIpc() {
       const evidenceCatalog = buildEvidenceCatalog(coachDatabase.profiles.getCurrent() || {}, coachDatabase.resumes.getMaster() || {});
       const claimLedger = documentType === 'cover_letter' ? buildCoverLetterClaimLedger(job, evidenceCatalog) : null;
       const validation = validateGeneratedDocument(documentType, current.content, evidenceCatalog, job, claimLedger);
-      if (validation.errors?.length || validation.valid === false) throw new Error(`${documentType === 'resume' ? 'Resume' : 'Cover letter'} needs review before it can be selected: ${validation.errors.map((issue) => issue.message).join(' ')}`);
+      if (validation.errors?.length || validation.valid === false) throw new Error(`${documentType === 'resume' ? 'Resume' : 'Cover letter'} needs review before it can be selected: ${(validation.errors || []).map((issue) => issue.message).join(' ') || 'validation did not pass.'}`);
       coachDatabase.applications.documents.update(current.id, { validation: claimLedger ? { ...validation, claimLedger } : validation, provenance: validation.evidenceIds, status: 'draft' });
       coachDatabase.applications.documents.approve(current.id);
       coachDatabase.applications.documents.select(current.id);
