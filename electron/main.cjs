@@ -1005,6 +1005,22 @@ async function exportInterviewReport(input = {}) {
   const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export full interview transcript', defaultPath: `${String(job.company || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-interview-transcript.txt`, filters: [{ name: 'Text file', extensions: ['txt'] }] });
   if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, report, 'utf8'); return { savedPath: chosen.filePath };
 }
+function encodeMime(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64').replace(/.{1,76}/g, '$&\r\n'); }
+async function sendOutreachEmail(opportunity) {
+  let credentials = readEmailCredentials();
+  if (!credentials.configured) throw new Error('Connect Gmail before sending outreach.');
+  if (!tokenIsUsable(credentials)) {
+    if (!credentials.refreshToken) throw new Error('Gmail access token expired and no refresh token is available.');
+    const { clientId, clientSecret } = readGmailOAuthCredentials(); const refreshed = await refreshGmailAccessToken({ refreshToken: credentials.refreshToken, clientId, clientSecret }); credentials = { ...credentials, ...refreshed }; saveEmailCredentials({ email: credentials.email, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt });
+  }
+  const boundary = `north-star-${crypto.randomBytes(8).toString('hex')}`;
+  const attachmentName = path.basename(opportunity.resumePath || 'resume.pdf');
+  const mime = [`To: ${opportunity.recipient}`, `Subject: ${opportunity.emailSubject}`, 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, 'Content-Type: text/plain; charset="UTF-8"', 'Content-Transfer-Encoding: 8bit', '', opportunity.emailBody, `--${boundary}`, `Content-Type: application/pdf; name="${attachmentName}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${attachmentName}"`, '', encodeMime(fs.readFileSync(opportunity.resumePath)), `--${boundary}--`].join('\r\n');
+  let response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${credentials.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: Buffer.from(mime).toString('base64url') }) });
+  if (response.status === 401 && credentials.refreshToken) { const { clientId, clientSecret } = readGmailOAuthCredentials(); const refreshed = await refreshGmailAccessToken({ refreshToken: credentials.refreshToken, clientId, clientSecret }); credentials = { ...credentials, ...refreshed }; saveEmailCredentials({ email: credentials.email, accessToken: credentials.accessToken, expiresAt: credentials.expiresAt }); response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${credentials.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: Buffer.from(mime).toString('base64url') }) }); }
+  if (!response.ok) throw new Error(`Gmail send failed (${response.status}).`);
+  const result = await response.json(); return { messageId: result.id || null, threadId: result.threadId || null };
+}
 async function exportInterviewTranscript(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const { job } = interviewContext(applicationId); const transcript = Array.isArray(input.transcript) ? input.transcript : [];
   const content = [`Interview simulation transcript`, `${job.roleTitle} at ${job.company}`, `Exported: ${new Date().toLocaleString()}`, '', ...transcript.map((entry, index) => `${index + 1}. ${entry.speaker === 'candidate' || entry.speaker === 'you' ? 'You' : 'Interviewer'}: ${String(entry.text || '').trim()}`)].join('\n');
@@ -1941,6 +1957,16 @@ function registerDatabaseIpc() {
   ipcMain.handle('email:sender:block', (_event, input) => coachDatabase.email.blockSender(input || {}));
   ipcMain.handle('email:sender:unblock', (_event, input) => coachDatabase.email.unblockSender(input || {}));
   ipcMain.handle('email:sender:blocked:list', () => coachDatabase.email.listBlockedSenders());
+  ipcMain.handle('outreach:list', (_event, input) => coachDatabase.outreach.list(input || {}));
+  ipcMain.handle('outreach:contacts:list', () => coachDatabase.outreach.contacts.list());
+  ipcMain.handle('outreach:contacts:save', (_event, input) => coachDatabase.outreach.contacts.save(input || {}));
+  ipcMain.handle('outreach:create', (_event, input) => coachDatabase.outreach.create(input || {}));
+  ipcMain.handle('outreach:update', (_event, input) => coachDatabase.outreach.update(input || {}));
+  ipcMain.handle('outreach:approve', (_event, id) => coachDatabase.outreach.approve(id));
+  ipcMain.handle('outreach:send', async (_event, id) => { const opportunity = coachDatabase.outreach.list().find((entry) => entry.id === id); if (!opportunity) throw new Error('Outreach opportunity not found.'); const approved = opportunity.status === 'approved' ? opportunity : coachDatabase.outreach.approve(id); const message = await sendOutreachEmail(approved); return coachDatabase.outreach.markSent(id, message); });
+  ipcMain.handle('outreach:reply', (_event, input) => coachDatabase.outreach.recordReply(input || {}));
+  ipcMain.handle('outreach:followups', () => coachDatabase.outreach.followups());
+  ipcMain.handle('outreach:metrics', () => coachDatabase.outreach.metrics());
   ipcMain.handle('jobs:detail:emails:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.listForJob(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:emails:seen', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.email.markJobSeen(validateJobDetailId(jobId)); });
   ipcMain.handle('jobs:detail:activity:list', (event, jobId) => { assertTrustedRenderer(event); return coachDatabase.jobs.activity.list(validateJobDetailId(jobId)); });

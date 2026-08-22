@@ -750,6 +750,77 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     }).slice(0, Math.min(20, Math.max(1, Number(limit) || 10)));
   }
 
+  const outreachToRenderer = (row) => row ? ({
+    ...row,
+    jobId: row.job_id,
+    contactId: row.contact_id,
+    jobFitScore: row.job_fit_score,
+    contactQualityScore: row.contact_quality_score,
+    emailConfidenceScore: row.email_confidence_score,
+    jobFreshnessScore: row.job_freshness_score,
+    companyPriorityScore: row.company_priority_score,
+    outreachScore: row.outreach_score,
+    resumeVersion: row.resume_version,
+    resumePath: row.resume_path,
+    emailSubject: row.email_subject,
+    emailBody: row.email_body,
+    gmailMessageId: row.gmail_message_id,
+    gmailThreadId: row.gmail_thread_id,
+    recipient: row.recipient,
+    createdAt: row.created_at,
+    approvedAt: row.approved_at,
+    sentAt: row.sent_at,
+    replyReceivedAt: row.reply_received_at,
+    lastFollowupAt: row.last_followup_at,
+    replyClassification: row.reply_classification,
+    updatedAt: row.updated_at,
+    contactName: row.contact_name,
+    contactTitle: row.contact_title,
+    contactEmail: row.contact_email,
+    contactSource: row.contact_source,
+    contactEvidence: row.source_evidence,
+    verificationStatus: row.verification_status,
+    verificationMethod: row.verification_method,
+    verificationSource: row.verification_source,
+    contactConfidence: row.contact_confidence,
+    company: row.company,
+    jobTitle: row.job_title,
+    jobUrl: row.job_url,
+    jobActive: row.job_deleted_at == null && !row.job_archived,
+  }) : null;
+  function listOutreach(input = {}) {
+    const status = input.status && input.status !== 'all' ? String(input.status).slice(0, 40) : '';
+    const rows = sqlite.prepare(`SELECT o.*, j.company, j.role_title AS job_title, j.url AS job_url, j.deleted_at AS job_deleted_at, j.archived AS job_archived, j.match_score AS job_match_score, c.name AS contact_name, c.title AS contact_title, c.email AS contact_email, c.source_url AS contact_source, c.source_evidence, c.verification_status, c.verification_method, c.verification_source, c.confidence AS contact_confidence FROM outreach_opportunities o JOIN job_opportunities j ON j.id = o.job_id JOIN outreach_contacts c ON c.id = o.contact_id WHERE (? = '' OR o.status = ?) ORDER BY o.outreach_score DESC, o.created_at DESC`).all(status, status);
+    return rows.map(outreachToRenderer);
+  }
+  function listOutreachContacts() { return sqlite.prepare('SELECT id, name, title, email, source_url AS sourceUrl, source_evidence AS sourceEvidence, verification_status AS verificationStatus, verification_method AS verificationMethod, verification_source AS verificationSource, confidence, created_at AS createdAt, updated_at AS updatedAt FROM outreach_contacts ORDER BY updated_at DESC').all(); }
+  function upsertOutreachContact(input = {}) {
+    const email = String(input.email || '').trim().toLowerCase();
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid contact email or leave it blank.');
+    const timestamp = now();
+    const existing = email ? sqlite.prepare('SELECT * FROM outreach_contacts WHERE lower(email) = ?').get(email) : null;
+    const contact = { id: existing?.id || bounded(nonEmpty(input.id, id('outreach-contact')), 160), name: bounded(input.name, 240), title: bounded(input.title, 240), email: bounded(email, 320), source_url: bounded(input.sourceUrl, 2000), source_evidence: bounded(input.sourceEvidence, 4000), verification_status: ['verified','probable','unverified','unavailable'].includes(input.verificationStatus) ? input.verificationStatus : 'unverified', verification_method: bounded(input.verificationMethod, 500), verification_source: bounded(input.verificationSource, 2000), confidence: Math.max(0, Math.min(100, Number(input.confidence) || 0)), created_at: existing?.created_at || timestamp, updated_at: timestamp };
+    if (existing) sqlite.prepare('UPDATE outreach_contacts SET name=?, title=?, email=?, source_url=?, source_evidence=?, verification_status=?, verification_method=?, verification_source=?, confidence=?, updated_at=? WHERE id=?').run(contact.name, contact.title, contact.email, contact.source_url, contact.source_evidence, contact.verification_status, contact.verification_method, contact.verification_source, contact.confidence, timestamp, contact.id);
+    else sqlite.prepare('INSERT INTO outreach_contacts (id,name,title,email,source_url,source_evidence,verification_status,verification_method,verification_source,confidence,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(contact.id, contact.name, contact.title, contact.email, contact.source_url, contact.source_evidence, contact.verification_status, contact.verification_method, contact.verification_source, contact.confidence, contact.created_at, timestamp);
+    return listOutreachContacts().find((entry) => entry.id === contact.id);
+  }
+  function createOutreachOpportunity(input = {}) {
+    const jobId = bounded(input.jobId, 160); const job = sqlite.prepare('SELECT * FROM job_opportunities WHERE id = ? AND deleted_at IS NULL AND archived = 0').get(jobId); if (!job) throw new Error('Active job not found.');
+    const contact = input.contactId ? sqlite.prepare('SELECT * FROM outreach_contacts WHERE id = ?').get(input.contactId) : upsertOutreachContact(input.contact || {}); if (!contact) throw new Error('Contact not found.');
+    const duplicate = sqlite.prepare('SELECT id FROM outreach_opportunities WHERE job_id = ? AND contact_id = ?').get(jobId, contact.id); if (duplicate) return listOutreach().find((entry) => entry.id === duplicate.id);
+    const fit = Math.max(0, Math.min(100, Number(input.jobFitScore ?? job.match_score) || 0)); const contactQuality = Math.max(0, Math.min(100, Number(input.contactQualityScore) || (String(contact.title).toLowerCase().includes('recruit') ? 100 : 55))); const confidence = { verified: 100, probable: 60, unverified: 20, unavailable: 0 }[contact.verification_status] ?? 0; const freshness = job.posted_at ? Math.max(0, Math.min(100, Math.round(100 - Math.max(0, (Date.now() - new Date(job.posted_at).getTime()) / 86400000) * 4))) : 35; const score = Math.round(fit * .4 + contactQuality * .25 + confidence * .2 + freshness * .1 + 50 * .05); const resume = getResume(); const resumePath = masterResumeSourcePath && fs.existsSync(masterResumeSourcePath) ? masterResumeSourcePath : '';
+    const text = `${job.role_title} ${job.company} ${job.description || ''}`.toLowerCase(); const resumeVersion = resume?.version ? `v${resume.version}` : 'master'; const subject = `Interest in ${job.role_title} at ${job.company}`; const firstName = String(contact.name || '').trim().split(/\s+/)[0]; const reason = text.includes('healthcare') ? 'the overlap between healthcare software and practical automation' : text.includes('forward deployed') ? 'the customer-facing, implementation-oriented nature of the role' : 'the role’s combination of product delivery and technical problem solving'; const body = `Hi ${firstName || 'there'},\n\nI’m Joshua Rice, a full-stack engineer with healthcare and insurance delivery experience who has been building practical AI and automation systems end to end. I’m reaching out because the ${job.role_title} role at ${job.company} looks closely aligned with ${reason}.\n\nMy background combines hands-on product delivery, stakeholder communication, and building reliable workflows around real operational problems.\n\nWould you be open to a brief conversation about the team’s needs and whether my experience could be useful?\n\nBest,\nJoshua Rice`;
+    const opportunity = { id: id('outreach'), job_id: jobId, contact_id: contact.id, job_fit_score: fit, contact_quality_score: contactQuality, email_confidence_score: confidence, job_freshness_score: freshness, company_priority_score: 50, outreach_score: score, resume_version: resumeVersion, resume_path: resumePath, email_subject: subject, email_body: body, status: 'draft_ready', recipient: contact.email, created_at: now(), updated_at: now() };
+    sqlite.prepare('INSERT INTO outreach_opportunities (id,job_id,contact_id,job_fit_score,contact_quality_score,email_confidence_score,job_freshness_score,company_priority_score,outreach_score,resume_version,resume_path,email_subject,email_body,status,recipient,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(opportunity));
+    return listOutreach().find((entry) => entry.id === opportunity.id);
+  }
+  function updateOutreach(input = {}) { const current = sqlite.prepare('SELECT * FROM outreach_opportunities WHERE id = ?').get(bounded(input.id, 160)); if (!current) throw new Error('Outreach opportunity not found.'); const allowed = new Set(['candidate','contact_found','contact_verified','draft_ready','approved','sent','replied','follow_up_due','rejected','skipped']); const status = allowed.has(input.status) ? input.status : current.status; const subject = input.emailSubject === undefined ? current.email_subject : bounded(input.emailSubject, 500); const body = input.emailBody === undefined ? current.email_body : bounded(input.emailBody, 12000); sqlite.prepare('UPDATE outreach_opportunities SET status=?, email_subject=?, email_body=?, notes=?, updated_at=? WHERE id=?').run(status, subject, body, bounded(input.notes ?? current.notes, 4000), now(), current.id); return listOutreach().find((entry) => entry.id === current.id); }
+  function approveOutreach(idValue) { const current = sqlite.prepare('SELECT * FROM outreach_opportunities WHERE id = ?').get(bounded(idValue, 160)); if (!current) throw new Error('Outreach opportunity not found.'); const contact = sqlite.prepare('SELECT * FROM outreach_contacts WHERE id = ?').get(current.contact_id); if (!contact?.email || contact.verification_status !== 'verified') throw new Error('Only contacts with verified email addresses can be approved for automatic send.'); if (!current.resume_path || !fs.existsSync(current.resume_path)) throw new Error('A valid selected resume is required before approval.'); const approvedAt = now(); sqlite.prepare("UPDATE outreach_opportunities SET status='approved', approved_at=?, updated_at=? WHERE id=?").run(approvedAt, approvedAt, current.id); return listOutreach().find((entry) => entry.id === current.id); }
+  function outreachMetrics() { const rows = sqlite.prepare('SELECT * FROM outreach_opportunities').all(); const sent = rows.filter((row) => row.sent_at); const followup = sent.filter((row) => !row.reply_received_at && (Date.now() - new Date(row.sent_at).getTime()) / 86400000 >= 5); return { contacts: rows.length, emailsSent: sent.length, replies: rows.filter((row) => row.reply_received_at).length, positiveReplies: rows.filter((row) => ['positive','interview'].includes(row.reply_classification)).length, interviews: rows.filter((row) => row.reply_classification === 'interview').length, recruiterConversations: rows.filter((row) => row.reply_classification === 'positive').length, followUpsDue: followup.length, dailyRemaining: Math.max(0, 10 - sent.filter((row) => String(row.sent_at).slice(0, 10) === new Date().toISOString().slice(0, 10)).length) }; }
+  function markOutreachSent(idValue, message = {}) { const current = sqlite.prepare('SELECT * FROM outreach_opportunities WHERE id = ?').get(bounded(idValue, 160)); if (!current) throw new Error('Outreach opportunity not found.'); const today = new Date().toISOString().slice(0, 10); const sentToday = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM outreach_opportunities WHERE sent_at LIKE ?").get(`${today}%`).count); if (sentToday >= 10) throw new Error('Daily outreach limit reached (10).'); const recent = sqlite.prepare("SELECT 1 FROM outreach_opportunities WHERE lower(recipient)=lower(?) AND sent_at >= datetime('now','-30 days') LIMIT 1").get(current.recipient); if (recent) throw new Error('This contact was contacted within the last 30 days.'); const companyCount = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM outreach_opportunities o JOIN job_opportunities j ON j.id=o.job_id WHERE lower(j.company)=lower((SELECT company FROM job_opportunities WHERE id=?)) AND sent_at LIKE ?").get(current.job_id, `${today}%`).count); if (companyCount >= 2) throw new Error('Company outreach limit reached (2 today).'); const sentAt = now(); sqlite.prepare("UPDATE outreach_opportunities SET status='sent', gmail_message_id=?, gmail_thread_id=?, sent_at=?, recipient=?, updated_at=? WHERE id=?").run(message.messageId || null, message.threadId || null, sentAt, current.recipient, sentAt, current.id); return listOutreach().find((entry) => entry.id === current.id); }
+  function recordOutreachReply(input = {}) { const found = input.id ? sqlite.prepare('SELECT * FROM outreach_opportunities WHERE id=?').get(input.id) : sqlite.prepare('SELECT * FROM outreach_opportunities WHERE gmail_thread_id=? OR lower(recipient)=lower(?) ORDER BY sent_at DESC LIMIT 1').get(input.threadId || '', input.recipient || ''); if (!found) return null; const stamp = now(); sqlite.prepare("UPDATE outreach_opportunities SET status='replied', reply_received_at=?, reply_classification=?, updated_at=? WHERE id=?").run(stamp, bounded(input.classification, 40), stamp, found.id); return listOutreach().find((entry) => entry.id === found.id); }
+  function listOutreachFollowups() { return listOutreach().filter((entry) => entry.sentAt && !entry.replyReceivedAt && (Date.now() - new Date(entry.sentAt).getTime()) / 86400000 >= 5).map((entry) => ({ ...entry, status: 'follow_up_due' })); }
+
   seedDefaults();
   const hierarchyRepairResult = repairWorkspaceHierarchy();
   const seedResult = seedRoadmap();
@@ -762,6 +833,7 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     bootstrap, syncRoadmap, importRoadmap, saveNote, backup,
     createJobSearchRun, recordJobSearchAttempt, recordApiCall, listApiCalls, recordJobSearchRankingBatch, listJobSearchRankingBatches, finishJobSearchRun, listJobSearchAttempts,
     email: { upsert: upsertEmail, autoAssignApplication: autoAssignApplicationEmail, get: getEmail, list: listEmails, listForJob: listJobEmails, search: searchEmailRag, link: linkEmailToJob, unlink: unlinkEmailFromJob, setExcluded: setEmailExcluded, markSeen: markEmailSeen, markJobSeen: markJobEmailsSeen, blockSender: blockEmailSender, unblockSender: unblockEmailSender, listBlockedSenders: listBlockedEmailSenders },
+    outreach: { list: listOutreach, contacts: { list: listOutreachContacts, save: upsertOutreachContact }, create: createOutreachOpportunity, update: updateOutreach, approve: approveOutreach, markSent: markOutreachSent, recordReply: recordOutreachReply, followups: listOutreachFollowups, metrics: outreachMetrics },
     workspaces: { list: () => allActiveProjects().filter((entry) => entry.kind === 'workspace').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(and(eq(projects.id, recordId), eq(projects.kind, 'workspace'))).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'workspace'), update: (input) => upsertProject(input, 'workspace'), delete: (recordId) => softDeleteProject(recordId) },
     projects: { list: () => allActiveProjects().filter((entry) => entry.kind === 'project').map(projectToRenderer), get: (recordId) => { const row = db.select().from(projects).where(eq(projects.id, recordId)).get(); return row ? projectToRenderer(row) : null; }, create: (input) => upsertProject(input, 'project'), update: (input) => upsertProject(input, 'project'), delete: (recordId) => softDeleteProject(recordId) },
     tasks: { list: () => allActiveTasks().map(taskToRenderer), get: (recordId) => { const row = db.select().from(tasks).where(eq(tasks.id, recordId)).get(); return row ? taskToRenderer(row) : null; }, create: (input) => upsertTask(input, 'task'), update: (input) => upsertTask(input), delete: (recordId) => softDelete(tasks, recordId) },
