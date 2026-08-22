@@ -352,6 +352,9 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [stageFilter, setStageFilter] = useState('all');
   const [modalJob, setModalJob] = useState(null);
   const [stageBusyId, setStageBusyId] = useState(null);
+  const preparationAttempted = useRef(new Set());
+  const [preparingJobIds, setPreparingJobIds] = useState(() => new Set());
+  const [preparationBlockers, setPreparationBlockers] = useState({});
   const changeBoardStage = async (job, stage) => {
     if (stage === job.stage || stageBusyId === job.id) return;
     setStageBusyId(job.id);
