@@ -1500,8 +1500,6 @@ function videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds) 
       `SCENE ${scene.scene || index + 1}`,
       '',
       videoFactoryWrapText(scene.visual || 'Illustrative visual supporting the narration.', 38),
-      '',
-      scene.rightsReviewRequired ? 'RIGHTS REVIEW REQUIRED' : 'ILLUSTRATIVE VISUAL',
     ].join('\n');
     fs.writeFileSync(path.join(jobDirectory, `scene-${String(index + 1).padStart(2, '0')}.txt`), sceneText, 'utf8');
   });
@@ -1521,7 +1519,8 @@ function videoFactoryRenderFilter(durationSeconds, narrated = false, storyboard 
       `drawbox=x=70:y=165:w=1140:h=415:color=0x08111f@0.78:t=fill:enable='between(t,${start},${end})'`,
       `drawbox=x=70:y=165:w=8:h=415:color=0x8bd5ff@0.95:t=fill:enable='between(t,${start},${end})'`,
       `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='${sceneFile}':fontcolor=white:fontsize=34:line_spacing=14:x=112:y=215:enable='between(t,${start},${end})'`,
-      `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SCENE ${scene.scene || index + 1}  ·  STORYBOARD VISUAL':fontcolor=0x8bd5ff:fontsize=18:x=112:y=610:enable='between(t,${start},${end})'`,
+      `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='${scene.rightsReviewRequired ? 'RIGHTS REVIEW REQUIRED' : 'ILLUSTRATIVE VISUAL'}':fontcolor=0xf6b26b:fontsize=18:x=112:y=500:enable='between(t,${start},${end})'`,
+      `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SCENE ${scene.scene || index + 1}  ·  STORYBOARD VISUAL':fontcolor=0x8bd5ff:fontsize=18:x=112:y=535:enable='between(t,${start},${end})'`,
     ];
   });
   return [
