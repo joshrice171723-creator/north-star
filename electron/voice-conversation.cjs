@@ -42,13 +42,23 @@ function validAudioInput(input = {}) {
   return { data, format };
 }
 
-async function transcribeAudio({ apiKey, audio, fetchImpl = globalThis.fetch }) {
+async function requestTranscription({ apiKey, audio, fetchImpl = globalThis.fetch, maxChars = MAX_TRANSCRIPT_CHARS }) {
   const inputAudio = validAudioInput(audio);
   const response = await fetchImpl(`${OPENROUTER_BASE_URL}/audio/transcriptions`, { method: 'POST', headers: requestHeaders(apiKey), body: JSON.stringify({ model: VOICE_STT_MODEL, input_audio: inputAudio, language: 'en' }) });
   const body = await readJsonResponse(response, 'OpenRouter returned an unreadable transcription response.');
   const text = String(body?.text || '').trim();
   if (!text) throw new Error('The recording could not be transcribed. Please try speaking a little closer to your microphone.');
-  return { text: text.slice(0, MAX_TRANSCRIPT_CHARS), model: VOICE_STT_MODEL };
+  return { text: text.slice(0, maxChars), model: VOICE_STT_MODEL };
+}
+
+async function transcribeAudio({ apiKey, audio, fetchImpl = globalThis.fetch }) {
+  return requestTranscription({ apiKey, audio, fetchImpl, maxChars: MAX_TRANSCRIPT_CHARS });
+}
+
+async function transcribeAudioLong({ apiKey, audio, fetchImpl = globalThis.fetch }) {
+  // Video Factory sends short audio segments one at a time, so the existing
+  // 12 MB request guard remains in place while each response can stay complete.
+  return requestTranscription({ apiKey, audio, fetchImpl, maxChars: 100_000 });
 }
 
 async function generateAiResponse({ apiKey, transcript, history = [], fetchImpl = globalThis.fetch }) {
@@ -82,4 +92,4 @@ async function synthesizeSpeech({ apiKey, text, fetchImpl = globalThis.fetch }) 
   return { audioBase64: audio.toString('base64'), mimeType: response.headers.get('content-type') || 'audio/mpeg', model: VOICE_TTS_MODEL, voice: VOICE_TTS_VOICE };
 }
 
-module.exports = { VOICE_STT_MODEL, VOICE_CHAT_MODEL, VOICE_TTS_MODEL, VOICE_TTS_VOICE, transcribeAudio, generateAiResponse, synthesizeSpeech };
+module.exports = { VOICE_STT_MODEL, VOICE_CHAT_MODEL, VOICE_TTS_MODEL, VOICE_TTS_VOICE, transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech };
