@@ -1296,7 +1296,7 @@ function createLocalVideo(input = {}) {
   saveVideoFactoryPipeline(jobDirectory, { stage: 'rendered', status: 'complete', topic, createdAt: new Date().toISOString() });
   const textPath = path.join(jobDirectory, 'topic.txt');
   const outputPath = path.join(jobDirectory, 'video.mp4');
-  fs.writeFileSync(textPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
+  fs.writeFileSync(textPath, videoFactoryWrapText(topic), 'utf8');
 
   // The first MVP deliberately uses FFmpeg's deterministic title-card pipeline.
   // It proves the one-command-to-MP4 workflow while research, TTS, and paid
@@ -1305,8 +1305,8 @@ function createLocalVideo(input = {}) {
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30',
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12', '-t', '12',
-    '-vf', "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local MVP draft  |  12 seconds':fontcolor=0xaab4c3:fontsize=22:x=70:y=630",
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
+    '-vf', videoFactoryRenderFilter(12),
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=11.5:d=0.5', '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) {
@@ -1395,7 +1395,7 @@ function videoFactoryTimestamp(seconds) {
 function videoFactoryCaptions(story, durationSeconds) {
   const words = story.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
   const chunks = [];
-  for (let index = 0; index < words.length; index += 10) chunks.push(words.slice(index, index + 10).join(' '));
+  for (let index = 0; index < words.length; index += 8) chunks.push(videoFactoryWrapText(words.slice(index, index + 8).join(' '), 42));
   const totalWords = Math.max(1, words.length);
   let cursor = 0;
   const captions = chunks.map((text, index) => {
@@ -1406,6 +1406,34 @@ function videoFactoryCaptions(story, durationSeconds) {
   });
   const srt = captions.map((caption) => `${caption.index}\n${videoFactoryTimestamp(caption.startSeconds)} --> ${videoFactoryTimestamp(caption.endSeconds)}\n${caption.text}\n`).join('\n');
   return { captions, srt };
+}
+
+function videoFactoryWrapText(value, maxLineLength = 34) {
+  const words = String(value || '').replace(/[\r\n]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && candidate.length > maxLineLength) { lines.push(line); line = word; } else line = candidate;
+  }
+  if (line) lines.push(line);
+  return lines.join('\n');
+}
+
+function videoFactoryRenderFilter(durationSeconds, narrated = false) {
+  const safeDuration = Math.max(1, Number(durationSeconds) || 1).toFixed(2);
+  const captionFilter = narrated ? "subtitles=captions.srt:force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=48'" : null;
+  return [
+    captionFilter,
+    "drawbox=x='mod(t*90,1280)-360':y=105:w=360:h=500:color=0x1e5278@0.55:t=fill",
+    "drawbox=x='1280-mod(t*55,1600)':y=390:w=460:h=260:color=0x633c69@0.38:t=fill",
+    "drawbox=x='mod(t*35,1500)-700':y=245:w=700:h=8:color=0x8bd5ff@0.18:t=fill",
+    "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70",
+    "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SOURCE-GROUNDED EXPLAINER':fontcolor=0xaab4c3:fontsize=18:x=70:y=118:enable='between(t,0,3)'",
+    "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)'",
+    `drawbox=x=70:y=675:w='(w-140)*t/${safeDuration}':h=5:color=0x8bd5ff@0.9:t=fill`,
+    `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Local draft · review before publishing':fontcolor=0xaab4c3:fontsize=20:x=70:y=700:enable='between(t,${Math.max(0, Number(durationSeconds) - 3).toFixed(2)},${safeDuration})'`,
+  ].filter(Boolean).join(',');
 }
 
 function videoFactoryStoryboard(packageText) {
@@ -1624,7 +1652,7 @@ async function createResearchVideo(input = {}) {
   const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
   const audioPath = path.join(jobDirectory, 'narration.mp3');
   const outputPath = path.join(jobDirectory, 'video.mp4');
-  fs.writeFileSync(topicPath, topic.replace(/[\r\n]+/g, ' '), 'utf8');
+  fs.writeFileSync(topicPath, videoFactoryWrapText(topic), 'utf8');
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
   fs.writeFileSync(youtubePackagePath, JSON.stringify({ generatedAt: new Date().toISOString(), topic, ...youtubePackage, rightsStatus: 'review_required' }, null, 2), 'utf8');
   fs.writeFileSync(transcriptsPath, sourceEvidence.map((entry) => `## Source ${entry.sourceNumber}: ${entry.title}\n\nTranscript source: ${entry.transcript?.source || 'unavailable'}\n\n${entry.transcript?.text || `No transcript available (${entry.transcript?.reason || 'unknown reason'}).`}\n`).join('\n'), 'utf8');
@@ -1643,8 +1671,8 @@ async function createResearchVideo(input = {}) {
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
-    '-vf', "subtitles=captions.srt:force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=42',drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240,drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='Research-backed narrated draft':fontcolor=0xaab4c3:fontsize=22:x=70:y=630",
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', outputPath
+    '-vf', videoFactoryRenderFilter(durationSeconds, true),
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Narrated video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
