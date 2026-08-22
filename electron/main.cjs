@@ -1713,8 +1713,10 @@ async function createResearchVideo(input = {}) {
   const captionsPath = path.join(jobDirectory, 'captions.srt');
   const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
   const usagePath = path.join(jobDirectory, 'usage.json');
+  const preparedPath = path.join(jobDirectory, 'prepared.json');
   const audioPath = path.join(jobDirectory, 'narration.mp3');
   const outputPath = path.join(jobDirectory, 'video.mp4');
+  const storyboard = videoFactoryStoryboard(packageText);
   fs.writeFileSync(topicPath, videoFactoryWrapText(topic), 'utf8');
   fs.writeFileSync(researchPath, `# ${topic}\n\n${packageText}\n\n## Narration\n\n${story}\n`, 'utf8');
   fs.writeFileSync(youtubePackagePath, JSON.stringify({ generatedAt: new Date().toISOString(), topic, ...youtubePackage, rightsStatus: 'review_required' }, null, 2), 'utf8');
@@ -1723,16 +1725,23 @@ async function createResearchVideo(input = {}) {
   const tokenUsage = videoFactoryUsageSummary(usageResponses);
   fs.writeFileSync(usagePath, JSON.stringify({ generatedAt: new Date().toISOString(), ...tokenUsage }, null, 2), 'utf8');
   fs.writeFileSync(sourcesPath, JSON.stringify({ urls: sources.urls, notesIncluded: Boolean(sources.notes), discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, retrievedAt: new Date().toISOString(), model: response.model, evidence: sourceEvidence.map(({ excerpt, transcript, ...metadata }) => ({ ...metadata, transcriptAvailable: Boolean(transcript?.available), transcriptSource: transcript?.source || null, transcriptReason: transcript?.reason || null, transcriptPartial: Boolean(transcript?.partial), failedAudioChunkCount: transcript?.failedChunkCount || 0, transcriptChunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === metadata.sourceNumber).length, audioChunkCount: transcript?.chunkCount || 0, transcriptTruncated: Boolean(transcript?.truncated) })) }, null, 2), 'utf8');
+  fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
+  // Persist the reviewed package locally so approval renders exactly what the
+  // user saw, without trusting a mutable renderer payload on the second IPC call.
+  fs.writeFileSync(preparedPath, JSON.stringify({ topic, packageText, story, youtubePackage, discovery, sources, sourceEvidence, transcriptChunks, model: response.model, tokenUsage }, null, 2), 'utf8');
+  fs.writeFileSync(rightsReviewPath, JSON.stringify({ status: 'review_required', sourceReuseApproved: false, note: 'No source footage was downloaded or embedded. Review permission before reusing any source clips, screenshots, or excerpts.', sources: sourceEvidence.map(({ sourceNumber, url, title }) => ({ sourceNumber, url, title, footageStatus: 'not_downloaded', permission: 'unreviewed' })) }, null, 2), 'utf8');
+
+  if (!input.approve) {
+    saveVideoFactoryPipeline(jobDirectory, { stage: 'scripted', status: 'awaiting_approval', topic, artifactCount: 6, tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd });
+    return { ok: true, id: jobId, topic, status: 'awaiting_approval', isPrepared: true, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage: sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' })), transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, storyboard, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model: response.model };
+  }
 
   const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
   fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
   const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
   const captionData = videoFactoryCaptions(story, durationSeconds);
-  const storyboard = videoFactoryStoryboard(packageText);
   fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
   fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
-  // Research can inform the story automatically, but reusing source footage remains an explicit human approval step.
-  fs.writeFileSync(rightsReviewPath, JSON.stringify({ status: 'review_required', sourceReuseApproved: false, note: 'No source footage was downloaded or embedded. Review permission before reusing any source clips, screenshots, or excerpts.', sources: sourceEvidence.map(({ sourceNumber, url, title }) => ({ sourceNumber, url, title, footageStatus: 'not_downloaded', permission: 'unreviewed' })) }, null, 2), 'utf8');
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
@@ -1744,6 +1753,41 @@ async function createResearchVideo(input = {}) {
   saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd });
   const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
   return { ok: true, id: jobId, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage.estimatedCostUsd, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model: response.model, skipped: ['source-footage download', 'automatic publishing'] };
+}
+
+async function approvePreparedVideo(input = {}) {
+  const id = typeof input.id === 'string' && /^video-\d+$/.test(input.id) ? input.id : '';
+  if (!id) throw new Error('Invalid prepared video id.');
+  const jobDirectory = path.resolve(videoFactoryRoot(), id);
+  if (path.dirname(jobDirectory) !== path.resolve(videoFactoryRoot())) throw new Error('Invalid video location.');
+  const preparedPath = path.join(jobDirectory, 'prepared.json');
+  if (!fs.existsSync(preparedPath)) throw new Error('Prepared script not found. Research the video again before approving.');
+  const prepared = JSON.parse(fs.readFileSync(preparedPath, 'utf8'));
+  const { topic, story, youtubePackage, discovery, sources, sourceEvidence, transcriptChunks, model, tokenUsage } = prepared;
+  if (!topic || !story || !Array.isArray(sourceEvidence) || !Array.isArray(transcriptChunks)) throw new Error('Prepared video package is incomplete.');
+  const researchPath = path.join(jobDirectory, 'research.md');
+  const youtubePackagePath = path.join(jobDirectory, 'youtube-package.json');
+  const transcriptsPath = path.join(jobDirectory, 'transcripts.md');
+  const transcriptChunksPath = path.join(jobDirectory, 'transcript-chunks.json');
+  const storyboardPath = path.join(jobDirectory, 'storyboard.json');
+  const captionsPath = path.join(jobDirectory, 'captions.srt');
+  const rightsReviewPath = path.join(jobDirectory, 'rights-review.json');
+  const usagePath = path.join(jobDirectory, 'usage.json');
+  const audioPath = path.join(jobDirectory, 'narration.mp3');
+  const outputPath = path.join(jobDirectory, 'video.mp4');
+  const storyboard = JSON.parse(fs.readFileSync(storyboardPath, 'utf8')).scenes || videoFactoryStoryboard(story);
+  const speech = await synthesizeSpeech({ apiKey: readOpenRouterApiKey(), text: story, fetchImpl: getUninstrumentedFetch() });
+  fs.writeFileSync(audioPath, Buffer.from(speech.audioBase64, 'base64'));
+  const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
+  const captionData = videoFactoryCaptions(story, durationSeconds);
+  fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
+  const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const args = ['-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath, '-vf', videoFactoryRenderFilter(durationSeconds, true), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath];
+  const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Approved video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
+  saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage?.estimatedCostUsd || 0 });
+  const sourceCoverage = sourceEvidence.map((entry) => ({ sourceNumber: entry.sourceNumber, url: entry.url, title: entry.title, status: !entry.transcript?.available ? 'needs_transcript' : entry.transcript?.partial ? 'partial' : 'complete', transcriptSource: entry.transcript?.source || null, chunkCount: transcriptChunks.filter((chunk) => chunk.sourceNumber === entry.sourceNumber).length, audioChunkCount: entry.transcript?.chunkCount || 0, failedAudioChunkCount: entry.transcript?.failedChunkCount || 0, reason: entry.transcript?.available ? (entry.transcript?.partial ? `${entry.transcript.failedChunkCount} audio chunk(s) failed` : null) : entry.transcript?.reason || entry.error || 'transcript_unavailable' }));
+  return { ok: true, id, topic, status: 'complete', outputPath, videoUrl: videoFactoryMediaUrl(outputPath), audioUrl: pathToFileURL(audioPath).toString(), researchPath, story, youtubePackage, discovery: discovery ? { query: discovery.query, strategy: discovery.strategy, selectedCount: discovery.selected.length, candidates: discovery.results } : null, sourceUrls: sources.urls, sourceCoverage, transcriptCount: sourceEvidence.filter((entry) => entry.transcript?.available).length, captionTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'captions').length, audioTranscriptCount: sourceEvidence.filter((entry) => entry.transcript?.source === 'audio_transcription').length, transcriptChunkCount: transcriptChunks.length, captionCount: captionData.captions.length, storyboard, durationSeconds: videoFactoryMediaDuration(outputPath) || durationSeconds, rightsStatus: 'review_required', tokenUsage, estimatedCostUsd: tokenUsage?.estimatedCostUsd || 0, artifactUrls: { research: pathToFileURL(researchPath).toString(), youtubePackage: pathToFileURL(youtubePackagePath).toString(), transcripts: pathToFileURL(transcriptsPath).toString(), transcriptChunks: pathToFileURL(transcriptChunksPath).toString(), storyboard: pathToFileURL(storyboardPath).toString(), captions: pathToFileURL(captionsPath).toString(), rightsReview: pathToFileURL(rightsReviewPath).toString(), usage: pathToFileURL(usagePath).toString() }, model, skipped: ['source-footage download', 'automatic publishing'] };
 }
 
 function videoFactoryRoot() {
@@ -1885,6 +1929,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('video-factory:create-test', (event) => { assertTrustedRenderer(event); return createTestVideo(); });
   ipcMain.handle('video-factory:discover', (event, input) => { assertTrustedRenderer(event); return discoverVideoFactorySources(input); });
   ipcMain.handle('video-factory:create-researched', async (event, input) => { assertTrustedRenderer(event); return createResearchVideo(input); });
+  ipcMain.handle('video-factory:approve-researched', async (event, input) => { assertTrustedRenderer(event); return approvePreparedVideo(input); });
   ipcMain.handle('video-factory:list', (event) => { assertTrustedRenderer(event); return listLocalVideos(); });
   ipcMain.handle('video-factory:pipeline:list', (event) => { assertTrustedRenderer(event); return listVideoFactoryPipeline(); });
   ipcMain.handle('video-factory:pipeline:update', (event, input) => { assertTrustedRenderer(event); return updateVideoFactoryPipeline(input); });

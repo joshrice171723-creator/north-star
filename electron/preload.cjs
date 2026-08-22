@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   createVideoFactoryTestVideo: () => ipcRenderer.invoke('video-factory:create-test'),
   discoverVideoFactorySources: (input) => ipcRenderer.invoke('video-factory:discover', input),
   createVideoFactoryResearchVideo: (input) => ipcRenderer.invoke('video-factory:create-researched', input),
+  approveVideoFactoryResearchVideo: (input) => ipcRenderer.invoke('video-factory:approve-researched', input),
   listVideoFactoryVideos: () => ipcRenderer.invoke('video-factory:list'),
   listVideoFactoryPipeline: () => ipcRenderer.invoke('video-factory:pipeline:list'),
   updateVideoFactoryPipeline: (input) => ipcRenderer.invoke('video-factory:pipeline:update', input),
