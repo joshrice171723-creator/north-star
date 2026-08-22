@@ -14,7 +14,7 @@ const { calculateRetrievalScore } = require('./job-search.cjs');
 const { testAdzuna } = require('./adzuna-provider.cjs');
 const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
-const { publicConfig } = require('./job-search-integrations.cjs');
+const { publicConfig, createLangSmithRunClient } = require('./job-search-integrations.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
 const { discoverOutreachContacts } = require('./outreach-discovery.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
@@ -315,6 +315,33 @@ function migrateOpenRouterEnvironmentKey() {
 }
 function clearOpenRouterApiKey() { try { fs.rmSync(openRouterCredentialsPath(), { force: true }); } catch {} return openRouterStatus(); }
 function openRouterStatus() { return { configured: Boolean(readOpenRouterApiKey()), secureStorageAvailable: safeStorage.isEncryptionAvailable(), environmentConfigured: Boolean(process.env.OPENROUTER_API_KEY) }; }
+const langSmithCredentialsPath = () => path.join(app.getPath('userData'), 'langsmith-credentials.json');
+function readStoredLangSmithSettings() { try { const parsed = JSON.parse(fs.readFileSync(langSmithCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
+function readLangSmithApiKey() {
+  if (process.env.LANGCHAIN_API_KEY) return process.env.LANGCHAIN_API_KEY;
+  const stored = readStoredLangSmithSettings();
+  if (!stored.apiKey || !safeStorage.isEncryptionAvailable()) return '';
+  try { return safeStorage.decryptString(Buffer.from(stored.apiKey, 'base64')); } catch { return ''; }
+}
+function readLangSmithSettings() {
+  const stored = readStoredLangSmithSettings();
+  return { apiKey: readLangSmithApiKey(), project: String(process.env.LANGCHAIN_PROJECT || stored.project || 'north-star-job-search').trim().slice(0, 120), enabled: process.env.LANGCHAIN_TRACING_V2 === 'true' || stored.enabled === true, environmentConfigured: Boolean(process.env.LANGCHAIN_API_KEY), secureStorageAvailable: safeStorage.isEncryptionAvailable() };
+}
+function saveLangSmithSettings(input = {}) {
+  const existing = readStoredLangSmithSettings();
+  const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim().slice(0, 500) : '';
+  if (!apiKey && !readLangSmithApiKey()) throw new Error('Enter a LangSmith API key before enabling tracing.');
+  if (!safeStorage.isEncryptionAvailable() && apiKey) throw new Error('Secure credential storage is unavailable. Restart the app before saving the LangSmith key.');
+  const settings = { project: String(input.project || existing.project || 'north-star-job-search').trim().slice(0, 120) || 'north-star-job-search', enabled: Boolean(input.enabled) };
+  if (apiKey) settings.apiKey = safeStorage.encryptString(apiKey).toString('base64');
+  else if (existing.apiKey) settings.apiKey = existing.apiKey;
+  const destination = langSmithCredentialsPath(); const temporary = `${destination}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, JSON.stringify(settings), { mode: 0o600 }); fs.renameSync(temporary, destination);
+  return langSmithStatus();
+}
+function clearLangSmithSettings() { try { fs.rmSync(langSmithCredentialsPath(), { force: true }); } catch {} return langSmithStatus(); }
+function langSmithStatus() { const settings = readLangSmithSettings(); return { configured: Boolean(settings.apiKey), enabled: settings.enabled, project: settings.project, environmentConfigured: settings.environmentConfigured, secureStorageAvailable: settings.secureStorageAvailable }; }
+function langSmithEnvironment() { const settings = readLangSmithSettings(); return { ...process.env, LANGCHAIN_API_KEY: settings.apiKey, LANGCHAIN_PROJECT: settings.project, LANGCHAIN_TRACING_V2: settings.enabled ? 'true' : 'false' }; }
 const emailCredentialsPath = () => path.join(app.getPath('userData'), 'email-credentials.json');
 const gmailOAuthCredentialsPath = () => path.join(app.getPath('userData'), 'gmail-oauth-client-credentials.json');
 function readStoredGmailOAuthCredentials() { try { const parsed = JSON.parse(fs.readFileSync(gmailOAuthCredentialsPath(), 'utf8')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } }
@@ -2315,7 +2342,10 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'txt', job)), filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; fs.mkdirSync(exportDirectory, { recursive: true }); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'pdf', job)), filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
   ipcMain.handle('jobs:ai:get', () => openRouterStatus());
-  ipcMain.handle('jobs:integrations:get', () => publicConfig());
+  ipcMain.handle('jobs:integrations:get', () => publicConfig(langSmithEnvironment()));
+  ipcMain.handle('jobs:langsmith:get', () => langSmithStatus());
+  ipcMain.handle('jobs:langsmith:save', (_event, input) => saveLangSmithSettings(input));
+  ipcMain.handle('jobs:langsmith:clear', () => clearLangSmithSettings());
   ipcMain.handle('jobs:ai:save', (_event, input) => saveOpenRouterApiKey(input?.apiKey));
   ipcMain.handle('jobs:ai:clear', () => clearOpenRouterApiKey());
   ipcMain.handle('jobs:source:get', () => jobSourceStatus());
@@ -2390,6 +2420,10 @@ function registerDatabaseIpc() {
     if (!profile?.targetRoles?.length && !profile?.targetLocations?.length && !profile?.interests?.length) return { ok: false, needsProfile: true, error: 'Add a target role, location, or interest to your profile first.' };
     const runId = coachDatabase.createJobSearchRun();
     setAuditRun(runId);
+    const langsmith = createLangSmithRunClient({ env: langSmithEnvironment() });
+    // Keep LangSmith useful for lifecycle debugging without exporting resumes,
+    // job descriptions, prompts, provider payloads, or other user content.
+    await langsmith.start({ runId, inputs: { hasProfile: Boolean(profile), targetRoleCount: profile?.targetRoles?.length || 0, targetLocationCount: profile?.targetLocations?.length || 0, interestCount: profile?.interests?.length || 0 }, metadata: { product: 'north-star', workflow: 'job-search', localRunId: runId } }).catch(() => {});
     let plan;
     try {
       plan = process.env.HERMES_AI_SEARCH_PLANNING !== 'false'
@@ -2402,6 +2436,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
+      await langsmith.end({ runId, error: warning }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'search_planning_failed', message: warning },
@@ -2441,6 +2476,7 @@ function registerDatabaseIpc() {
       const attempts = coachDatabase.listJobSearchAttempts(runId);
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
+      await langsmith.end({ runId, error: warning }).catch(() => {});
       return {
         ok: false,
         error: { code: cause?.code || 'job_search_failed', message: warning },
@@ -2470,6 +2506,7 @@ function registerDatabaseIpc() {
       coachDatabase.finishJobSearchRun(runId, { status: 'failed', resultCount: 0, warning: found.warning || found.error.message || 'No jobs were returned.' });
       const apiCalls = coachDatabase.listApiCalls(runId);
       clearAuditRun();
+      await langsmith.end({ runId, outputs: { status: 'retrieval_failed', resultCount: 0 } }).catch(() => {});
       return { ok: false, ...found, searchPlan: plan, apiCalls };
     }
     const retrievalApiCalls = coachDatabase.listApiCalls(runId);
@@ -2519,6 +2556,7 @@ function registerDatabaseIpc() {
       ? [found.warning, 'Final AI selection was unavailable; showing deterministic provider candidates.'].filter(Boolean).join(' ')
       : found.warning;
     coachDatabase.finishJobSearchRun(runId, { resultCount: ranked.length, warning: warning || '', status: found.error && !found.jobs?.length ? 'failed' : 'completed' });
+    await langsmith.end({ runId, outputs: { status: rankingError ? 'completed_with_ranking_fallback' : 'completed', retrievedCount: found.jobs.length, selectedCount: ranked.length, rankingStatus } }).catch(() => {});
     const apiCalls = coachDatabase.listApiCalls(runId);
     const rankingBatches = coachDatabase.listJobSearchRankingBatches(runId);
     clearAuditRun();

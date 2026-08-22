@@ -88,14 +88,14 @@ function createN8nEventClient({ env = process.env, fetchImpl = global.fetch, tim
 }
 
 function createLangSmithRunClient({ env = process.env, client } = {}) {
-  const configured = Boolean(env.LANGCHAIN_API_KEY);
+  const configured = Boolean(env.LANGCHAIN_API_KEY) && env.LANGCHAIN_TRACING_V2 !== 'false';
   let langsmith = client;
   return {
     configured,
     async start({ runId, inputs, metadata = {} }) {
       if (!configured) return null;
       if (!langsmith) { const { Client } = loadLangSmith(); langsmith = new Client({ apiKey: env.LANGCHAIN_API_KEY, apiUrl: env.LANGCHAIN_ENDPOINT || DEFAULT_LANGSMITH_ENDPOINT }); }
-      await langsmith.createRun({ id: runId, name: 'hermes-job-search', run_type: 'chain', project_name: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'hermes-job-search', inputs, extra: { metadata } });
+      await langsmith.createRun({ id: runId, name: 'north-star-job-search', run_type: 'chain', project_name: env.LANGCHAIN_PROJECT || env.LANGCHAIN_PROJECT_NAME || 'north-star-job-search', inputs, extra: { metadata } });
       return runId;
     },
     async end({ runId, outputs, error }) {

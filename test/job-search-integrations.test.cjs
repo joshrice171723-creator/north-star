@@ -1,6 +1,19 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createN8nEventClient, publicConfig } = require('../electron/job-search-integrations.cjs');
+const { createN8nEventClient, createLangSmithRunClient, publicConfig } = require('../electron/job-search-integrations.cjs');
+
+test('LangSmith tracing is opt-in and reports redacted run metadata', async () => {
+  const calls = [];
+  const client = { createRun: async (input) => calls.push(['create', input]), updateRun: async (id, input) => calls.push(['update', id, input]) };
+  const tracer = createLangSmithRunClient({ env: { LANGCHAIN_API_KEY: 'test-key', LANGCHAIN_TRACING_V2: 'true', LANGCHAIN_PROJECT: 'test-project' }, client });
+  await tracer.start({ runId: 'run-1', inputs: { targetRoleCount: 1 }, metadata: { workflow: 'job-search' } });
+  await tracer.end({ runId: 'run-1', outputs: { selectedCount: 2 } });
+  assert.equal(calls[0][1].project_name, 'test-project');
+  assert.deepEqual(calls[0][1].inputs, { targetRoleCount: 1 });
+  assert.equal(calls[1][2].outputs.selectedCount, 2);
+  const disabled = createLangSmithRunClient({ env: { LANGCHAIN_API_KEY: 'test-key', LANGCHAIN_TRACING_V2: 'false' }, client });
+  assert.equal(await disabled.start({ runId: 'run-2', inputs: { secret: 'not sent' } }), null);
+});
 
 test('integration status reports the four job-search building blocks', () => {
   const status = publicConfig({ OPENROUTER_API_KEY: 'configured', LANGCHAIN_API_KEY: 'configured', N8N_JOB_SEARCH_WEBHOOK_URL: 'https://n8n.example/webhook/jobs' });
