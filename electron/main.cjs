@@ -1525,9 +1525,11 @@ function videoFactoryRenderFilter(durationSeconds, narrated = false, storyboard 
   });
   return [
     ...sceneFilters,
-    "drawbox=x='mod(t*90,1280)-360':y=105:w=360:h=500:color=0x1e5278@0.55:t=fill",
-    "drawbox=x='1280-mod(t*55,1600)':y=390:w=460:h=260:color=0x633c69@0.38:t=fill",
-    "drawbox=x='mod(t*35,1500)-700':y=245:w=700:h=8:color=0x8bd5ff@0.18:t=fill",
+    "drawgrid=x='mod(t*18,80)':y='mod(t*12,80)':w=80:h=80:t=1:color=0x8bd5ff@0.13",
+    "drawbox=x='mod(t*90,1280)-360':y=105:w=360:h=500:color=0x1e5278@0.34:t=fill",
+    "drawbox=x='1280-mod(t*55,1600)':y=390:w=460:h=260:color=0x633c69@0.28:t=fill",
+    "drawbox=x='mod(t*35,1500)-700':y=245:w=700:h=8:color=0x8bd5ff@0.45:t=fill",
+    "drawbox=x='70+sin(t*1.2)*240':y='145+cos(t*0.8)*80':w=5:h=210:color=0x8bd5ff@0.5:t=fill",
     "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='NORTH STAR VIDEO FACTORY':fontcolor=0x8bd5ff:fontsize=28:x=70:y=70",
     "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SOURCE-GROUNDED EXPLAINER':fontcolor=0xaab4c3:fontsize=18:x=70:y=118:enable='between(t,0,3)'",
     storyboard.length ? null : "drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='topic.txt':fontcolor=white:fontsize=46:line_spacing=12:x=70:y=240:enable='between(t,1,10)'",
