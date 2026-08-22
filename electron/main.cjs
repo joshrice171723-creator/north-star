@@ -1358,11 +1358,18 @@ function createTestVideo() {
   fs.writeFileSync(path.join(jobDirectory, 'captions.srt'), videoFactoryCaptions(story, durationSeconds).srt, 'utf8');
   fs.writeFileSync(path.join(jobDirectory, 'test-fixture.txt'), story, 'utf8');
   const outputPath = path.join(jobDirectory, 'video.mp4');
+  const storyboard = [
+    { scene: 1, visual: 'Opening title card with the test objective and North Star visual language.', rightsReviewRequired: false },
+    { scene: 2, visual: 'Animated explainer card showing how scene timing follows the narration.', rightsReviewRequired: false },
+    { scene: 3, visual: 'Evidence card with captions and a source-grounded review reminder.', rightsReviewRequired: false },
+    { scene: 4, visual: 'Closing card showing the draft is ready for human review.', rightsReviewRequired: false },
+  ];
+  videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds);
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30',
     '-f', 'lavfi', '-i', `sine=frequency=440:duration=${durationSeconds}`, '-t', String(durationSeconds),
-    '-vf', videoFactoryRenderFilter(durationSeconds, true),
+    '-vf', videoFactoryRenderFilter(durationSeconds, true, storyboard),
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${durationSeconds - 0.5}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
@@ -1475,11 +1482,51 @@ function videoFactoryWrapText(value, maxLineLength = 34) {
   return lines.join('\n');
 }
 
-function videoFactoryRenderFilter(durationSeconds, narrated = false) {
+function videoFactorySceneTimings(storyboard, durationSeconds) {
+  const scenes = Array.isArray(storyboard) && storyboard.length ? storyboard : [{ scene: 1, visual: 'Illustrative visual supporting the narration.', rightsReviewRequired: false }];
+  const safeDuration = Math.max(1, Number(durationSeconds) || 1);
+  const sceneDuration = safeDuration / scenes.length;
+  return scenes.map((scene, index) => ({
+    ...scene,
+    startSeconds: Number((index * sceneDuration).toFixed(2)),
+    endSeconds: Number(((index + 1) * sceneDuration).toFixed(2)),
+  }));
+}
+
+function videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds) {
+  const timings = videoFactorySceneTimings(storyboard, durationSeconds);
+  timings.forEach((scene, index) => {
+    const sceneText = [
+      `SCENE ${scene.scene || index + 1}`,
+      '',
+      videoFactoryWrapText(scene.visual || 'Illustrative visual supporting the narration.', 38),
+      '',
+      scene.rightsReviewRequired ? 'RIGHTS REVIEW REQUIRED' : 'ILLUSTRATIVE VISUAL',
+    ].join('\n');
+    fs.writeFileSync(path.join(jobDirectory, `scene-${String(index + 1).padStart(2, '0')}.txt`), sceneText, 'utf8');
+  });
+  return timings;
+}
+
+function videoFactoryRenderFilter(durationSeconds, narrated = false, storyboard = []) {
   const safeDuration = Math.max(1, Number(durationSeconds) || 1).toFixed(2);
   const captionFilter = narrated ? "subtitles=captions.srt:force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=48'" : null;
+  const sceneColors = ['0x12253d', '0x1b2446', '0x2a1f45', '0x173d42', '0x292d38', '0x243b55'];
+  const sceneFilters = videoFactorySceneTimings(storyboard, durationSeconds).flatMap((scene, index) => {
+    const start = scene.startSeconds.toFixed(2);
+    const end = scene.endSeconds.toFixed(2);
+    const sceneFile = `scene-${String(index + 1).padStart(2, '0')}.txt`;
+    return [
+      `drawbox=x=0:y=0:w=1280:h=720:color=${sceneColors[index % sceneColors.length]}@0.96:t=fill:enable='between(t,${start},${end})'`,
+      `drawbox=x=70:y=165:w=1140:h=415:color=0x08111f@0.78:t=fill:enable='between(t,${start},${end})'`,
+      `drawbox=x=70:y=165:w=8:h=415:color=0x8bd5ff@0.95:t=fill:enable='between(t,${start},${end})'`,
+      `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':textfile='${sceneFile}':fontcolor=white:fontsize=34:line_spacing=14:x=112:y=215:enable='between(t,${start},${end})'`,
+      `drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':text='SCENE ${scene.scene || index + 1}  ·  STORYBOARD VISUAL':fontcolor=0x8bd5ff:fontsize=18:x=112:y=610:enable='between(t,${start},${end})'`,
+    ];
+  });
   return [
     captionFilter,
+    ...sceneFilters,
     "drawbox=x='mod(t*90,1280)-360':y=105:w=360:h=500:color=0x1e5278@0.55:t=fill",
     "drawbox=x='1280-mod(t*55,1600)':y=390:w=460:h=260:color=0x633c69@0.38:t=fill",
     "drawbox=x='mod(t*35,1500)-700':y=245:w=700:h=8:color=0x8bd5ff@0.18:t=fill",
@@ -1742,10 +1789,11 @@ async function createResearchVideo(input = {}) {
   const captionData = videoFactoryCaptions(story, durationSeconds);
   fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
   fs.writeFileSync(storyboardPath, JSON.stringify({ topic, generatedAt: new Date().toISOString(), scenes: storyboard }, null, 2), 'utf8');
+  videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds);
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   const args = [
     '-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath,
-    '-vf', videoFactoryRenderFilter(durationSeconds, true),
+    '-vf', videoFactoryRenderFilter(durationSeconds, true, storyboard),
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath
   ];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
@@ -1781,8 +1829,9 @@ async function approvePreparedVideo(input = {}) {
   const durationSeconds = videoFactoryMediaDuration(audioPath) || Math.max(12, Number((story.split(/\s+/).length / 2.3).toFixed(2)));
   const captionData = videoFactoryCaptions(story, durationSeconds);
   fs.writeFileSync(captionsPath, captionData.srt, 'utf8');
+  videoFactoryWriteSceneCards(jobDirectory, storyboard, durationSeconds);
   const ffmpeg = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const args = ['-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath, '-vf', videoFactoryRenderFilter(durationSeconds, true), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath];
+  const args = ['-y', '-f', 'lavfi', '-i', 'color=c=0x111827:s=1280x720:r=30', '-i', audioPath, '-vf', videoFactoryRenderFilter(durationSeconds, true, storyboard), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0.5, durationSeconds - 0.5).toFixed(2)}:d=0.5`, '-c:a', 'aac', '-shortest', outputPath];
   const result = require('child_process').spawnSync(ffmpeg, args, { cwd: jobDirectory, encoding: 'utf8', windowsHide: true });
   if (result.error || result.status !== 0 || !fs.existsSync(outputPath)) throw new Error(`Approved video render failed: ${result.error?.message || result.stderr?.slice(-500) || 'FFmpeg did not create an MP4.'}`);
   saveVideoFactoryPipeline(jobDirectory, { stage: 'review', status: 'complete', topic, artifactCount: 8, tokenUsage, estimatedCostUsd: tokenUsage?.estimatedCostUsd || 0 });
