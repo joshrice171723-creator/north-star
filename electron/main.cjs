@@ -754,6 +754,8 @@ async function startAutonomousApplicationQueue() {
       // the first inspection checkpoint and never submits the employer form.
       const resumeUrl = claimed.automationCheckpoint?.redactedUrl || '';
       await applicationBrowser.open({ applicationId: claimed.id, resumeUrl });
+      const contentBounds = mainWindow?.getContentBounds?.() || { width: 1440, height: 900 };
+      applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
       autonomousApplicationQueueState.message = resumeUrl ? 'Resumed the saved application checkpoint and inspected its current page.' : 'Opened one eligible application and inspected its first page.';
     } catch (error) {
       // Preserve the opening failure checkpoint contract while adding the bounded
