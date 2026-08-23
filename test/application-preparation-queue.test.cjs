@@ -7,5 +7,6 @@ test('background preparation drains Researching before Target and stops on block
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
   assert.match(source, /jobs\.find\(\(entry\) => entry\.stage === 'researching'\) \|\| jobs\.find\(\(entry\) => entry\.stage === 'target'\)/);
   assert.match(source, /if \(!coachDatabase \|\| applicationPreparationState\.activeJobId\) return;/);
-  assert.match(source, /applicationPreparationState\.retryAt = Date\.now\(\) \+ 15000/);
+  assert.match(source, /!applicationPreparationState\.blockers\[job\.id\]/);
+  assert.match(source, /applicationPreparationState\.retryAt = 0/);
 });
