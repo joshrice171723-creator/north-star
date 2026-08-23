@@ -844,7 +844,12 @@ async function startAutonomousApplicationQueue() {
       autonomousApplicationQueueState.message = `Checkpoint failed: ${message}`;
     }
   } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
-  autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true;
+  // A successful checkpoint keeps the browser-owned application active for
+  // review. Do not report that handoff as paused while the active application
+  // still owns the isolated browser view; failure/unavailable paths clear the
+  // ownership above and correctly settle into the paused state.
+  autonomousApplicationQueueState.running = Boolean(autonomousApplicationQueueState.activeApplicationId);
+  autonomousApplicationQueueState.paused = !autonomousApplicationQueueState.activeApplicationId;
   return autonomousApplicationQueueStatus();
 }
 function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
