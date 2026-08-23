@@ -80,6 +80,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,startJobApplication: (input) => ipcRenderer.invoke('jobs:applications:start', input)
   ,prepareJobApplication: (input) => ipcRenderer.invoke('jobs:applications:prepare', input)
   ,getApplicationPreparationStatus: () => ipcRenderer.invoke('jobs:applications:preparation-status')
+  ,startApplicationPreparationQueue: () => ipcRenderer.invoke('jobs:applications:preparation-start')
+  ,pauseApplicationPreparationQueue: () => ipcRenderer.invoke('jobs:applications:preparation-pause')
   ,getJobApplication: (id) => ipcRenderer.invoke('jobs:applications:get', id)
   ,openJobApplicationFolder: (applicationId) => ipcRenderer.invoke('jobs:applications:open-folder', { applicationId })
   ,resolveJobApplicationFile: (input) => ipcRenderer.invoke('jobs:applications:file', input)

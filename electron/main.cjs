@@ -682,7 +682,7 @@ const validateApplicationId = (value) => validateCoachId(value, 'application id'
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
 const documentGenerationInFlight = new Set();
-const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0 };
+const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
 async function generateApplicationDocument(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
@@ -2391,21 +2391,28 @@ function syncPreparationActivity() {
   const latestTerminalByJob = new Map();
   for (const event of activity) if (!latestTerminalByJob.has(event.jobId) && ['preparation_completed', 'preparation_failed'].includes(event.eventType)) latestTerminalByJob.set(event.jobId, event);
   applicationPreparationState.blockers = Object.fromEntries([...latestTerminalByJob].filter(([, event]) => event.eventType === 'preparation_failed').map(([jobId, event]) => [jobId, event.summary]));
-  return activity.slice(0, 8).map(({ job, jobId, eventType, summary, createdAt }) => ({ jobId, company: job?.company || 'Archived job', roleTitle: job?.roleTitle || '', eventType, summary, createdAt }));
+  return activity.map(({ job, jobId, eventType, summary, createdAt }) => ({ jobId, company: job?.company || 'Archived job', roleTitle: job?.roleTitle || '', eventType, summary, createdAt }));
 }
 function applicationPreparationStatus() {
   const activity = syncPreparationActivity();
-  return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers }, activity };
+  const jobs = coachDatabase?.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage)) || [];
+  const terminalByJob = new Map();
+  for (const event of activity) if (['preparation_completed', 'preparation_failed'].includes(event.eventType) && !terminalByJob.has(event.jobId)) terminalByJob.set(event.jobId, event.eventType);
+  const completed = jobs.filter((job) => terminalByJob.get(job.id) === 'preparation_completed').length;
+  const failed = jobs.filter((job) => terminalByJob.get(job.id) === 'preparation_failed').length;
+  const active = applicationPreparationState.activeJobId ? 1 : 0;
+  const total = jobs.length;
+  return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers }, activity, running: applicationPreparationState.running, paused: applicationPreparationState.paused, counts: { total, completed, failed, remaining: Math.max(0, total - completed - failed), queued: Math.max(0, total - completed - failed - active), active } };
 }
 async function runApplicationPreparationQueue() {
-  if (!coachDatabase || applicationPreparationState.activeJobId) return;
+  if (!coachDatabase || applicationPreparationState.activeJobId || applicationPreparationState.paused) return false;
    syncPreparationActivity();
    // A failed job is a manual-review item until the user changes it or retries
    // deliberately. Excluding blockers here prevents the 5-second timer from
    // spending tokens on the same failing job forever.
    const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && !applicationPreparationState.blockers[job.id]);
   const job = jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
-  if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return;
+  if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return false;
   applicationPreparationState.activeJobId = job.id;
   applicationPreparationState.activeStep = 'Preparing application workspace';
   try {
@@ -2422,11 +2429,38 @@ async function runApplicationPreparationQueue() {
     applicationPreparationState.activeJobId = null;
     applicationPreparationState.activeStep = '';
   }
+  return true;
+}
+async function drainApplicationPreparationQueue() {
+  if (applicationPreparationState.running) return;
+  applicationPreparationState.running = true;
+  try {
+    while (!applicationPreparationState.paused) {
+      const processed = await runApplicationPreparationQueue();
+      if (!processed) break;
+      // Yield between jobs so Pause can be handled and the renderer can show
+      // the completed event before another paid document workflow begins.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  } finally {
+    applicationPreparationState.running = false;
+  }
 }
   ipcMain.handle('jobs:applications:prepare', async (event, input) => {
     assertTrustedRenderer(event);
     const jobId = validateCoachId(input?.jobId, 'job id');
     return prepareJobApplication(jobId);
+  });
+  ipcMain.handle('jobs:applications:preparation-start', async (event) => {
+    assertTrustedRenderer(event);
+    applicationPreparationState.paused = false;
+    void drainApplicationPreparationQueue();
+    return applicationPreparationStatus();
+  });
+  ipcMain.handle('jobs:applications:preparation-pause', (event) => {
+    assertTrustedRenderer(event);
+    applicationPreparationState.paused = true;
+    return applicationPreparationStatus();
   });
   ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationPreparationStatus(); });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
