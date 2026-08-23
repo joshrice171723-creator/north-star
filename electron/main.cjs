@@ -2418,6 +2418,28 @@ function registerDatabaseIpc() {
     if (result.status === 'advanced') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint } });
     return { ...result, browser: applicationBrowser.publicState() };
   });
+  ipcMain.handle('jobs:browser:submit', async (event, input) => {
+    assertTrustedRenderer(event);
+    const applicationId = validateApplicationId(input?.applicationId);
+    if (input?.userApproved !== true) throw new Error('Explicit user approval is required before submitting an application.');
+    const state = applicationBrowser.publicState();
+    if (!state?.applicationId || state.applicationId !== applicationId) throw new Error('Open this application in the isolated browser before submitting.');
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'submitting', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submitRequestedAt: new Date().toISOString() } });
+    try {
+      const result = await applicationBrowser.submit();
+      if (result.status !== 'submitted') {
+        coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submitBlocked: result.reason || 'unknown', pageFingerprint: result.pageFingerprint || '' } });
+        return { ...result, browser: applicationBrowser.publicState() };
+      }
+      const confirmation = await applicationBrowser.detectConfirmationPage();
+      const checkpoint = { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submission: { submittedAt: new Date().toISOString(), previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint }, confirmation: confirmation.state === 'confirmed' ? confirmation : null };
+      coachDatabase.applications.updateAutomationState({ applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint });
+      return { ...result, confirmation, browser: applicationBrowser.publicState() };
+    } catch (error) {
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'failed', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, stage: 'submitting', error: String(error?.message || 'Application submission failed.').slice(0, 500) } });
+      throw error;
+    }
+  });
   ipcMain.handle('jobs:browser:detect-confirmation', async (event) => {
     assertTrustedRenderer(event);
     const state = applicationBrowser.publicState();
