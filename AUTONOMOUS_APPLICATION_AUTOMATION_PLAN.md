@@ -47,10 +47,10 @@ Verification completed: focused application persistence and preparation-queue te
 
 ### Next session handoff — begin Stage 3
 
-1. Add a generic fixture application page and connect the Stage 1 `opening` checkpoint to the existing isolated `ApplicationBrowserPanel`/browser adapter.
-2. Inspect fields and create a bounded fill plan using approved profile data and reusable answers.
-3. Pause on unknown questions without submitting, then resume after the Stage 1 UI resolves the answer.
-4. Add approved resume/cover-letter upload and simple multi-page navigation; keep final submit disabled until confirmation evidence exists.
+1. Add secure employer-account creation/reuse state transitions without storing passwords in application state or diagnostics.
+2. Connect activation-link/code matching to the existing Gmail synchronization boundary.
+3. Resume the Stage 2 browser workflow after activation and prevent duplicate account creation for the same host.
+4. Add local account/activation fixtures and verify restart-safe recovery before provider-specific adapters begin.
 
 ### Stage 2 progress — 2026-08-23
 
