@@ -91,7 +91,7 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
         if (input.functionDeclaration.includes('return { status:')) return { result: { value: { status: 'ready' } } };
         return { result: { objectId: 'file-input' } };
       }
-      if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('MouseEvent')) { navigationCount += 1; pageIndex = Math.min(navigationCount, fixture.pages.length - 1); webContents.emit('did-finish-load'); return { result: { value: { status: 'activated' } } }; }
+      if (command === 'Runtime.callFunctionOn' && (input.functionDeclaration.includes('.click()') || input.functionDeclaration.includes('MouseEvent'))) { navigationCount += 1; pageIndex = Math.min(navigationCount, fixture.pages.length - 1); webContents.emit('did-finish-load'); return { result: { value: { status: 'activated' } } }; }
       if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('candidates = Array.from')) return { result: { value: { fieldFingerprint: 'fixture-field', status: 'filled', reason: 'verified' } } };
       if (command === 'Runtime.callFunctionOn') return { result: { value: { status: 'activated' } } };
       if (command === 'DOM.getDocument') return { root: { nodeId: 1 } };
