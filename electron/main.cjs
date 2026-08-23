@@ -761,9 +761,9 @@ async function startAutonomousApplicationQueue() {
       // initial document load. Give the page a bounded window to expose that
       // control before recording a false “no handoff” checkpoint.
       let handoff;
-      for (let attempt = 0; attempt < 12; attempt += 1) {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
         handoff = await applicationBrowser.advance({ handoffOnly: true });
-        if (handoff.status !== 'blocked' || handoff.reason !== 'next_control_not_found' || attempt === 11) break;
+        if (handoff.status !== 'blocked' || handoff.reason !== 'next_control_not_found' || attempt === 39) break;
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
       if (handoff.status === 'unavailable') {
@@ -785,9 +785,9 @@ async function startAutonomousApplicationQueue() {
         // offers it. The click is safe navigation only; Google account choice,
         // MFA, consent, and any CAPTCHA remain visible user checkpoints.
         let googleLogin;
-        for (let attempt = 0; attempt < 12; attempt += 1) {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
           googleLogin = await applicationBrowser.advance({ googleLoginOnly: true });
-          if (googleLogin.status !== 'blocked' || googleLogin.reason !== 'next_control_not_found' || attempt === 11) break;
+          if (googleLogin.status !== 'blocked' || googleLogin.reason !== 'next_control_not_found' || attempt === 39) break;
           // Employer login controls often arrive after an SPA handoff. Keep the
           // retry bounded and exact-label so delayed rendering does not become a
           // false manual checkpoint or click an unrelated control.
