@@ -7,7 +7,7 @@ The delivery is organized into five complete stages. Stage 1 is complete; later 
 ### Five-stage roadmap
 
 1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow. **Complete.**
-2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **In progress.**
+2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **Complete.**
 3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention.
 4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests.
 5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
@@ -45,7 +45,7 @@ Stage 1 implementation commits:
 
 Verification completed: focused application persistence and preparation-queue tests, Stage 1 queue/restart tests, Node syntax checks, Vite production build, and `git diff --check`.
 
-### Next session handoff — begin Stage 2
+### Next session handoff — begin Stage 3
 
 1. Add a generic fixture application page and connect the Stage 1 `opening` checkpoint to the existing isolated `ApplicationBrowserPanel`/browser adapter.
 2. Inspect fields and create a bounded fill plan using approved profile data and reusable answers.
@@ -75,7 +75,22 @@ Stage 2 commits:
 
 Verification completed for this slice: nine focused browser/Stage 1/Stage 2 tests, zero failures, Electron restart after each commit, Electron syntax checks, production build, and `git diff --check`.
 
-Stage 2 remains in progress. The queue now opens the claimed HTTPS application, prefers a recorded ATS destination, preserves prior checkpoint metadata, and records a bounded opening failure. The deterministic fixture orchestration now covers inspection, approved upload, and safe navigation together. The next implementation slice must extend that orchestration through the reviewed approved-fill path and add confirmation-page detection without enabling submission. 
+### Stage 2 completion — 2026-08-23
+
+Stage 2 is complete. The generic workflow now opens one claimed HTTPS application in the isolated browser, persists the first inspection checkpoint, builds and executes a reviewed fill plan using verified profile/reusable-answer data, pauses unsupported questions through the existing `needs_user_answer` workflow, uploads only selected approved documents, advances through uniquely matched safe controls, detects bounded confirmation evidence, and leaves final submission manual.
+
+Final Stage 2 commits:
+
+- `13127bf` — isolated browser confirmation detection.
+- `5b68702` — confirmation evidence IPC checkpoint.
+- `a880df7` / `4a2451f` — assistant confirmation control and reusable-answer preservation.
+- `f1de70e` / `9c45b99` — confirmation and safe-review fixture pages.
+- `deb96c8` / `832ecb3` / `8a7e17b` / `c391fac` / `ac89f22` / `d67ca20` / `777799a` / `1f9623a` — complete fixture orchestration coverage and deterministic lifecycle simulation.
+- `f3184c6` — review-control navigation policy alignment.
+
+Acceptance verification: 15 focused tests passed; Electron syntax checks passed for main, preload, browser, and policy modules; production build passed; `git diff --check` passed; Electron was restarted after task-related commits. Existing build warnings are limited to Vite's config-loader notice and the pre-existing large generated chunks.
+
+Next session begins Stage 3: account creation/reuse and Gmail activation, with Stage 2 confirmation evidence remaining a prerequisite and final submission still approval-gated.
 
 ## Purpose
 
