@@ -4,6 +4,7 @@ const { buildFillPlan, validatePlanForFill } = require('../electron/jobs/applica
 test('policy blocks protected controls and fails closed for unknown fields', () => {
   assert.equal(classifyField({ elementType: 'input', inputType: 'password', label: 'Password' }), 'authentication_captcha');
   assert.equal(decideField({ elementType: 'button', label: 'Submit application' }).action, 'blocked');
+  assert.equal(classifyField({ elementType: 'button', label: 'Apply Now' }), 'navigation');
   assert.equal(decideField({ elementType: 'input', label: 'Unfamiliar field' }).action, 'ask');
 });
 test('machine-formatted ATS fields are classified without splitting a name', () => {

@@ -27,7 +27,11 @@ const reusableAnswerFor = (field, answers = []) => {
 function classifyField(field = {}) {
   const text = fieldText(field);
   if (field.inputType === 'password' || /password|captcha|verification code|one[- ]time|mfa/.test(text)) return 'authentication_captcha';
-  if (/submit|send application|complete application|apply now/.test(text) && field.elementType === 'button') return 'final_submit';
+  // “Apply Now” starts the employer/ATS handoff; it does not submit the
+  // completed application. Keep it in the safe navigation bucket so the
+  // autonomous queue can cross the job-board boundary without treating it as
+  // the irreversible final action.
+  if (/submit|send application|complete application/.test(text) && field.elementType === 'button') return 'final_submit';
   if (/race|ethnicity|gender|veteran|disability|voluntary self/.test(text)) return 'sensitive_voluntary_disclosure';
   if (/signature|certify|attest|legal agreement|terms and conditions/.test(text)) return 'legal_signature';
   if (field.inputType === 'file') return 'file_upload';
