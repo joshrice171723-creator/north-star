@@ -2388,16 +2388,19 @@ function syncPreparationActivity() {
     .filter((event) => event.eventType.startsWith('preparation_'))
     .map((event) => ({ ...event, jobId: application.jobId, job: jobsById.get(application.jobId) }))
   ).sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
-  const latestTerminalByJob = new Map();
-  for (const event of activity) if (!latestTerminalByJob.has(event.jobId) && ['preparation_completed', 'preparation_failed'].includes(event.eventType)) latestTerminalByJob.set(event.jobId, event);
-  applicationPreparationState.blockers = Object.fromEntries([...latestTerminalByJob].filter(([, event]) => event.eventType === 'preparation_failed').map(([jobId, event]) => [jobId, event.summary]));
+  const latestByJob = new Map();
+  for (const event of activity) if (!latestByJob.has(event.jobId)) latestByJob.set(event.jobId, event);
+  // A deliberate Prepare application action records a newer started event;
+  // that event supersedes an older failure and makes the job eligible again.
+  applicationPreparationState.blockers = Object.fromEntries([...latestByJob].filter(([, event]) => event.eventType === 'preparation_failed').map(([jobId, event]) => [jobId, event.summary]));
   return activity.map(({ job, jobId, eventType, summary, createdAt }) => ({ jobId, company: job?.company || 'Archived job', roleTitle: job?.roleTitle || '', eventType, summary, createdAt }));
 }
 function applicationPreparationStatus() {
   const activity = syncPreparationActivity();
   const jobs = coachDatabase?.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage)) || [];
-  const terminalByJob = new Map();
-  for (const event of activity) if (['preparation_completed', 'preparation_failed'].includes(event.eventType) && !terminalByJob.has(event.jobId)) terminalByJob.set(event.jobId, event.eventType);
+  const latestByJob = new Map();
+  for (const event of activity) if (!latestByJob.has(event.jobId)) latestByJob.set(event.jobId, event.eventType);
+  const terminalByJob = new Map([...latestByJob].filter(([, eventType]) => ['preparation_completed', 'preparation_failed'].includes(eventType)));
   const completed = jobs.filter((job) => terminalByJob.get(job.id) === 'preparation_completed').length;
   const failed = jobs.filter((job) => terminalByJob.get(job.id) === 'preparation_failed').length;
   const active = applicationPreparationState.activeJobId ? 1 : 0;
