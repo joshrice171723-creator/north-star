@@ -145,6 +145,16 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     await new Promise((resolve) => setTimeout(resolve, 150));
     const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
   };
+  const submit = async () => {
+    const snapshot = await inspect();
+    const candidates = snapshot.fields.filter((field) => field.elementType === 'button' && field.category === 'final_submit' && /^(submit|submit application|send application|finish application|complete application)$/i.test(field.label));
+    if (candidates.length !== 1) return { status: 'blocked', reason: candidates.length ? 'final_submit_ambiguous' : 'final_submit_not_found', pageFingerprint: snapshot.pageFingerprint };
+    const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('button,input[type="submit"],input[type="button"]')).filter((el) => !el.disabled && !el.readOnly); const matches = controls.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label && /^(submit|submit application|send application|finish application|complete application)$/i.test(clean(el.innerText || el.value || el.getAttribute('aria-label')))); if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'final_submit_changed' : 'final_submit_missing' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated', label: field.label }; }`, candidates[0]);
+    if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'final_submit_failed' };
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const nextSnapshot = await inspect();
+    return { status: 'submitted', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
+  };
   const activate = async ({ url = '', code = '' } = {}) => {
     if (!active) throw new Error('Open the employer application before activating the account.');
     if (url) {
@@ -169,6 +179,6 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
