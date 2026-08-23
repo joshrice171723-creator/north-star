@@ -2,7 +2,7 @@
 
 ## Implementation status (updated 2026-08-23)
 
-The delivery is organized into five complete stages. Stage 1 is the current implementation target; later stages remain gated until Stage 1 is verified.
+The delivery is organized into five complete stages. Stage 1 is complete; later stages remain gated until their preceding stage is verified.
 
 ### Five-stage roadmap
 
@@ -32,14 +32,25 @@ The first foundation slice is complete and committed in the repository:
 - Added main-process and preload APIs to update checkpoints, list/save unknown questions, and resolve a question into a reusable approved answer. Resolving moves the application back to `answering_questions`.
 - Added a reopen/persistence test covering queue initialization, unknown-question pause, database restart, answer reuse, and resume state.
 
-The foundation slice did not yet run the autonomous queue or expose unknown questions in the UI. Those are the remaining Stage 1 implementation items below. Opening URLs, inspecting/filling forms, uploading documents, creating accounts, and browser/email submission evidence remain intentionally deferred to Stages 2 and 3.
+Stage 1 is now complete. The queue claims one eligible `Ready to apply` application at a time, persists an `opening` checkpoint, exposes queue and unknown-question controls in the Jobs UI, and recovers interrupted non-submission states after restart. Opening URLs, inspecting/filling forms, uploading documents, creating accounts, and browser/email submission evidence remain intentionally deferred to Stages 2 and 3.
 
-### Next session handoff
+Stage 1 implementation commits:
 
-1. Build the one-at-a-time queue runner around `applications.automationState`, selecting only eligible `ready` jobs with approved selected documents and valid HTTPS URLs.
-2. Add durable transition/retry helpers that recover `opening`/`filling_*` records after Electron restart and never retry final submission blindly.
-3. Add queue UI visibility for `needs_user_answer`, using `listJobApplicationUnknownQuestions` and `resolveJobApplicationUnknownQuestion` without exposing secrets or raw page snapshots.
-4. Keep browser/provider automation behind the existing `ApplicationBrowserPanel` and adapter boundaries; do not enable final submission until confirmation-page and Gmail confirmation correlation are both implemented.
+- `12ea2a3` — autonomous application state foundation.
+- `56dedb8` — five-stage roadmap and Stage 1 completion criteria.
+- `b42ad64` — durable queue eligibility, claim, release, and recovery primitives.
+- `3137f4b` / `60275d6` — queue IPC wiring and syntax correction.
+- `b2a8e2f` — Jobs UI queue controls and unknown-question answer flow.
+- `1a4c0ad` / `cfe9981` — queue recovery tests and eligibility-claim correction.
+
+Verification completed: focused application persistence and preparation-queue tests, Stage 1 queue/restart tests, Node syntax checks, Vite production build, and `git diff --check`.
+
+### Next session handoff — begin Stage 2
+
+1. Add a generic fixture application page and connect the Stage 1 `opening` checkpoint to the existing isolated `ApplicationBrowserPanel`/browser adapter.
+2. Inspect fields and create a bounded fill plan using approved profile data and reusable answers.
+3. Pause on unknown questions without submitting, then resume after the Stage 1 UI resolves the answer.
+4. Add approved resume/cover-letter upload and simple multi-page navigation; keep final submit disabled until confirmation evidence exists.
 
 ## Purpose
 
