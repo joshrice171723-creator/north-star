@@ -477,6 +477,35 @@ async function syncJobEmails() {
   }
   return { ok: true, configured: true, imported, retrieved: uniqueMessages.length, autoAssigned, autoCreated, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
 }
+async function checkApplicationActivation(applicationId) {
+  const application = coachDatabase.applications.get(applicationId);
+  if (!application) throw new Error('Application not found.');
+  const account = coachDatabase.applications.getExternalAccount(applicationId);
+  if (!account?.host || !account.username) throw new Error('Save the employer account username before checking activation.');
+  const requestedAt = coachDatabase.applications.getActivationAttempt(applicationId)?.requestedAt || new Date().toISOString();
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'awaiting_activation', checkpoint: { ...application.automationCheckpoint, activation: { host: normalizeHost(account.host), recipient: account.username, requestedAt } } });
+  const sync = await syncJobEmails();
+  const emails = coachDatabase.email.list({ jobOnly: false, includeExcluded: true, includeBlocked: true, limit: 200 });
+  const candidate = matchActivationEmails(emails, { host: account.host, recipient: account.username, requestedAt });
+  if (!candidate) {
+    const attempt = coachDatabase.applications.recordActivationAttempt({ id: `activation-${applicationId}`, applicationId, host: account.host, recipient: account.username, status: 'pending', requestedAt });
+    return { status: 'pending', sync: { ok: sync.ok, imported: sync.imported || 0, message: sync.message || '' }, attempt };
+  }
+  const browserState = applicationBrowser.publicState();
+  if (browserState?.applicationId !== applicationId) {
+    const attempt = coachDatabase.applications.recordActivationAttempt({ id: `activation-${applicationId}`, applicationId, host: account.host, recipient: account.username, status: 'matched', messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, codeHash: candidate.codeHash, signals: candidate.signals, requestedAt, matchedAt: candidate.receivedAt });
+    return { status: 'matched', sync: { ok: sync.ok, imported: sync.imported || 0, message: sync.message || '' }, attempt, requiresResume: true };
+  }
+  const activation = await applicationBrowser.activate({ url: candidate.activationUrl, code: candidate.code });
+  if (activation.status !== 'activated') {
+    const attempt = coachDatabase.applications.recordActivationAttempt({ id: `activation-${applicationId}`, applicationId, host: account.host, recipient: account.username, status: 'matched', messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, codeHash: candidate.codeHash, signals: candidate.signals, requestedAt, matchedAt: candidate.receivedAt });
+    return { status: 'matched', activation, attempt };
+  }
+  const attempt = coachDatabase.applications.recordActivationAttempt({ id: `activation-${applicationId}`, applicationId, host: account.host, recipient: account.username, status: 'used', messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, codeHash: candidate.codeHash, signals: candidate.signals, requestedAt, matchedAt: candidate.receivedAt });
+  coachDatabase.applications.saveExternalAccount({ applicationId, host: account.host, username: account.username, credentialRef: account.credentialRef, status: 'active' });
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'detecting_form', checkpoint: { activation: { messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, hasCode: Boolean(candidate.code), signals: candidate.signals, usedAt: new Date().toISOString() } } });
+  return { status: 'activated', activation: { status: activation.status, pageFingerprint: activation.pageFingerprint || '' }, attempt, browser: applicationBrowser.publicState() };
+}
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
   path.resolve(__dirname, '../../canonical-ai-executive-coach-roadmap.csv'),
