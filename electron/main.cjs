@@ -757,7 +757,15 @@ async function startAutonomousApplicationQueue() {
       await applicationBrowser.open({ applicationId: claimed.id, resumeUrl });
       const contentBounds = mainWindow?.getContentBounds?.() || { width: 1440, height: 900 };
       applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
-      const handoff = await applicationBrowser.advance({ handoffOnly: true });
+      // Dice and similar job boards render the real Apply control after the
+      // initial document load. Give the page a bounded window to expose that
+      // control before recording a false “no handoff” checkpoint.
+      let handoff;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        handoff = await applicationBrowser.advance({ handoffOnly: true });
+        if (handoff.status !== 'blocked' || handoff.reason !== 'next_control_not_found' || attempt === 11) break;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
       if (handoff.status === 'unavailable') {
         const application = coachDatabase.applications.get(claimed.id);
         coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: handoff.reason, unavailableSignals: handoff.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
