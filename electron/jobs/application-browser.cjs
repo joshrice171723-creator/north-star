@@ -136,15 +136,15 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     }
     await inspect(); return { results };
   };
-  const advance = async ({ handoffOnly = false } = {}) => {
+  const advance = async ({ handoffOnly = false, googleLoginOnly = false } = {}) => {
     const snapshot = await inspect();
     if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
-    const allowedLabel = handoffOnly ? /^apply(?: now| for this job| on company site| externally)?$/i : /^(next|continue|save and continue|proceed|review|apply|apply now|apply for this job|apply on company site|apply externally|view application)$/i;
+    const allowedLabel = googleLoginOnly ? /^continue with google$/i : handoffOnly ? /^apply(?: now| for this job| on company site| externally)?$/i : /^(next|continue|continue with google|save and continue|proceed|review|apply|apply now|apply for this job|apply on company site|apply externally|view application)$/i;
     const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && allowedLabel.test(field.label));
     // Some job-board variants expose the same safe handoff as a styled anchor
     // without a button role. Keep the fallback exact-label and visible-only so
     // recipe recovery cannot click arbitrary links.
-    const result = await executeOnDocument(`function (expectedLabel) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"],a[href]')).filter((el) => !el.disabled && el.getAttribute('aria-hidden') !== 'true' && el.offsetParent !== null); const matches = controls.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === expectedLabel); if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'next_control_changed' : 'next_control_not_found' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated' }; }`, candidate?.label || (handoffOnly ? 'Apply Now' : 'Next'));
+    const result = await executeOnDocument(`function (expectedLabel) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"],a[href]')).filter((el) => !el.disabled && el.getAttribute('aria-hidden') !== 'true' && el.offsetParent !== null); const matches = controls.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === expectedLabel); if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'next_control_changed' : 'next_control_not_found' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated' }; }`, candidate?.label || (googleLoginOnly ? 'Continue with Google' : handoffOnly ? 'Apply Now' : 'Next'));
     if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'next_control_failed' };
     await new Promise((resolve) => setTimeout(resolve, 150));
     const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };

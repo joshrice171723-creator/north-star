@@ -772,7 +772,15 @@ async function startAutonomousApplicationQueue() {
         applicationBrowser.close();
         autonomousApplicationQueueState.activeApplicationId = null;
         autonomousApplicationQueueState.message = 'Job unavailable: removed from the active application run. Review the listing or return it to the queue.';
-      } else if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
+      } else if (handoff.status === 'advanced') {
+        // Prefer the provider's Google SSO path when the first employer page
+        // offers it. The click is safe navigation only; Google account choice,
+        // MFA, consent, and any CAPTCHA remain visible user checkpoints.
+        const googleLogin = await applicationBrowser.advance({ googleLoginOnly: true });
+        autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
+          ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
+          : 'Opened the job listing and followed its Apply handoff to the employer application.';
+      }
       else {
         const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
         if (recovery.status === 'applied') {
