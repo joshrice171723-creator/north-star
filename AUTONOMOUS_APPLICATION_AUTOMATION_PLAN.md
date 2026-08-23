@@ -2,7 +2,28 @@
 
 ## Implementation status (updated 2026-08-23)
 
-Phase 1 has started. The first foundation slice is complete and committed in the repository:
+The delivery is organized into five complete stages. Stage 1 is the current implementation target; later stages remain gated until Stage 1 is verified.
+
+### Five-stage roadmap
+
+1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow.
+2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection.
+3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention.
+4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests.
+5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
+
+### Stage 1 completion criteria
+
+Stage 1 is complete when the application can:
+
+- Identify only `ready` jobs with a valid HTTPS application URL and approved selected resume and cover letter.
+- Claim at most one eligible application at a time and persist its attempt/checkpoint before work begins.
+- Recover interrupted non-submission work after Electron restart without retrying final submission.
+- Pause an application on an unknown question, show the bounded question context, persist a reusable answer, and resume the application state.
+- Expose queue state and unknown-question actions through the existing Jobs UI without exposing credentials or raw page snapshots.
+- Leave the existing document-preparation queue behavior unchanged.
+
+The first foundation slice is complete and committed in the repository:
 
 - Added the autonomous state vocabulary in `electron/jobs/application-automation.cjs` (`queued` through `submitted`, plus `needs_user_answer`, `blocked`, and `failed`).
 - Added durable automation state, attempt count, checkpoint metadata, and retry timestamp to each application through migration `0025_autonomous_application_foundation.sql`.
@@ -11,7 +32,7 @@ Phase 1 has started. The first foundation slice is complete and committed in the
 - Added main-process and preload APIs to update checkpoints, list/save unknown questions, and resolve a question into a reusable approved answer. Resolving moves the application back to `answering_questions`.
 - Added a reopen/persistence test covering queue initialization, unknown-question pause, database restart, answer reuse, and resume state.
 
-This slice does not yet run the autonomous queue, open application URLs, inspect/fill forms, upload documents, create accounts, or verify browser/email submission evidence. Those remain intentionally deferred to the next Phase 1 slices.
+The foundation slice did not yet run the autonomous queue or expose unknown questions in the UI. Those are the remaining Stage 1 implementation items below. Opening URLs, inspecting/filling forms, uploading documents, creating accounts, and browser/email submission evidence remain intentionally deferred to Stages 2 and 3.
 
 ### Next session handoff
 
