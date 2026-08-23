@@ -8,7 +8,7 @@ The delivery is organized into five complete stages. Stage 1 is complete; later 
 
 1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow. **Complete.**
 2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **Complete.**
-3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention.
+3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention. **Complete.**
 4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests.
 5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
 
@@ -45,12 +45,12 @@ Stage 1 implementation commits:
 
 Verification completed: focused application persistence and preparation-queue tests, Stage 1 queue/restart tests, Node syntax checks, Vite production build, and `git diff --check`.
 
-### Next session handoff — begin Stage 3
+### Next session handoff — begin Stage 4
 
-1. Add secure employer-account creation/reuse state transitions without storing passwords in application state or diagnostics.
-2. Connect activation-link/code matching to the existing Gmail synchronization boundary.
-3. Resume the Stage 2 browser workflow after activation and prevent duplicate account creation for the same host.
-4. Add local account/activation fixtures and verify restart-safe recovery before provider-specific adapters begin.
+1. Add production-gated provider adapters beginning with Greenhouse, using the generic Stage 2/3 browser contracts.
+2. Keep provider-specific selectors and transitions isolated behind `electron/jobs/adapters/`.
+3. Add one local fixture and end-to-end test for each provider before enabling its production path.
+4. Preserve the Stage 3 account host/email identity boundary and never broaden credentials across providers.
 
 ### Stage 2 progress — 2026-08-23
 
@@ -90,7 +90,27 @@ Final Stage 2 commits:
 
 Acceptance verification: 15 focused tests passed; Electron syntax checks passed for main, preload, browser, and policy modules; production build passed; `git diff --check` passed; Electron was restarted after task-related commits. Existing build warnings are limited to Vite's config-loader notice and the pre-existing large generated chunks.
 
-Next session begins Stage 3: account creation/reuse and Gmail activation, with Stage 2 confirmation evidence remaining a prerequisite and final submission still approval-gated.
+Stage 3 completion follows the Stage 2 confirmation checkpoint; final submission remains approval-gated until the later reliability and email-confirmation stage.
+
+### Stage 3 completion — 2026-08-23
+
+Stage 3 is complete. Employer account references now use a deterministic host-and-candidate-email credential identity, are stored through the Electron main-process secure-storage boundary, and return only safe metadata to the renderer. Account saves record `creating_account` or `reusing_account` checkpoints, while activation waits are durable and restart-safe.
+
+The existing Gmail synchronization boundary now feeds bounded activation matching. Matching requires the current employer host, approved application email, recent activation language, and either a matching HTTPS activation path or a bounded one-time code. Only redacted URLs, message IDs, code hashes, and bounded signals are persisted; raw passwords, activation links, and codes are never written to application state, events, diagnostics, or renderer DTOs.
+
+The isolated application browser can consume a matching activation link or code in memory, verify the resulting page inspection, mark the activation attempt used, mark the account active, and resume the application at `detecting_form`. Duplicate account creation is prevented for the same normalized host and candidate email by reusing the same credential reference.
+
+Stage 3 commits:
+
+- `67e0f8d` — bounded employer activation matching and deterministic matcher tests.
+- `1449548` — durable application activation attempts migration.
+- `74afaab` / `672afb9` — reusable account and activation database persistence/API.
+- `e12751c` / `08aa726` / `eccde9b` — secure credential responses, activation coordinator, and create/reuse transitions.
+- `33a89d2` / `4d147e3` — isolated browser activation resume and preload boundary.
+- `bf4d750` — assistant account reuse and Gmail activation controls.
+- `8acc0db` — restart-safe Stage 3 contract coverage.
+
+Acceptance verification: Stage 3 activation/account tests and Stage 2 regression tests passed; restart persistence preserved account and activation metadata; Electron main, database, browser, activation, and preload syntax checks passed; production build passed; `git diff --check` passed; Electron was restarted after every task-related commit. Existing build warnings remain limited to Vite's config-loader notice and large generated chunks.
 
 ## Purpose
 
