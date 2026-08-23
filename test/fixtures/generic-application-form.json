@@ -1,0 +1,22 @@
+{
+  "pages": [
+    {
+      "pageTitle": "Candidate details",
+      "url": "https://fixture.example/apply/details",
+      "fields": [
+        { "elementType": "input", "inputType": "text", "label": "First name", "name": "firstName", "required": true, "empty": true },
+        { "elementType": "input", "inputType": "email", "label": "Email", "name": "email", "required": true, "empty": true },
+        { "elementType": "button", "inputType": "button", "label": "Continue", "required": false, "empty": false }
+      ]
+    },
+    {
+      "pageTitle": "Documents",
+      "url": "https://fixture.example/apply/documents",
+      "fields": [
+        { "elementType": "input", "inputType": "file", "label": "Resume", "name": "resume", "required": true, "empty": true },
+        { "elementType": "input", "inputType": "file", "label": "Cover letter", "name": "coverLetter", "required": true, "empty": true },
+        { "elementType": "button", "inputType": "submit", "label": "Submit application", "required": false, "empty": false }
+      ]
+    }
+  ]
+}
