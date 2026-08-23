@@ -1,5 +1,25 @@
 # Autonomous Application Queue Automation
 
+## Implementation status (updated 2026-08-23)
+
+Phase 1 has started. The first foundation slice is complete and committed in the repository:
+
+- Added the autonomous state vocabulary in `electron/jobs/application-automation.cjs` (`queued` through `submitted`, plus `needs_user_answer`, `blocked`, and `failed`).
+- Added durable automation state, attempt count, checkpoint metadata, and retry timestamp to each application through migration `0025_autonomous_application_foundation.sql`.
+- New application workspaces now begin in autonomous state `queued`; existing records keep the migration-safe `idle` default until explicitly queued.
+- Added durable unknown-question records containing only bounded workflow metadata: provider host, page fingerprint, control label/type, normalized question key/text, and answer options.
+- Added main-process and preload APIs to update checkpoints, list/save unknown questions, and resolve a question into a reusable approved answer. Resolving moves the application back to `answering_questions`.
+- Added a reopen/persistence test covering queue initialization, unknown-question pause, database restart, answer reuse, and resume state.
+
+This slice does not yet run the autonomous queue, open application URLs, inspect/fill forms, upload documents, create accounts, or verify browser/email submission evidence. Those remain intentionally deferred to the next Phase 1 slices.
+
+### Next session handoff
+
+1. Build the one-at-a-time queue runner around `applications.automationState`, selecting only eligible `ready` jobs with approved selected documents and valid HTTPS URLs.
+2. Add durable transition/retry helpers that recover `opening`/`filling_*` records after Electron restart and never retry final submission blindly.
+3. Add queue UI visibility for `needs_user_answer`, using `listJobApplicationUnknownQuestions` and `resolveJobApplicationUnknownQuestion` without exposing secrets or raw page snapshots.
+4. Keep browser/provider automation behind the existing `ApplicationBrowserPanel` and adapter boundaries; do not enable final submission until confirmation-page and Gmail confirmation correlation are both implemented.
+
 ## Purpose
 
 This document is the implementation reference for extending North Star's application queue from document preparation into autonomous job submission.
