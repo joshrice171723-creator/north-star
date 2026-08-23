@@ -759,8 +759,14 @@ async function startAutonomousApplicationQueue() {
       applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
       const handoff = await applicationBrowser.advance({ handoffOnly: true });
       if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
-      else if (!resumeUrl) autonomousApplicationQueueState.message = 'Opened the application listing. No supported Apply handoff was found; review the page.';
-      else autonomousApplicationQueueState.message = 'Resumed the saved application checkpoint and inspected its current page.';
+      else {
+        const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
+        if (recovery.status === 'applied') {
+          const recoveredHandoff = await applicationBrowser.advance({ handoffOnly: true });
+          autonomousApplicationQueueState.message = recoveredHandoff.status === 'advanced' ? 'AI cleared a blocking control and followed the Apply handoff.' : 'AI cleared a blocking control; review the next application step.';
+        } else if (recovery.status === 'guidance') autonomousApplicationQueueState.message = `AI recovery needs review: ${recovery.plan.reason || 'no safe automatic action was certain.'}`;
+        else autonomousApplicationQueueState.message = resumeUrl ? 'Resumed the saved application checkpoint; review the current page.' : 'Opened the application listing; no safe automatic handoff was certain.';
+      }
     } catch (error) {
       // Preserve the opening failure checkpoint contract while adding the bounded
       // classification fields used by Stage 5 diagnostics.
