@@ -732,6 +732,7 @@ const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
+let autonomousSafeFormPass = null;
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
@@ -803,30 +804,7 @@ async function startAutonomousApplicationQueue() {
           : 'Opened the job listing and followed its Apply handoff to the employer application.';
         const liveSnapshot = applicationBrowser.publicState()?.snapshot;
         const formVisible = liveSnapshot?.fields?.some((field) => field.inputType === 'file' || /resume|cv|cover letter|first name|last name|email|phone/i.test(field.label || ''));
-        if (formVisible) {
-          const files = {};
-          for (const documentType of ['resume', 'cover_letter']) {
-            const resolved = coachDatabase.applications.resolveFile(claimed.id, documentType);
-            if (resolved.exists) files[documentType] = resolved.path;
-          }
-          if (Object.keys(files).length) {
-            // Checkpoint next owns the same safe, reversible document and field
-            // pass as the assistant panel; final submission remains separate.
-            coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'uploading_documents', checkpoint: { ...claimed.automationCheckpoint, documentTypes: Object.keys(files) } });
-            const upload = await applicationBrowser.uploadDocuments(files);
-            coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'navigating_form', checkpoint: { ...coachDatabase.applications.get(claimed.id).automationCheckpoint, uploadResults: upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status })) } });
-            for (let pass = 0; pass < 2; pass += 1) {
-              const plan = await buildAiApplicationFillPlan(browserProfile());
-              if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
-              await applicationBrowser.fillPlan(plan.id, browserProfile());
-            }
-            const updated = coachDatabase.applications.get(claimed.id);
-            coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'needs_user_answer', checkpoint: { ...updated.automationCheckpoint, stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', safePassCompletedAt: new Date().toISOString() } });
-            applicationBrowser.close();
-            autonomousApplicationQueueState.activeApplicationId = null;
-            autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
-          }
-        }
+        if (formVisible && autonomousSafeFormPass) await autonomousSafeFormPass(claimed.id);
       }
       else {
         const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
@@ -2556,6 +2534,27 @@ function registerDatabaseIpc() {
     }
     const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length };
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
+  };
+  autonomousSafeFormPass = async (applicationId) => {
+    const files = {};
+    for (const documentType of ['resume', 'cover_letter']) {
+      const resolved = coachDatabase.applications.resolveFile(applicationId, documentType);
+      if (resolved.exists) files[documentType] = resolved.path;
+    }
+    if (!Object.keys(files).length) return;
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
+    const upload = await applicationBrowser.uploadDocuments(files);
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults: upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status })) } });
+    for (let pass = 0; pass < 2; pass += 1) {
+      const plan = await buildAiApplicationFillPlan(browserProfile());
+      if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
+      await applicationBrowser.fillPlan(plan.id, browserProfile());
+    }
+    const updated = coachDatabase.applications.get(applicationId);
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...updated.automationCheckpoint, stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', safePassCompletedAt: new Date().toISOString() } });
+    applicationBrowser.close();
+    autonomousApplicationQueueState.activeApplicationId = null;
+    autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
   };
   ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return buildAiApplicationFillPlan(browserProfile()); });
   ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId, browserProfile()); });
