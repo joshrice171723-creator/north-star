@@ -2418,7 +2418,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });
   ipcMain.handle('jobs:browser:reload', (event) => { assertTrustedRenderer(event); return applicationBrowser.reload(); });
   ipcMain.handle('jobs:browser:clear-session', async (event) => { assertTrustedRenderer(event); await applicationBrowser.clearSession(); return { ok: true }; });
-  ipcMain.handle('jobs:applications:confirm-submission', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (!input?.userAcknowledged) throw new Error('Confirm that the employer page shows a received/submitted message first.'); return coachDatabase.applications.completeSubmission({ applicationId: input.applicationId, userAcknowledged: true, confirmationNumber: typeof input.confirmationNumber === 'string' ? input.confirmationNumber : '', confirmationUrl: applicationBrowser.publicState()?.currentUrl || '', nextAction: 'Watch email for an employer response.', followUpDate: typeof input.followUpDate === 'string' ? input.followUpDate : '' }); });
+  ipcMain.handle('jobs:applications:confirm-submission', async (event, input) => { assertTrustedRenderer(event); if (!input?.userAcknowledged) throw new Error('Confirm that the employer page shows a received/submitted message first.'); return confirmApplicationSubmission(input); });
   ipcMain.handle('jobs:documents:generate', async (event, input) => { assertTrustedRenderer(event); return generateApplicationDocument(input); });
   ipcMain.handle('jobs:documents:upload', async (event, input) => {
     assertTrustedRenderer(event);
