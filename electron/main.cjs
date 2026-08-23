@@ -794,8 +794,28 @@ async function startAutonomousApplicationQueue() {
         if (recovery.status === 'applied') {
           const recoveredHandoff = await applicationBrowser.advance({ handoffOnly: true });
           autonomousApplicationQueueState.message = recoveredHandoff.status === 'advanced' ? 'AI cleared a blocking control and followed the Apply handoff.' : 'AI cleared a blocking control; review the next application step.';
-        } else if (recovery.status === 'guidance') autonomousApplicationQueueState.message = `AI recovery needs review: ${recovery.plan.reason || 'no safe automatic action was certain.'}`;
-        else autonomousApplicationQueueState.message = resumeUrl ? 'Resumed the saved application checkpoint; review the current page.' : 'Opened the application listing; no safe automatic handoff was certain.';
+        } else {
+          const application = coachDatabase.applications.get(claimed.id);
+          // A recoverable blocker must not consume the job's queue slot. Return
+          // the same application to queued so the next checkpoint retries this
+          // path instead of silently advancing to a different job.
+          coachDatabase.applications.releaseAutomation({
+            applicationId: claimed.id,
+            state: 'queued',
+            checkpoint: {
+              ...application.automationCheckpoint,
+              stage: 'opening',
+              lastBlockedReason: handoff.reason || recovery.reason || 'checkpoint_blocked',
+              lastRecoveryStatus: recovery.status,
+              retryQueuedAt: new Date().toISOString(),
+            },
+          });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.message = recovery.status === 'guidance'
+            ? `Same application returned to the queue for retry: ${recovery.plan.reason || 'no safe automatic action was certain.'}`
+            : `Same application returned to the queue for retry: ${recovery.reason || 'no safe automatic handoff was certain.'}`;
+        }
       }
     } catch (error) {
       // Preserve the opening failure checkpoint contract while adding the bounded
