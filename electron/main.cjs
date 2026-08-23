@@ -2350,6 +2350,7 @@ function registerDatabaseIpc() {
   });
 async function prepareJobApplication(jobId) {
     const application = coachDatabase.applications.createOrResume({ jobId });
+    coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_started', summary: 'Automatic preparation started.' });
     const prepareDocument = async (documentType) => {
       applicationPreparationState.activeStep = documentType === 'resume' ? 'Generating and validating resume' : 'Generating and validating cover letter';
       let documents = coachDatabase.applications.documents.list(application.id, documentType);
@@ -2364,21 +2365,37 @@ async function prepareJobApplication(jobId) {
       if (validation.errors?.length || validation.valid === false) throw new Error(`${documentType === 'resume' ? 'Resume' : 'Cover letter'} needs review before it can be selected: ${(validation.errors || []).map((issue) => issue.message).join(' ') || 'validation did not pass.'}`);
       coachDatabase.applications.documents.update(current.id, { validation: claimLedger ? { ...validation, claimLedger } : validation, provenance: validation.evidenceIds, status: 'draft' });
       coachDatabase.applications.documents.approve(current.id);
-      coachDatabase.applications.documents.select(current.id);
-      await materializeSelectedApplicationDocument(current.id);
-      return coachDatabase.applications.documents.get(current.id);
+       coachDatabase.applications.documents.select(current.id);
+       await materializeSelectedApplicationDocument(current.id);
+       coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: `preparation_${documentType}_ready`, summary: `${documentType === 'resume' ? 'Resume' : 'Cover letter'} prepared and selected.` });
+       return coachDatabase.applications.documents.get(current.id);
     };
     const resume = await prepareDocument('resume');
     const coverLetter = await prepareDocument('cover_letter');
     const preparedApplication = coachDatabase.applications.get(application.id);
     const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
+    coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_completed', summary: 'Preparation completed; resume and cover letter are selected.' });
     return { application: preparedApplication, job, documents: [resume, coverLetter] };
 }
+function syncPreparationActivity() {
+  if (!coachDatabase) return [];
+  const jobsById = new Map(coachDatabase.jobs.list().map((job) => [job.id, job]));
+  const activity = coachDatabase.applications.listActive().flatMap((application) => coachDatabase.applications.listEvents(application.id)
+    .filter((event) => event.eventType.startsWith('preparation_'))
+    .map((event) => ({ ...event, jobId: application.jobId, job: jobsById.get(application.jobId) }))
+  ).sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  const latestTerminalByJob = new Map();
+  for (const event of activity) if (!latestTerminalByJob.has(event.jobId) && ['preparation_completed', 'preparation_failed'].includes(event.eventType)) latestTerminalByJob.set(event.jobId, event);
+  applicationPreparationState.blockers = Object.fromEntries([...latestTerminalByJob].filter(([, event]) => event.eventType === 'preparation_failed').map(([jobId, event]) => [jobId, event.summary]));
+  return activity.slice(0, 8).map(({ job, jobId, eventType, summary, createdAt }) => ({ jobId, company: job?.company || 'Archived job', roleTitle: job?.roleTitle || '', eventType, summary, createdAt }));
+}
 function applicationPreparationStatus() {
-  return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers } };
+  const activity = syncPreparationActivity();
+  return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers }, activity };
 }
 async function runApplicationPreparationQueue() {
   if (!coachDatabase || applicationPreparationState.activeJobId) return;
+   syncPreparationActivity();
    // A failed job is a manual-review item until the user changes it or retries
    // deliberately. Excluding blockers here prevents the 5-second timer from
    // spending tokens on the same failing job forever.
@@ -2392,7 +2409,10 @@ async function runApplicationPreparationQueue() {
     delete applicationPreparationState.blockers[job.id];
     applicationPreparationState.retryAt = 0;
   } catch (cause) {
-    applicationPreparationState.blockers[job.id] = cause?.message || 'Preparation stopped before Ready to apply.';
+    const message = cause?.message || 'Preparation stopped before Ready to apply.';
+    applicationPreparationState.blockers[job.id] = message;
+    const application = coachDatabase.applications.getForJob(job.id);
+    if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_failed', summary: message });
      applicationPreparationState.retryAt = 0;
   } finally {
     applicationPreparationState.activeJobId = null;

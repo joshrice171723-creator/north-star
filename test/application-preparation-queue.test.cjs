@@ -9,4 +9,6 @@ test('background preparation drains Researching before Target and stops on block
   assert.match(source, /if \(!coachDatabase \|\| applicationPreparationState\.activeJobId\) return;/);
   assert.match(source, /!applicationPreparationState\.blockers\[job\.id\]/);
   assert.match(source, /applicationPreparationState\.retryAt = 0/);
+  assert.match(source, /eventType: 'preparation_failed'/);
+  assert.match(source, /function syncPreparationActivity\(\)/);
 });
