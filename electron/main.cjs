@@ -2358,6 +2358,14 @@ function registerDatabaseIpc() {
     if (result.status === 'advanced') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint } });
     return { ...result, browser: applicationBrowser.publicState() };
   });
+  ipcMain.handle('jobs:browser:detect-confirmation', async (event) => {
+    assertTrustedRenderer(event);
+    const state = applicationBrowser.publicState();
+    if (!state?.applicationId) throw new Error('Open an application page before checking confirmation evidence.');
+    const result = await applicationBrowser.detectConfirmationPage();
+    if (result.state === 'confirmed') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'ready_to_submit', checkpoint: { confirmation: { signals: result.signals, confirmationNumber: result.confirmationNumber, confirmationUrlRedacted: result.confirmationUrlRedacted, observedAt: result.observedAt } } });
+    return { ...result, browser: applicationBrowser.publicState() };
+  });
   ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
   ipcMain.handle('jobs:browser:back', (event) => { assertTrustedRenderer(event); return applicationBrowser.goBack(); });
   ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });
