@@ -35,7 +35,7 @@ function classifyField(field = {}) {
   if (/authorized|sponsorship|visa/.test(text)) return 'work_authorization';
   if (/salary|compensation|relocat|travel|start date/.test(text)) return 'compensation';
   if (field.elementType === 'textarea' || /why are you|describe|cover letter|additional information/.test(text)) return 'free_text';
-  if (['button', 'submit'].includes(field.elementType) || /back|next|continue|save/.test(text)) return 'navigation';
+  if (['button', 'submit'].includes(field.elementType) || /back|next|continue|save|proceed|review/.test(text)) return 'navigation';
   return 'unknown';
 }
 

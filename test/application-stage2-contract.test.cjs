@@ -24,6 +24,7 @@ test('Stage 2 browser adapter keeps uploads and next-page navigation separate fr
   assert.match(source, /category === 'navigation'/);
   assert.doesNotMatch(source, /requestSubmit\(|\.submit\(|\.click\(/);
   assert.equal(classifyField({ elementType: 'button', inputType: 'submit', label: 'Submit application' }), 'final_submit');
+  assert.equal(classifyField({ elementType: 'button', inputType: 'button', label: 'Review' }), 'navigation');
 });
 
 test('Stage 2 queue handoff opens one claimed application and checkpoints its first page', () => {
