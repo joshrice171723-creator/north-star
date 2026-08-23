@@ -1,5 +1,5 @@
 const test = require('node:test'); const assert = require('node:assert/strict');
-const { decideNavigation, redactUrl, buildContextMenuTemplate, handleMouseNavigationInput } = require('../electron/jobs/application-browser.cjs');
+const { decideNavigation, redactUrl, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser } = require('../electron/jobs/application-browser.cjs');
 test('browser navigation is HTTPS-only and new-host popups can be routed through a user checkpoint', () => {
   assert.equal(decideNavigation({ fromUrl: 'https://a.test/x', toUrl: 'http://a.test/y' }).action, 'deny');
   assert.equal(decideNavigation({ fromUrl: 'https://a.test/x', toUrl: 'https://b.test/y' }).action, 'ask_user');
@@ -43,4 +43,28 @@ test('mouse side buttons use the embedded browser history', () => {
   assert.equal(handleMouseNavigationInput({ type: 'mouseDown', mouseButton: 'forward' }, webContents), true);
   assert.equal(handleMouseNavigationInput({ type: 'keyDown', key: 'Backspace' }, webContents), false);
   assert.deepEqual(calls, ['back', 'forward']);
+});
+
+test('browser resumes from a persisted redacted checkpoint URL', async () => {
+  const EventEmitter = require('node:events');
+  const loaded = [];
+  const webContents = new EventEmitter();
+  webContents.isDestroyed = () => false;
+  webContents.getURL = () => loaded.at(-1) || '';
+  webContents.executeJavaScript = async () => ({ url: webContents.getURL(), title: 'Application', fields: [] });
+  webContents.loadURL = async (url) => { loaded.push(url); webContents.emit('did-finish-load'); };
+  webContents.close = () => {};
+  webContents.setWindowOpenHandler = () => {};
+  webContents.canGoBack = () => false;
+  webContents.canGoForward = () => false;
+  webContents.debugger = { isAttached: () => false, attach() {}, detach() {}, sendCommand: async () => ({ result: { objectId: 'document' } }) };
+  class WebContentsView { constructor() { this.webContents = webContents; } setBounds() {} }
+  const adapter = createApplicationBrowser({
+    electron: { WebContentsView, session: { fromPartition: () => ({ setPermissionCheckHandler() {}, setPermissionRequestHandler() {} }) }, Menu: { buildFromTemplate: () => ({ popup() {} }) }, clipboard: { writeText() {} } },
+    getApplicationUrl: () => 'https://listing.example/jobs/1',
+    attachView: () => {},
+    detachView: () => {}
+  });
+  await adapter.open({ applicationId: 'resume-application', resumeUrl: 'https://ats.example/apply/step-2' });
+  assert.deepEqual(loaded, ['https://ats.example/apply/step-2']);
 });

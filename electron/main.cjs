@@ -744,8 +744,9 @@ async function startAutonomousApplicationQueue() {
     try {
       // The queue claims one application at a time; the browser boundary owns
       // the first inspection checkpoint and never submits the employer form.
-      await applicationBrowser.open({ applicationId: claimed.id });
-      autonomousApplicationQueueState.message = 'Opened one eligible application and inspected its first page.';
+      const resumeUrl = claimed.automationCheckpoint?.redactedUrl || '';
+      await applicationBrowser.open({ applicationId: claimed.id, resumeUrl });
+      autonomousApplicationQueueState.message = resumeUrl ? 'Resumed the saved application checkpoint and inspected its current page.' : 'Opened one eligible application and inspected its first page.';
     } catch (error) {
       // Preserve the opening failure checkpoint contract while adding the bounded
       // classification fields used by Stage 5 diagnostics.
@@ -2326,7 +2327,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:interview:report', async (event, input) => { assertTrustedRenderer(event); return exportInterviewReport(input || {}); });
   ipcMain.handle('jobs:interview:transcript', async (event, input) => { assertTrustedRenderer(event); return exportInterviewTranscript(input || {}); });
   // The remote WebContentsView is controlled only by this narrow local-renderer API.
-  ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const result = await applicationBrowser.open({ applicationId: input.applicationId }); applicationBrowser.setBounds(input?.bounds); return result; });
+  ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); const resumeUrl = application?.automationCheckpoint?.redactedUrl || ''; const result = await applicationBrowser.open({ applicationId, resumeUrl }); applicationBrowser.setBounds(input?.bounds); return result; });
   ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
   ipcMain.handle('jobs:browser:bounds', (event, bounds) => { assertTrustedRenderer(event); applicationBrowser.setBounds(bounds); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });

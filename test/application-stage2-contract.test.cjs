@@ -30,7 +30,8 @@ test('Stage 2 browser adapter keeps uploads and next-page navigation separate fr
 test('Stage 2 queue handoff opens one claimed application and checkpoints its first page', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
   assert.match(source, /async function startAutonomousApplicationQueue\(\)/);
-  assert.match(source, /await applicationBrowser\.open\(\{ applicationId: claimed\.id \}\)/);
+  assert.match(source, /await applicationBrowser\.open\(\{ applicationId: claimed\.id, resumeUrl \}\)/);
+  assert.match(source, /const resumeUrl = claimed\.automationCheckpoint\?\.redactedUrl/);
   assert.match(source, /externalApplicationUrl \|\| application\?\.applicationUrl/);
   assert.match(source, /\.\.\.application\.automationCheckpoint/);
   assert.match(source, /state: 'failed', checkpoint: \{ stage: 'opening', error: message \}/);
