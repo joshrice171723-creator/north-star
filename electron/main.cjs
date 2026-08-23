@@ -684,6 +684,20 @@ const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'o
 const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
+const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
+function autonomousApplicationQueueStatus() {
+  const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
+  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, active: queue.filter((entry) => ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(entry.automationState)).length } };
+function startAutonomousApplicationQueue() {
+  if (!coachDatabase) throw new Error('Application database is not ready.');
+  autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.message = '';
+  const claimed = coachDatabase.applications.claimNextAutomation();
+  if (claimed) { autonomousApplicationQueueState.activeApplicationId = claimed.id; autonomousApplicationQueueState.message = 'One eligible application was checkpointed at opening; browser execution begins in Stage 2.'; }
+  else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
+  autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true;
+  return autonomousApplicationQueueStatus();
+}
+function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
 class ApplicationPreparationPausedError extends Error { constructor() { super('Preparation paused safely before the next document.'); this.code = 'PREPARATION_PAUSED'; } }
 function assertPreparationCanContinue() {
   if (applicationPreparationState.activeJobId && applicationPreparationState.paused) throw new ApplicationPreparationPausedError();
@@ -2221,6 +2235,10 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
+  ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return autonomousApplicationQueueStatus(); });
+  ipcMain.handle('jobs:applications:automation-queue:start', (event) => { assertTrustedRenderer(event); return startAutonomousApplicationQueue(); });
+  ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); return pauseAutonomousApplicationQueue(); });
+  ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const released = coachDatabase.applications.releaseAutomation({ applicationId: input.applicationId, state: 'queued', checkpoint: { manualRetryAt: new Date().toISOString() } }); autonomousApplicationQueueState.activeApplicationId = null; autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
   ipcMain.handle('jobs:applications:automation-state:update', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (typeof input?.state !== 'string' || input.state.length > 80) throw new Error('Invalid autonomous application state.'); return coachDatabase.applications.updateAutomationState(input); });
   ipcMain.handle('jobs:applications:unknown-questions:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.listUnknownQuestions(validateApplicationId(input?.applicationId), input?.status === 'all' ? 'all' : 'open'); });
   ipcMain.handle('jobs:applications:unknown-questions:save', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); return coachDatabase.applications.saveUnknownQuestion(input); });
@@ -2761,6 +2779,7 @@ async function drainApplicationPreparationQueue() {
 app.whenReady().then(() => {
   migrateOpenRouterEnvironmentKey();
   coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), applicationDocumentsPath: app.getPath('documents'), seedPath: roadmapSeedPath, masterResumeSourcePath: path.join(app.getPath('userData'), 'master-resume.pdf') });
+  coachDatabase.applications.recoverAutomation?.();
   protocol.handle('video-factory', async (request) => {
     try {
       const token = new URL(request.url).pathname.split('/').filter(Boolean).pop();
