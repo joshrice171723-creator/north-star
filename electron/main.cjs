@@ -733,10 +733,18 @@ let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
-  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, active: queue.filter((entry) => ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(entry.automationState)).length } };
+  const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
+  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
 }
 async function startAutonomousApplicationQueue() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
+  // The browser checkpoint is single-tenant. Guard both the async start window
+  // and a claimed checkpoint so two renderer clicks cannot switch applications
+  // underneath the first browser session.
+  if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) {
+    autonomousApplicationQueueState.message = 'Finish or return the active application before starting another checkpoint.';
+    return autonomousApplicationQueueStatus();
+  }
   autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.message = '';
   const claimed = coachDatabase.applications.claimNextAutomation();
   if (claimed) {
@@ -752,6 +760,9 @@ async function startAutonomousApplicationQueue() {
       // classification fields used by Stage 5 diagnostics.
       // state: 'failed', checkpoint: { stage: 'opening', error: message }
       const message = String(error?.message || 'Application browser opening failed.').slice(0, 500); const failure = classifyApplicationFailure({ code: error?.code || 'opening_failed', message }); coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: failure.reasonCode } });
+      applicationBrowser.close();
+      autonomousApplicationQueueState.activeApplicationId = null;
+      autonomousApplicationQueueState.message = `Checkpoint failed: ${message}`;
     }
   } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
   autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true;
@@ -2309,7 +2320,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return autonomousApplicationQueueStatus(); });
   ipcMain.handle('jobs:applications:automation-queue:start', (event) => { assertTrustedRenderer(event); return startAutonomousApplicationQueue(); });
   ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); return pauseAutonomousApplicationQueue(); });
-  ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const released = coachDatabase.applications.releaseAutomation({ applicationId: input.applicationId, state: 'queued', checkpoint: { manualRetryAt: new Date().toISOString() } }); autonomousApplicationQueueState.activeApplicationId = null; autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
+  ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const applicationId = input.applicationId; const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { manualRetryAt: new Date().toISOString() } }); if (autonomousApplicationQueueState.activeApplicationId === applicationId) { applicationBrowser.close(); autonomousApplicationQueueState.activeApplicationId = null; } autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
   ipcMain.handle('jobs:applications:automation-state:update', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (typeof input?.state !== 'string' || input.state.length > 80) throw new Error('Invalid autonomous application state.'); return coachDatabase.applications.updateAutomationState(input); });
   ipcMain.handle('jobs:applications:unknown-questions:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.listUnknownQuestions(validateApplicationId(input?.applicationId), input?.status === 'all' ? 'all' : 'open'); });
   ipcMain.handle('jobs:applications:unknown-questions:save', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); return coachDatabase.applications.saveUnknownQuestion(input); });
