@@ -60,7 +60,8 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
         if (input.functionDeclaration.includes('return { status:')) return { result: { value: { status: 'ready' } } };
         return { result: { objectId: 'file-input' } };
       }
-      if (command === 'Runtime.callFunctionOn') { pageIndex = 1; return { result: { value: { status: 'activated' } } }; }
+      if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('const clean = (v)') && input.functionDeclaration.includes('candidates =')) return { result: { value: { fieldFingerprint: 'fixture-field', status: 'filled', reason: 'verified' } } };
+      if (command === 'Runtime.callFunctionOn') { pageIndex = Math.min(pageIndex + 1, fixture.pages.length - 1); return { result: { value: { status: 'activated' } } }; }
       if (command === 'DOM.getDocument') return { root: { nodeId: 1 } };
       if (command === 'DOM.requestNode') return { nodeId: 2 };
       if (command === 'DOM.setFileInputFiles') return {};
@@ -84,10 +85,17 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
 
   const opened = await adapter.open({ applicationId: 'fixture-application' });
   assert.equal(opened.snapshot.pageFingerprint, normalizeSnapshot(fixture.pages[0]).pageFingerprint);
+  const plan = await adapter.createFillPlan({ firstName: 'Joshua', email: 'joshua@example.test' });
+  const filled = await adapter.fillPlan(plan.id, { firstName: 'Joshua', email: 'joshua@example.test' });
+  assert.equal(filled.results.filter((entry) => entry.status === 'filled').length, 2);
+  assert.equal((await adapter.advance()).pageFingerprint, normalizeSnapshot(fixture.pages[1]).pageFingerprint);
   const upload = await adapter.uploadDocuments({ resume: 'C:\\approved\\resume.pdf' });
   assert.equal(upload.results[0].status, 'uploaded');
   const advanced = await adapter.advance();
   assert.equal(advanced.status, 'advanced');
-  assert.equal(advanced.pageFingerprint, normalizeSnapshot(fixture.pages[1]).pageFingerprint);
+  assert.equal(advanced.pageFingerprint, normalizeSnapshot(fixture.pages[2]).pageFingerprint);
+  const confirmation = await adapter.detectConfirmationPage();
+  assert.equal(confirmation.state, 'confirmed');
+  assert.equal(confirmation.confirmationUrlRedacted, 'https://fixture.example/apply/confirmation');
   assert.equal(stateEvents.length > 0, true);
 });
