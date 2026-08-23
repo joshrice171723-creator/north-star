@@ -345,7 +345,7 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     });
   }
   function claimNextAutonomousApplication() {
-    const candidate = sqlite.prepare("SELECT a.* FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' AND a.automation_state = 'queued' AND (a.automation_next_retry_at IS NULL OR a.automation_next_retry_at <= ?) ORDER BY a.last_activity_at ASC LIMIT 1").get(now());
+    const candidate = sqlite.prepare("SELECT a.*, j.stage, j.url AS job_url, j.canonical_url FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' AND a.automation_state = 'queued' AND (a.automation_next_retry_at IS NULL OR a.automation_next_retry_at <= ?) ORDER BY a.last_activity_at ASC LIMIT 1").get(now());
     if (!candidate) return null;
     const eligibility = autonomousEligibility(candidate); if (!eligibility.eligible) return null;
     const stamp = now(); const attempt = Number(candidate.automation_attempt || 0) + 1; const checkpoint = { ...parseObject(candidate.automation_checkpoint_json, {}), claimedAt: stamp, stage1Boundary: 'browser_execution_deferred_to_stage_2' };

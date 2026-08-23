@@ -13,7 +13,7 @@ function create() {
 test('Stage 1 claims one eligible ready application and recovers its opening checkpoint', () => {
   const { userDataPath, db } = create();
   try {
-    db.jobs.create({ id: 'queue-ready', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'ready' });
+    db.jobs.create({ id: 'queue-ready', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'researching' });
     db.jobs.create({ id: 'queue-ineligible', company: 'No HTTPS', roleTitle: 'Engineer', url: 'http://jobs.example.test/apply', stage: 'ready' });
     const app = db.applications.createOrResume({ jobId: 'queue-ready' });
     const resume = db.applications.documents.save({ applicationId: app.id, documentType: 'resume', title: 'Resume', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
