@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,clearApplicationBrowserSession: () => ipcRenderer.invoke('jobs:browser:clear-session')
   ,getExternalApplicationAccount: (applicationId) => ipcRenderer.invoke('jobs:applications:external-account:get', applicationId)
   ,saveExternalApplicationAccount: (input) => ipcRenderer.invoke('jobs:applications:external-account:save', input)
+  ,checkApplicationActivation: (applicationId) => ipcRenderer.invoke('jobs:applications:activation:check', applicationId)
   // React event handlers may call this function with a SyntheticEvent; never send that event across IPC.
   ,searchJobs: (input) => ipcRenderer.invoke('jobs:search', input?.nativeEvent ? {} : input)
   ,searchGreenhouseBoard: (boardUrl) => ipcRenderer.invoke('jobs:search-greenhouse', boardUrl)
