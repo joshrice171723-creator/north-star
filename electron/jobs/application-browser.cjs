@@ -1,4 +1,4 @@
-const { normalizeSnapshot, INSPECTION_SCRIPT } = require('./application-inspector.cjs');
+const { normalizeSnapshot, INSPECTION_SCRIPT, PAGE_STATUS_SCRIPT } = require('./application-inspector.cjs');
 const { buildFillPlan, validatePlanForFill } = require('./application-fill-engine.cjs');
 const { detectConfirmation } = require('./application-confirmation.cjs');
 const redactUrl = (value) => { try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ''; } };
@@ -42,7 +42,7 @@ function handleMouseNavigationInput(input, webContents) {
 function createApplicationBrowser({ electron, getApplicationUrl, attachView = () => {}, detachView = () => {}, onSnapshot = () => {}, onState = () => {} }) {
   const { WebContentsView, session, Menu, clipboard } = electron; let view = null; let active = null;
   const hide = () => { if (view) view.setBounds({ x: 0, y: 0, width: 1, height: 1 }); };
-  const inspect = async () => { if (!view || view.webContents.isDestroyed()) return null; const snapshot = normalizeSnapshot(await view.webContents.executeJavaScript(INSPECTION_SCRIPT, true)); active.snapshot = snapshot; active.lastObservedAt = new Date().toISOString(); onSnapshot(active); return snapshot; };
+  const inspect = async () => { if (!view || view.webContents.isDestroyed()) return null; const raw = await view.webContents.executeJavaScript(INSPECTION_SCRIPT, true); const pageSignals = await view.webContents.executeJavaScript(PAGE_STATUS_SCRIPT, true).catch(() => []); const snapshot = normalizeSnapshot({ ...raw, pageSignals }); active.snapshot = snapshot; active.lastObservedAt = new Date().toISOString(); onSnapshot(active); return snapshot; };
   const open = async ({ applicationId, resumeUrl = '' }) => { const initialUrl = resumeUrl || getApplicationUrl(applicationId); if (!isHttps(initialUrl)) throw new Error('The saved application URL must use HTTPS.'); close(); active = { applicationId, initialHost: new URL(initialUrl).host, approvedHosts: new Set([new URL(initialUrl).host]), snapshot: null, plans: new Map(), currentUrl: redactUrl(initialUrl), status: 'navigating' };
     view = new WebContentsView({ webPreferences: { partition: 'persist:job-application-copilot', contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } }); attachView(view);
     const appSession = session.fromPartition('persist:job-application-copilot');
@@ -73,7 +73,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     });
     const guard = (event, url, details = {}) => { const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts }); if (decision.action !== 'allow') { event.preventDefault(); requestNavigation(url, details.isMainFrame !== false).catch(() => {}); } };
     view.webContents.on('will-navigate', guard); view.webContents.on('will-redirect', guard); view.webContents.on('did-finish-load', async () => { active.currentUrl = redactUrl(view.webContents.getURL()); active.status = 'observing'; try { await inspect(); onState(active); } catch { onState({ ...active, error: 'Inspection was unavailable for this page.' }); } });
-    await view.webContents.loadURL(initialUrl); return publicState(); };
+    await view.webContents.loadURL(initialUrl); if (!active.snapshot) await inspect(); return publicState(); };
   const approveHost = async (host) => { if (!active?.pendingHost || host !== active.pendingHost || !active.pendingUrl) throw new Error('No matching navigation approval is pending.'); const pendingUrl = active.pendingUrl; active.approvedHosts.add(host); active.pendingHost = ''; active.pendingUrl = ''; await view.webContents.loadURL(pendingUrl); return publicState(); };
   const createFillPlan = async (profile, aiDecisions = {}, diagnostics = {}) => { if (!active) throw new Error('Open an application page before building a fill plan.'); const snapshot = await inspect(); const plan = buildFillPlan({ sessionId: active.applicationId, applicationId: active.applicationId, pageFingerprint: snapshot.pageFingerprint, fields: snapshot.fields, profile, aiDecisions, diagnostics }); active.plans.set(plan.id, plan); return plan; };
   const fillPlan = async (planId, profile = {}) => {
@@ -138,6 +138,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   };
   const advance = async ({ handoffOnly = false } = {}) => {
     const snapshot = await inspect();
+    if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
     const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && (handoffOnly ? /^apply(?: for this job| on company site| externally)?$/i.test(field.label) : /^(next|continue|save and continue|proceed|review|apply|apply for this job|apply on company site|apply externally|view application)$/i.test(field.label)));
     if (!candidate) return { status: 'blocked', reason: 'next_control_not_found', pageFingerprint: snapshot.pageFingerprint };
     const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'next_control_changed' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated' }; }`, candidate);

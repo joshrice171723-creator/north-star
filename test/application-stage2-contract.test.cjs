@@ -17,6 +17,26 @@ test('generic application fixture exposes bounded inspection and safe page bound
   assert.equal(first.fields.some((field) => Object.hasOwn(field, 'value')), false);
 });
 
+test('unavailable listing signals are bounded and stop navigation before recovery or submission', async () => {
+  const snapshot = normalizeSnapshot({ url: 'https://listing.example/jobs/closed', pageTitle: 'Job', fields: [], pageSignals: ['Unfortunately, this job is no longer available'] });
+  assert.deepEqual(snapshot.pageSignals, ['Unfortunately, this job is no longer available']);
+  const EventEmitter = require('node:events');
+  const webContents = new EventEmitter();
+  webContents.isDestroyed = () => false;
+  webContents.getURL = () => 'https://listing.example/jobs/closed';
+  webContents.executeJavaScript = async (script) => script.includes('[role="alert"]') ? ['Unfortunately, this job is no longer available'] : ({ url: webContents.getURL(), title: 'Job', fields: [], pageSignals: [] });
+  webContents.loadURL = async () => { webContents.emit('did-finish-load'); };
+  webContents.close = () => {};
+  webContents.setWindowOpenHandler = () => {};
+  webContents.canGoBack = () => false;
+  webContents.canGoForward = () => false;
+  webContents.debugger = { isAttached: () => false, attach() {}, detach() {}, sendCommand: async () => ({ result: { objectId: 'document' } }) };
+  class WebContentsView { constructor() { this.webContents = webContents; } setBounds() {} }
+  const adapter = createApplicationBrowser({ electron: { WebContentsView, session: { fromPartition: () => ({ setPermissionCheckHandler() {}, setPermissionRequestHandler() {} }) }, Menu: { buildFromTemplate: () => ({ popup() {} }) }, clipboard: { writeText() {} } }, getApplicationUrl: () => 'https://listing.example/jobs/closed', attachView: () => {} });
+  await adapter.open({ applicationId: 'closed-listing' });
+  assert.equal((await adapter.advance({ handoffOnly: true })).status, 'unavailable');
+});
+
 test('Stage 2 browser adapter supports one guarded final-control submission', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'jobs', 'application-browser.cjs'), 'utf8');
   assert.match(source, /DOM\.setFileInputFiles/);

@@ -735,7 +735,7 @@ const autonomousApplicationQueueState = { running: false, paused: true, activeAp
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
-  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
+  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, blocked: queue.filter((entry) => entry.automationState === 'blocked').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
 }
 async function startAutonomousApplicationQueue() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
@@ -758,7 +758,12 @@ async function startAutonomousApplicationQueue() {
       const contentBounds = mainWindow?.getContentBounds?.() || { width: 1440, height: 900 };
       applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
       const handoff = await applicationBrowser.advance({ handoffOnly: true });
-      if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
+      if (handoff.status === 'unavailable') {
+        const application = coachDatabase.applications.get(claimed.id);
+        coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: handoff.reason, unavailableSignals: handoff.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
+        applicationBrowser.close();
+        autonomousApplicationQueueState.message = 'Job unavailable: removed from the active application run. Review the listing or return it to the queue.';
+      } else if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
       else {
         const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
         if (recovery.status === 'applied') {
