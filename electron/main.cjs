@@ -799,6 +799,14 @@ async function startAutonomousApplicationQueue() {
           // false manual checkpoint or click an unrelated control.
           await new Promise((resolve) => setTimeout(resolve, 400));
         }
+        const unavailableFollowUp = googleLogin?.status === 'unavailable' || followUp?.status === 'unavailable';
+        if (unavailableFollowUp) {
+          const application = coachDatabase.applications.get(claimed.id);
+          coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'job_listing_unavailable', unavailableSignals: googleLogin?.signals || followUp?.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.message = 'Job unavailable: the active application was terminally blocked.';
+        } else {
         autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
           ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
           : 'Opened the job listing and followed its Apply handoff to the employer application.';
@@ -820,6 +828,7 @@ async function startAutonomousApplicationQueue() {
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
           autonomousApplicationQueueState.message = 'Same application returned to the queue for retry: the form did not finish rendering.';
+        }
         }
       }
       else {
