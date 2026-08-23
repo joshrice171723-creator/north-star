@@ -145,6 +145,21 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     await new Promise((resolve) => setTimeout(resolve, 150));
     const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
   };
+  const activate = async ({ url = '', code = '' } = {}) => {
+    if (!active) throw new Error('Open the employer application before activating the account.');
+    if (url) {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' || !active.approvedHosts.has(parsed.host)) throw new Error('The activation link is not an approved HTTPS employer host.');
+      await view.webContents.loadURL(url);
+      return { status: 'activated', method: 'link' };
+    }
+    if (!code) return { status: 'blocked', reason: 'activation_payload_missing' };
+    const result = await executeOnDocument(`function (activationCode) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('input')).filter((el) => !el.disabled && !el.readOnly && el.type !== 'hidden'); const matches = controls.filter((el) => /activation|verification|verify|confirmation|one.?time|otp|pin|code/i.test(clean((el.id || '') + ' ' + (el.name || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('placeholder') || '') + ' ' + (el.closest('label')?.innerText || '')))); if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'activation_control_ambiguous' : 'activation_control_not_found' }; const el = matches[0]; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; if (!setter) return { status: 'blocked', reason: 'activation_value_setter_unavailable' }; setter.call(el, activationCode); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((item) => !item.disabled); const activationButtons = buttons.filter((item) => /activate|verify|confirm|continue/i.test(clean(item.innerText || item.value || item.getAttribute('aria-label')))); if (activationButtons.length === 1) { activationButtons[0].focus(); activationButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } return { status: 'activated', method: 'code', buttonActivated: activationButtons.length === 1 }; }`, code);
+    if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'activation_failed' };
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const snapshot = await inspect();
+    return { status: 'activated', method: 'code', pageFingerprint: snapshot.pageFingerprint };
+  };
   const detectConfirmationPage = async () => {
     const snapshot = await inspect();
     // Confirmation detection receives only bounded title, URL, and control
@@ -154,6 +169,6 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
