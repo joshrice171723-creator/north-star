@@ -71,10 +71,11 @@ Stage 2 commits:
 - `2b2d6b7` — generic application fixture contracts.
 - `e8d6826` — queue claim to isolated browser opening and first-page checkpoint.
 - `0120620` — queue/browser handoff contract coverage.
+- `b44f632` / `d0961d0` — deterministic fixture-backed browser orchestration coverage.
 
-Verification completed for this slice: eight focused browser/Stage 1/Stage 2 tests, zero failures, Electron restart after each commit, Electron syntax checks, production build, and `git diff --check`.
+Verification completed for this slice: nine focused browser/Stage 1/Stage 2 tests, zero failures, Electron restart after each commit, Electron syntax checks, production build, and `git diff --check`.
 
-Stage 2 remains in progress. The queue now opens the claimed HTTPS application, prefers a recorded ATS destination, preserves prior checkpoint metadata, and records a bounded opening failure. The next implementation slice must add a fixture-backed orchestration test that exercises inspection, approved fill, upload, and safe navigation together. Confirmation-page detection remains gated until that end-to-end handoff is verified.
+Stage 2 remains in progress. The queue now opens the claimed HTTPS application, prefers a recorded ATS destination, preserves prior checkpoint metadata, and records a bounded opening failure. The deterministic fixture orchestration now covers inspection, approved upload, and safe navigation together. The next implementation slice must extend that orchestration through the reviewed approved-fill path and add confirmation-page detection without enabling submission. 
 
 ## Purpose
 
