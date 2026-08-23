@@ -756,7 +756,10 @@ async function startAutonomousApplicationQueue() {
       await applicationBrowser.open({ applicationId: claimed.id, resumeUrl });
       const contentBounds = mainWindow?.getContentBounds?.() || { width: 1440, height: 900 };
       applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
-      autonomousApplicationQueueState.message = resumeUrl ? 'Resumed the saved application checkpoint and inspected its current page.' : 'Opened one eligible application and inspected its first page.';
+      const handoff = await applicationBrowser.advance({ handoffOnly: true });
+      if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
+      else if (!resumeUrl) autonomousApplicationQueueState.message = 'Opened the application listing. No supported Apply handoff was found; review the page.';
+      else autonomousApplicationQueueState.message = 'Resumed the saved application checkpoint and inspected its current page.';
     } catch (error) {
       // Preserve the opening failure checkpoint contract while adding the bounded
       // classification fields used by Stage 5 diagnostics.
