@@ -76,10 +76,11 @@ Each application runs through durable states:
 10. `ready_to_submit`
 11. `submitting`
 12. `verifying_confirmation`
-13. `submitted`
-14. `needs_user_answer`
-15. `blocked`
-16. `failed`
+13. `verifying_email_confirmation`
+14. `submitted`
+15. `needs_user_answer`
+16. `blocked`
+17. `failed`
 
 Every transition should record an application event containing the application ID, job ID, provider, redacted URL, page fingerprint, state, outcome, reason code, and timestamp. Sensitive field values, passwords, access tokens, and raw authentication codes must not be written to logs or diagnostics.
 
@@ -96,9 +97,10 @@ For each `ready` job:
 5. Select the provider adapter.
 6. Open the URL in the isolated application browser session.
 7. Complete the state machine.
-8. Verify employer confirmation.
-9. Mark the application submitted and move the job to `applied`.
-10. Schedule the existing follow-up action.
+8. Verify the browser confirmation.
+9. Verify a matching application-submission email through the existing Gmail sync.
+10. Mark the application submitted and move the job to `applied` only after both confirmation sources pass.
+11. Schedule the existing follow-up action.
 
 The queue must be idempotent. A restart, timeout, or retry must not submit the same application twice. Before final submission, check the application record, provider page, account history, and any known confirmation state.
 
@@ -236,9 +238,15 @@ The existing Gmail sync should support two related workflows:
 
 ### Submission confirmations
 
-- Match confirmation emails to the job using provider, employer, role, application URL, and strong submission language.
-- Use email confirmation as supporting evidence, not as the only basis when the browser result is ambiguous.
-- Preserve existing conservative email-to-job matching rules.
+- A matching submission email is required before the job can move to `Applied`. Every successfully submitted application is expected to produce an email confirmation; absence of that message is treated as an unverified submission rather than success.
+- Match confirmation emails to the job using multiple signals: provider, employer, role title, application URL or host, recipient account, sender, subject, message body, timestamp, and any confirmation number.
+- Require strong submission language such as application received, application submitted, thank you for applying, or an equivalent provider-specific signal. Job alerts, newsletters, recruiter messages, and generic account emails do not qualify.
+- Correlate the email to the current application ID through provider/job metadata and a bounded post-submit time window. Do not assign a confirmation email to a different job solely because the company name matches.
+- After the browser reports success, enter `verifying_email_confirmation` and trigger or await Gmail sync. Poll with bounded intervals and a maximum verification window.
+- If a matching email arrives, record the email ID, matching evidence, confirmation timestamp, and optional confirmation number, then mark the application `submitted` and the job `applied`.
+- If the browser reports success but no matching email arrives before the verification window expires, keep the application in `verifying_email_confirmation` or `blocked` with `email_confirmation_missing`. Do not move the job to `Applied` and do not blindly resubmit.
+- If an email arrives before browser confirmation, retain it as supporting evidence but still reconcile it against browser state and application history before completing the transition.
+- Preserve the existing conservative email-to-job matching rules and existing manual email-linking capability for ambiguous cases.
 
 ## Document upload behavior
 
@@ -273,9 +281,11 @@ After clicking submit:
 1. Wait for navigation or a bounded response period.
 2. Inspect the resulting page.
 3. Detect confirmation language, confirmation number, or provider-specific success state.
-4. If confirmation is strong, mark the application `submitted`.
-5. If confirmation is ambiguous, mark `verifying_confirmation` and do not retry automatically.
-6. If the provider reports a clear failure, store the reason and apply bounded retry rules.
+4. If browser confirmation is strong, transition to `verifying_email_confirmation`.
+5. Trigger Gmail sync and search for a matching submission email within the bounded verification window.
+6. If both browser confirmation and email confirmation are strong, mark the application `submitted` and move the job to `applied`.
+7. If either source is ambiguous or the email is missing, preserve the unverified state and do not retry final submission automatically.
+8. If the provider reports a clear failure, store the reason and apply bounded retry rules.
 
 ## Bottlenecks and planned responses
 
@@ -361,6 +371,8 @@ Tests must cover:
 - Activation-link handling.
 - Provider redirects.
 - Confirmation-page detection.
+- Submission-email correlation and bounded post-submit polling.
+- Missing-email handling without a false `Applied` transition.
 - Ambiguous submission results.
 - Provider failure and bounded retry.
 - CAPTCHA detection.
@@ -383,6 +395,7 @@ The project is complete when the system can demonstrate that it:
 - Navigates the complete application.
 - Submits without duplicate retries.
 - Detects a real confirmation.
+- Finds and matches the expected submission email through Gmail sync.
 - Records `submitted` application state and audit events.
 - Moves the job to `applied`.
 - Creates the existing follow-up action.
