@@ -814,6 +814,13 @@ async function startAutonomousApplicationQueue() {
           liveSnapshot = (await applicationBrowser.inspect()) || applicationBrowser.publicState()?.snapshot;
         }
         if (formVisible && autonomousSafeFormPass) await autonomousSafeFormPass(claimed.id);
+        else if (!formVisible) {
+          const application = coachDatabase.applications.get(claimed.id);
+          coachDatabase.applications.releaseAutomation({ applicationId: claimed.id, state: 'queued', checkpoint: { ...application.automationCheckpoint, stage: 'form_retry', reasonCode: 'form_not_detected_after_handoff', retryQueuedAt: new Date().toISOString() } });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.message = 'Same application returned to the queue for retry: the form did not finish rendering.';
+        }
       }
       else {
         const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
@@ -2550,25 +2557,38 @@ function registerDatabaseIpc() {
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
   };
   autonomousSafeFormPass = async (applicationId) => {
-    const files = {};
-    for (const documentType of ['resume', 'cover_letter']) {
-      const resolved = coachDatabase.applications.resolveFile(applicationId, documentType);
-      if (resolved.exists) files[documentType] = resolved.path;
+    try {
+      const files = {};
+      for (const documentType of ['resume', 'cover_letter']) {
+        const resolved = coachDatabase.applications.resolveFile(applicationId, documentType);
+        if (resolved.exists) files[documentType] = resolved.path;
+      }
+      if (Object.keys(files).length < 2) throw new Error('The selected resume and cover letter could not both be resolved.');
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
+      const upload = await applicationBrowser.uploadDocuments(files);
+      const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, pageFingerprint: entry.pageFingerprint }));
+      if (uploadResults.some((entry) => entry.status !== 'uploaded')) throw new Error(`Document upload incomplete: ${uploadResults.filter((entry) => entry.status !== 'uploaded').map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults } });
+      for (let pass = 0; pass < 2; pass += 1) {
+        const plan = await buildAiApplicationFillPlan(browserProfile());
+        if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
+        await applicationBrowser.fillPlan(plan.id, browserProfile());
+      }
+      const updated = coachDatabase.applications.get(applicationId);
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...updated.automationCheckpoint, stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', safePassCompletedAt: new Date().toISOString() } });
+      applicationBrowser.close();
+      autonomousApplicationQueueState.activeApplicationId = null;
+      autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
+    } catch (error) {
+      const application = coachDatabase.applications.get(applicationId);
+      const message = String(error?.message || 'Safe form pass did not complete.').slice(0, 500);
+      // A form or document mismatch is recoverable. Requeue this same
+      // application with evidence so a retry cannot skip ahead to another job.
+      coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...application?.automationCheckpoint, stage: 'form_retry', reasonCode: 'safe_pass_retryable', lastError: message, retryQueuedAt: new Date().toISOString() } });
+      applicationBrowser.close();
+      autonomousApplicationQueueState.activeApplicationId = null;
+      autonomousApplicationQueueState.message = `Same application returned to the queue for retry: ${message}`;
     }
-    if (!Object.keys(files).length) return;
-    coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
-    const upload = await applicationBrowser.uploadDocuments(files);
-    coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults: upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status })) } });
-    for (let pass = 0; pass < 2; pass += 1) {
-      const plan = await buildAiApplicationFillPlan(browserProfile());
-      if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
-      await applicationBrowser.fillPlan(plan.id, browserProfile());
-    }
-    const updated = coachDatabase.applications.get(applicationId);
-    coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...updated.automationCheckpoint, stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', safePassCompletedAt: new Date().toISOString() } });
-    applicationBrowser.close();
-    autonomousApplicationQueueState.activeApplicationId = null;
-    autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
   };
   ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return buildAiApplicationFillPlan(browserProfile()); });
   ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId, browserProfile()); });
