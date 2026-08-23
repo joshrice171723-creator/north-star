@@ -2476,6 +2476,7 @@ function registerDatabaseIpc() {
     if (result.status === 'advanced') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint } });
     return { ...result, browser: applicationBrowser.publicState() };
   });
+  ipcMain.handle('jobs:browser:recover', async (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return recoverApplicationStep({ applicationId, blockedReason: typeof input?.blockedReason === 'string' ? input.blockedReason : '' }); });
   ipcMain.handle('jobs:browser:submit', async (event, input) => {
     assertTrustedRenderer(event);
     const applicationId = validateApplicationId(input?.applicationId);
