@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeSnapshot } = require('../electron/jobs/application-inspector.cjs');
 const { classifyField } = require('../electron/jobs/application-policy.cjs');
+const { createApplicationBrowser } = require('../electron/jobs/application-browser.cjs');
 
 test('generic application fixture exposes bounded inspection and safe page boundary', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'generic-application-form.json'), 'utf8'));
@@ -32,4 +33,60 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /externalApplicationUrl \|\| application\?\.applicationUrl/);
   assert.match(source, /\.\.\.application\.automationCheckpoint/);
   assert.match(source, /state: 'failed', checkpoint: \{ stage: 'opening', error: message \}/);
+});
+
+test('generic fixture drives adapter inspection, upload, and safe next-page navigation together', async () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'generic-application-form.json'), 'utf8'));
+  const EventEmitter = require('node:events');
+  let pageIndex = 0;
+  const stateEvents = [];
+  const webContents = new EventEmitter();
+  webContents.isDestroyed = () => false;
+  webContents.getURL = () => fixture.pages[pageIndex].url;
+  webContents.executeJavaScript = async () => fixture.pages[pageIndex];
+  webContents.loadURL = async (url) => { webContents.currentUrl = url; webContents.emit('did-finish-load'); };
+  webContents.close = () => {};
+  webContents.canGoBack = () => false;
+  webContents.canGoForward = () => false;
+  webContents.debugger = {
+    attached: false,
+    isAttached() { return this.attached; },
+    attach() { this.attached = true; },
+    detach() { this.attached = false; },
+    async sendCommand(command, input = {}) {
+      if (command === 'Runtime.evaluate') return { result: { objectId: 'document' } };
+      if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('input[type="file"]')) {
+        if (input.functionDeclaration.includes('return { status:')) return { result: { value: { status: 'ready' } } };
+        return { result: { objectId: 'file-input' } };
+      }
+      if (command === 'Runtime.callFunctionOn') { pageIndex = 1; return { result: { value: { status: 'activated' } } }; }
+      if (command === 'DOM.getDocument') return { root: { nodeId: 1 } };
+      if (command === 'DOM.requestNode') return { nodeId: 2 };
+      if (command === 'DOM.setFileInputFiles') return {};
+      throw new Error(`Unexpected CDP command: ${command}`);
+    }
+  };
+  class WebContentsView { constructor() { this.webContents = webContents; } setBounds() {} }
+  const electron = {
+    WebContentsView,
+    session: { fromPartition: () => ({ setPermissionCheckHandler() {}, setPermissionRequestHandler() {} }) },
+    Menu: { buildFromTemplate: () => ({ popup() {} }) },
+    clipboard: { writeText() {} }
+  };
+  const adapter = createApplicationBrowser({
+    electron,
+    getApplicationUrl: () => fixture.pages[0].url,
+    onState: (state) => stateEvents.push(state),
+    attachView: () => {},
+    detachView: () => {}
+  });
+
+  const opened = await adapter.open({ applicationId: 'fixture-application' });
+  assert.equal(opened.snapshot.pageFingerprint, normalizeSnapshot(fixture.pages[0]).pageFingerprint);
+  const upload = await adapter.uploadDocuments({ resume: 'C:\\approved\\resume.pdf' });
+  assert.equal(upload.results[0].status, 'uploaded');
+  const advanced = await adapter.advance();
+  assert.equal(advanced.status, 'advanced');
+  assert.equal(advanced.pageFingerprint, normalizeSnapshot(fixture.pages[1]).pageFingerprint);
+  assert.equal(stateEvents.length > 0, true);
 });
