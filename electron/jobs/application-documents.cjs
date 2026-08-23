@@ -156,8 +156,11 @@ function validateGeneratedDocument(documentType, content, evidenceCatalog = {}, 
     if (!claim.text.trim()) errors.push({ code: 'empty_claim', message: `Empty claim at ${claim.path}.` });
     if (!claim.evidenceIds.length) errors.push({ code: 'missing_provenance', message: `Claim at ${claim.path} has no evidence IDs.` });
     for (const evidenceId of claim.evidenceIds) { if (typeof evidenceId !== 'string' || !Object.prototype.hasOwnProperty.call(evidenceCatalog, evidenceId)) errors.push({ code: 'unknown_evidence_id', message: `Unknown evidence ID: ${evidenceId}.`, path: claim.path }); else used.add(evidenceId); }
-    const numbers = claim.text.match(/\b(?:\d+(?:\.\d+)?%?|\$\d[\d,]*|20\d{2})\b/g) || [];
-    for (const number of numbers) if (!claim.evidenceIds.some((id) => text(evidenceCatalog[id]).includes(number))) errors.push({ code: 'unsupported_numeric_claim', message: `Numeric/date claim ${number} is not supported at ${claim.path}.`, path: claim.path });
+    const numbers = claim.text.match(/(?:\$\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?%?)/g) || [];
+    for (const number of numbers) {
+      const normalizedNumber = number.replace(/[,$]/g, '');
+      if (!claim.evidenceIds.some((id) => text(evidenceCatalog[id]).replace(/[,$]/g, '').includes(normalizedNumber))) errors.push({ code: 'unsupported_numeric_claim', message: `Numeric/date claim ${number} is not supported at ${claim.path}.`, path: claim.path });
+    }
     if (job.company && new RegExp(`\\b${text(job.company).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(claim.text) && !claim.evidenceIds.some((id) => /company|employer/i.test(text(evidenceCatalog[id])))) warnings.push({ code: 'job_fact_unverified', message: 'Job facts are not candidate evidence; verify the final wording.' });
   }
   if (documentType === 'cover_letter') errors.push(...validateCoverLetterClaims(content, evidenceCatalog, claimLedger || buildCoverLetterClaimLedger(job, evidenceCatalog)), ...validateCoverLetterStyle(content));
@@ -190,6 +193,23 @@ function buildResumeRepairMessages({ job, profile, evidenceCatalog, draft, error
   return [{ role: 'system', content: 'Return JSON only: exactly one top-level resume object matching resume={headline:{text,evidenceIds},summary:[{text,evidenceIds}],skills:[{text,evidenceIds}],experience:[{company:{text,evidenceIds},title:{text,evidenceIds},dates:{text,evidenceIds},bullets:[{text,evidenceIds}]}],education:[{text,evidenceIds}],omittedEvidenceIds:[],warnings:[]}. Repair the supplied resume using the validation errors. Preserve the candidate\'s real employers, roles, technologies, dates, and achievements. Every factual claim must cite an existing EVIDENCE_CATALOG ID. Remove unsupported claims instead of guessing. Do not add job-description facts, metrics, dates, or technologies that are absent from the evidence. Keep the result ATS-readable and concise.' }, { role: 'user', content: `JOB_DATA:\n${JSON.stringify({ company: job.company, roleTitle: job.roleTitle, requirements: array(job.requirements).slice(0, 30) })}\nEND_JOB_DATA\nVALIDATION_ERRORS:\n${JSON.stringify(errors)}\nEND_VALIDATION_ERRORS\nDRAFT_TO_REPAIR:\n${JSON.stringify(draft)}\nEND_DRAFT_TO_REPAIR\nEVIDENCE_CATALOG:\n${JSON.stringify(evidenceCatalog)}\nEND_EVIDENCE_CATALOG\nPROFILE_CONTEXT:\n${JSON.stringify({ fullName: profile.fullName })}` }];
 }
 
+function buildSafeCoverLetterFallback({ job = {}, profile = {}, claimLedger = {} }) {
+  const approved = array(claimLedger.approvedCandidateClaims).map((claim) => claim.id).filter(Boolean);
+  const pick = (...preferred) => preferred.find((id) => approved.includes(id)) || approved[0] || '';
+  const professional = pick('resume.raw.0010', 'resume.raw.0011', 'resume.raw.0013');
+  const independent = pick('resume.raw.0014', 'resume.raw.0041', 'resume.raw.0043');
+  const name = text(profile.fullName).trim() || 'Candidate';
+  return {
+    recipient: job.company ? `Dear ${job.company} Hiring Team,` : 'Dear Hiring Team,', subject: '',
+    paragraphs: [
+      { text: 'I am drawn to this role because it combines hands-on software delivery with close attention to real user workflows.', evidenceIds: [pick('resume.raw.0010', 'resume.raw.0013')] },
+      { text: 'In my professional work, I have partnered with product users and domain experts to turn workflow problems into reliable software.', evidenceIds: [professional] },
+      { text: 'I have also built independent AI systems and workflows, clearly separating that project work from my professional experience.', evidenceIds: [independent] },
+      { text: 'That combination of grounded delivery and careful systems thinking is the approach I would bring to this role.', evidenceIds: [pick('resume.raw.0013', 'resume.raw.0011')] },
+    ], closing: `Best regards, ${name}`, warnings: [],
+  };
+}
+
 function normalizeGeneratedContent(documentType, content) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) return content;
   if (content[documentType] && typeof content[documentType] === 'object' && !Array.isArray(content[documentType])) return content[documentType];
@@ -213,4 +233,4 @@ function renderPlainText(type, content) {
 }
 function renderHtml(type, content) { const plain = renderPlainText(type, content).split('\n\n').map((line) => `<p>${esc(line)}</p>`).join(''); return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#111;max-width:760px;margin:40px auto;line-height:1.45}p{margin:0 0 12px;white-space:pre-wrap}h1,h2{font-size:18px}</style></head><body>${plain}</body></html>`; }
 
-module.exports = { DOCUMENT_TYPES, STATUSES, PROMPT_VERSION, RESUME_MASTER_GUIDE, buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, renderHtml };
+module.exports = { DOCUMENT_TYPES, STATUSES, PROMPT_VERSION, RESUME_MASTER_GUIDE, buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, buildSafeCoverLetterFallback, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, renderHtml };

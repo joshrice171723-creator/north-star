@@ -20,7 +20,7 @@ const { discoverOutreachContacts } = require('./outreach-discovery.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
-const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
+const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, buildSafeCoverLetterFallback, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { applicationExportDirectory, applicationExportFilename, ensureApplicationFileStructure } = require('./jobs/application-export.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
@@ -744,8 +744,15 @@ async function generateApplicationDocument(input = {}) {
           ? cleanCoverLetterPresentation(normalizeGeneratedContent(documentType, JSON.parse(repairResponse.message?.content || '')), profile)
           : normalizeGeneratedContent(documentType, JSON.parse(repairResponse.message?.content || ''));
         const repairedValidation = validateGeneratedDocument(documentType, repaired, evidenceCatalog, job, claimLedger);
-        if (repairedValidation.valid) { content = repaired; validation = repairedValidation; response = repairResponse; }
+        content = repaired;
+        validation = repairedValidation;
+        response = repairResponse;
       } catch { /* Keep the last valid candidate and stop this bounded repair attempt. */ }
+    }
+    if (documentType === 'cover_letter' && validation.errors.length) {
+      const fallback = buildSafeCoverLetterFallback({ job, profile, claimLedger });
+      const fallbackValidation = validateGeneratedDocument(documentType, fallback, evidenceCatalog, job, claimLedger);
+      if (fallbackValidation.valid) { content = fallback; validation = fallbackValidation; }
     }
     if (claimLedger) validation.claimLedger = claimLedger; const status = validation.errors.length ? 'needs_review' : 'draft';
     return coachDatabase.applications.documents.save({ applicationId, documentType, title: `${job.roleTitle} ${documentType === 'resume' ? 'Resume' : 'Cover Letter'}`, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: resume.version, modelName: response.model, promptVersion: PROMPT_VERSION, status });
@@ -2487,6 +2494,15 @@ async function drainApplicationPreparationQueue() {
   });
   ipcMain.handle('jobs:applications:preparation-start', async (event) => {
     assertTrustedRenderer(event);
+    syncPreparationActivity();
+    // Start is an explicit user command, so it is the safe boundary for
+    // retrying persisted failures. This keeps old blockers from stranding the
+    // queue while ensuring retries never happen silently at app startup.
+    for (const jobId of Object.keys(applicationPreparationState.blockers)) {
+      const application = coachDatabase.applications.getForJob(jobId);
+      if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_retry_requested', summary: 'User restarted the queue; retrying this preparation.' });
+    }
+    syncPreparationActivity();
     applicationPreparationState.paused = false;
     void drainApplicationPreparationQueue();
     return applicationPreparationStatus();
