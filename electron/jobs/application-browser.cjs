@@ -103,9 +103,50 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
       await inspect(); return { attempted: operations.length, results };
     } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
   };
+  const executeOnDocument = async (functionDeclaration, argument) => {
+    if (!view || view.webContents.isDestroyed()) throw new Error('The application browser is not open.');
+    const debuggerClient = view.webContents.debugger; let attached = false;
+    try {
+      if (!debuggerClient.isAttached()) { debuggerClient.attach('1.3'); attached = true; }
+      const documentRef = await debuggerClient.sendCommand('Runtime.evaluate', { expression: 'document', returnByValue: false });
+      const result = await debuggerClient.sendCommand('Runtime.callFunctionOn', { objectId: documentRef.result.objectId, returnByValue: true, functionDeclaration, arguments: [{ value: argument }] });
+      return result.result?.value;
+    } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
+  };
+  const uploadDocuments = async (files = {}) => {
+    const requested = ['resume', 'cover_letter'].filter((type) => typeof files[type] === 'string' && files[type].trim());
+    if (!requested.length) throw new Error('No approved application document was provided.');
+    const snapshot = await inspect();
+    const results = [];
+    for (const documentType of requested) {
+      const result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = clean((el.id || '') + ' ' + (el.name || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.closest('label')?.innerText || '')); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
+      if (result?.status !== 'ready') { results.push({ documentType, status: result?.status || 'missing', pageFingerprint: snapshot.pageFingerprint }); continue; }
+      const debuggerClient = view.webContents.debugger; let attached = false;
+      try {
+        if (!debuggerClient.isAttached()) { debuggerClient.attach('1.3'); attached = true; }
+        const documentRef = await debuggerClient.sendCommand('Runtime.evaluate', { expression: 'document', returnByValue: false });
+        const node = await debuggerClient.sendCommand('Runtime.callFunctionOn', { objectId: documentRef.result.objectId, returnByValue: false, functionDeclaration: `function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); return Array.from(document.querySelectorAll('input[type="file"]')).find((el) => { const text = clean((el.id || '') + ' ' + (el.name || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.closest('label')?.innerText || '')); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }) || (document.querySelectorAll('input[type="file"]').length === 1 ? document.querySelector('input[type="file"]') : null); }`, arguments: [{ value: documentType }] });
+        if (!node.result?.objectId) throw new Error('The document upload control changed.');
+        await debuggerClient.sendCommand('DOM.getDocument');
+        const { nodeId } = await debuggerClient.sendCommand('DOM.requestNode', { objectId: node.result.objectId });
+        await debuggerClient.sendCommand('DOM.setFileInputFiles', { nodeId, files: [files[documentType]] });
+        results.push({ documentType, status: 'uploaded', pageFingerprint: snapshot.pageFingerprint });
+      } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
+    }
+    await inspect(); return { results };
+  };
+  const advance = async () => {
+    const snapshot = await inspect();
+    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && /^(next|continue|save and continue|proceed|review)$/i.test(field.label));
+    if (!candidate) return { status: 'blocked', reason: 'next_control_not_found', pageFingerprint: snapshot.pageFingerprint };
+    const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'next_control_changed' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated' }; }`, candidate);
+    if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'next_control_failed' };
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
+  };
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };

@@ -1334,7 +1334,15 @@ function createWindow() {
   applicationBrowser = createApplicationBrowser({
     electron,
     getApplicationUrl: (applicationId) => coachDatabase.applications.get(applicationId)?.applicationUrl || '',
-    onState: (state) => { if (state?.redirectedToExternalHost && state.currentUrl && state.currentHost) coachDatabase.applications.recordExternalApplicationUrl({ applicationId: state.applicationId, url: state.currentUrl, host: state.currentHost }); },
+    onState: (state) => {
+      if (state?.redirectedToExternalHost && state.currentUrl && state.currentHost) coachDatabase.applications.recordExternalApplicationUrl({ applicationId: state.applicationId, url: state.currentUrl, host: state.currentHost });
+      if (state?.applicationId && state.snapshot?.pageFingerprint) {
+        const application = coachDatabase.applications.get(state.applicationId);
+        if (application && ['opening', 'detecting_form', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(application.automationState)) {
+          coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { pageFingerprint: state.snapshot.pageFingerprint, redactedUrl: state.currentUrl, observedAt: state.lastObservedAt } });
+        }
+      }
+    },
     attachView: (view) => mainWindow?.contentView.addChildView(view),
     detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
   });
@@ -2314,6 +2322,28 @@ function registerDatabaseIpc() {
   };
   ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return buildAiApplicationFillPlan(browserProfile()); });
   ipcMain.handle('jobs:browser:fill-plan', async (event, planId) => { assertTrustedRenderer(event); if (typeof planId !== 'string' || !/^fill-plan-[A-Za-z0-9-]{1,160}$/.test(planId)) throw new Error('Invalid fill plan.'); return applicationBrowser.fillPlan(planId, browserProfile()); });
+  ipcMain.handle('jobs:browser:upload-documents', async (event, input) => {
+    assertTrustedRenderer(event);
+    const applicationId = validateApplicationId(input?.applicationId);
+    const files = {};
+    for (const documentType of ['resume', 'cover_letter']) {
+      const resolved = coachDatabase.applications.resolveFile(applicationId, documentType);
+      if (resolved.exists) files[documentType] = resolved.path;
+    }
+    if (!Object.keys(files).length) throw new Error('Select approved resume and cover letter files before uploading.');
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
+    const result = await applicationBrowser.uploadDocuments(files);
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults: result.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, pageFingerprint: entry.pageFingerprint })) } });
+    return result;
+  });
+  ipcMain.handle('jobs:browser:advance', async (event) => {
+    assertTrustedRenderer(event);
+    const state = applicationBrowser.publicState();
+    if (!state?.applicationId) throw new Error('Open an application page before moving to the next step.');
+    const result = await applicationBrowser.advance();
+    if (result.status === 'advanced') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint } });
+    return { ...result, browser: applicationBrowser.publicState() };
+  });
   ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
   ipcMain.handle('jobs:browser:back', (event) => { assertTrustedRenderer(event); return applicationBrowser.goBack(); });
   ipcMain.handle('jobs:browser:forward', (event) => { assertTrustedRenderer(event); return applicationBrowser.goForward(); });

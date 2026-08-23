@@ -130,6 +130,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,rescanApplicationBrowser: () => ipcRenderer.invoke('jobs:browser:rescan')
   ,buildApplicationFillPlan: () => ipcRenderer.invoke('jobs:browser:build-fill-plan')
   ,fillApprovedApplicationFields: (planId) => ipcRenderer.invoke('jobs:browser:fill-plan', planId)
+  ,uploadApprovedApplicationDocuments: (applicationId) => ipcRenderer.invoke('jobs:browser:upload-documents', { applicationId })
+  ,advanceApplicationForm: () => ipcRenderer.invoke('jobs:browser:advance')
   ,approveApplicationBrowserHost: (host) => ipcRenderer.invoke('jobs:browser:approve-host', host)
   ,applicationBrowserBack: () => ipcRenderer.invoke('jobs:browser:back')
   ,applicationBrowserForward: () => ipcRenderer.invoke('jobs:browser:forward')
