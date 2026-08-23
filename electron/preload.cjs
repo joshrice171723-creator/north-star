@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,listJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:list')
   ,startJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:start')
   ,pauseJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:pause')
+  ,approveJobApplicationForBatch: (input) => ipcRenderer.invoke('jobs:applications:automation-batch:approve', input)
+  ,startApprovedJobApplicationBatch: () => ipcRenderer.invoke('jobs:applications:automation-batch:start')
   ,releaseJobApplicationAutomation: (input) => ipcRenderer.invoke('jobs:applications:automation-queue:release', input)
   ,generateInterviewQuestions: (input) => ipcRenderer.invoke('jobs:interview:questions:generate', input)
   ,generateInterviewResponse: (input) => ipcRenderer.invoke('jobs:interview:respond', input)
