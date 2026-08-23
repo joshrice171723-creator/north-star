@@ -15,6 +15,7 @@
       "fields": [
         { "elementType": "input", "inputType": "file", "label": "Resume", "name": "resume", "required": true, "empty": true },
         { "elementType": "input", "inputType": "file", "label": "Cover letter", "name": "coverLetter", "required": true, "empty": true },
+        { "elementType": "button", "inputType": "button", "label": "Review", "required": false, "empty": false },
         { "elementType": "button", "inputType": "submit", "label": "Submit application", "required": false, "empty": false }
       ]
     },
