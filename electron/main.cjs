@@ -769,6 +769,40 @@ async function startAutonomousApplicationQueue() {
   return autonomousApplicationQueueStatus();
 }
 function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
+async function startApprovedApplicationBatch() {
+  if (!coachDatabase) throw new Error('Application database is not ready.');
+  if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) return { status: autonomousApplicationQueueStatus(), results: [], blocked: 'Finish the active application before starting the approved batch.' };
+  const approved = (coachDatabase.applications.listAutomationQueue?.() || []).filter((entry) => entry.batchApprovedAt && entry.eligible && entry.automationState === 'ready_to_submit');
+  autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.message = approved.length ? `Applying ${approved.length} reviewed application(s)…` : 'No reviewed applications are ready to apply.';
+  const results = [];
+  for (const entry of approved) {
+    autonomousApplicationQueueState.activeApplicationId = entry.applicationId;
+    const application = coachDatabase.applications.get(entry.applicationId);
+    try {
+      const resumeUrl = application?.automationCheckpoint?.redactedUrl || '';
+      await applicationBrowser.open({ applicationId: entry.applicationId, resumeUrl });
+      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'submitting', checkpoint: { ...application.automationCheckpoint, batchSubmissionStartedAt: new Date().toISOString() } });
+      const submission = await applicationBrowser.submit();
+      if (submission.status !== 'submitted') {
+        coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'blocked', checkpoint: { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, batchSubmissionBlocked: submission.reason || 'unknown' } });
+        results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: 'blocked', reason: submission.reason || 'final_submit_failed' });
+        continue;
+      }
+      const confirmation = await applicationBrowser.detectConfirmationPage();
+      const checkpoint = { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, confirmation: confirmation.state === 'confirmed' ? confirmation : null, batchSubmittedAt: new Date().toISOString() };
+      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint });
+      applicationBrowser.close();
+      const verification = await confirmApplicationSubmission({ applicationId: entry.applicationId, userAcknowledged: true, confirmation });
+      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: verification.status === 'submitted' ? 'submitted' : 'awaiting_email', reason: verification.status === 'submitted' ? '' : 'employer_email_pending' });
+    } catch (error) {
+      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'failed', checkpoint: { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, batchError: String(error?.message || 'Batch submission failed.').slice(0, 500) } });
+      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: 'failed', reason: String(error?.message || 'Batch submission failed.').slice(0, 300) });
+      applicationBrowser.close();
+    } finally { autonomousApplicationQueueState.activeApplicationId = null; }
+  }
+  autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.message = `Reviewed batch finished: ${results.filter((result) => result.status === 'submitted').length} submitted, ${results.filter((result) => result.status !== 'submitted').length} needing attention.`;
+  return { status: autonomousApplicationQueueStatus(), results };
+}
 class ApplicationPreparationPausedError extends Error { constructor() { super('Preparation paused safely before the next document.'); this.code = 'PREPARATION_PAUSED'; } }
 function assertPreparationCanContinue() {
   if (applicationPreparationState.activeJobId && applicationPreparationState.paused) throw new ApplicationPreparationPausedError();
