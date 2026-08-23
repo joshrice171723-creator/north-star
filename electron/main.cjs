@@ -770,6 +770,7 @@ async function startAutonomousApplicationQueue() {
         const application = coachDatabase.applications.get(claimed.id);
         coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: handoff.reason, unavailableSignals: handoff.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
         applicationBrowser.close();
+        autonomousApplicationQueueState.activeApplicationId = null;
         autonomousApplicationQueueState.message = 'Job unavailable: removed from the active application run. Review the listing or return it to the queue.';
       } else if (handoff.status === 'advanced') autonomousApplicationQueueState.message = 'Opened the job listing and followed its Apply handoff to the employer application.';
       else {
