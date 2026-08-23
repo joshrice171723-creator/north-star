@@ -346,7 +346,8 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
   function listAutonomousQueue() {
     return sqlite.prepare("SELECT a.*, j.company, j.role_title, j.stage, j.url AS job_url, j.canonical_url FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' ORDER BY CASE a.automation_state WHEN 'opening' THEN 0 WHEN 'needs_user_answer' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, a.last_activity_at ASC").all().map((row) => {
       const eligibility = autonomousEligibility(row); const unknownQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
-      return { id: row.id, applicationId: row.id, jobId: row.job_id, company: row.company, roleTitle: row.role_title, jobStage: row.stage, url: autonomousUrl(row), automationState: row.automation_state, automationAttempt: row.automation_attempt, automationCheckpoint: parseObject(row.automation_checkpoint_json, {}), automationNextRetryAt: row.automation_next_retry_at, unknownQuestionCount: unknownQuestions, eligible: eligibility.eligible, ineligibleReason: eligibility.reason, lastActivityAt: row.last_activity_at };
+      const checkpoint = parseObject(row.automation_checkpoint_json, {});
+      return { id: row.id, applicationId: row.id, jobId: row.job_id, company: row.company, roleTitle: row.role_title, jobStage: row.stage, url: autonomousUrl(row), automationState: row.automation_state, automationAttempt: row.automation_attempt, automationCheckpoint: checkpoint, batchApprovedAt: checkpoint.batchApprovedAt || '', automationNextRetryAt: row.automation_next_retry_at, unknownQuestionCount: unknownQuestions, eligible: eligibility.eligible, ineligibleReason: eligibility.reason, lastActivityAt: row.last_activity_at };
     });
   }
   function claimNextAutonomousApplication() {
