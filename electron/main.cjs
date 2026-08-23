@@ -2379,7 +2379,10 @@ function applicationPreparationStatus() {
 }
 async function runApplicationPreparationQueue() {
   if (!coachDatabase || applicationPreparationState.activeJobId) return;
-  const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage));
+   // A failed job is a manual-review item until the user changes it or retries
+   // deliberately. Excluding blockers here prevents the 5-second timer from
+   // spending tokens on the same failing job forever.
+   const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && !applicationPreparationState.blockers[job.id]);
   const job = jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
   if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return;
   applicationPreparationState.activeJobId = job.id;
@@ -2390,7 +2393,7 @@ async function runApplicationPreparationQueue() {
     applicationPreparationState.retryAt = 0;
   } catch (cause) {
     applicationPreparationState.blockers[job.id] = cause?.message || 'Preparation stopped before Ready to apply.';
-    applicationPreparationState.retryAt = Date.now() + 15000;
+     applicationPreparationState.retryAt = 0;
   } finally {
     applicationPreparationState.activeJobId = null;
     applicationPreparationState.activeStep = '';
