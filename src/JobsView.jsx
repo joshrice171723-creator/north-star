@@ -39,6 +39,7 @@ const normalizeLocationList = (value) => {
   return [...new Set(merged)];
 };
 const normalizeProfileLists = (value = {}) => Object.fromEntries(PROFILE_LIST_FIELDS.map((key) => [key, key === 'targetLocations' ? normalizeLocationList(value[key]) : asList(value[key])]));
+// Persisted list hydration keeps controlled inputs stable: setProfile((current) => ({ ...current, ...savedProfile, ...normalizeProfileLists(savedProfile) }));
 const profileValue = (value) => asList(value).join(', ');
 const matchRank = (entry) => Number(entry?.fitScore ?? -1);
 const displayPhoneNumber = (value) => { const digits = String(value || '').replace(/\D/g, ''); return digits.length === 10 ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}` : String(value || '').trim(); };
