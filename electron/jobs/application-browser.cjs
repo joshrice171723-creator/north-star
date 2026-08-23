@@ -1,5 +1,6 @@
 const { normalizeSnapshot, INSPECTION_SCRIPT } = require('./application-inspector.cjs');
 const { buildFillPlan, validatePlanForFill } = require('./application-fill-engine.cjs');
+const { detectConfirmation } = require('./application-confirmation.cjs');
 const redactUrl = (value) => { try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ''; } };
 const isHttps = (value) => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
 function decideNavigation({ fromUrl, toUrl, isMainFrame = true, approvedHosts = new Set() }) { if (!isMainFrame || !isHttps(toUrl)) return { action: 'deny', reason: 'only_main_frame_https' }; const target = new URL(toUrl); if (!fromUrl || new URL(fromUrl).origin === target.origin || approvedHosts.has(target.host)) return { action: 'allow', reason: 'same_or_approved_origin' }; return { action: 'ask_user', reason: 'new_https_host', host: target.host }; }
@@ -144,9 +145,15 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     await new Promise((resolve) => setTimeout(resolve, 150));
     const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
   };
+  const detectConfirmationPage = async () => {
+    const snapshot = await inspect();
+    // Confirmation detection receives only bounded title, URL, and control
+    // labels; page text and field values never leave the isolated view.
+    return detectConfirmation({ url: active.currentUrl, title: snapshot.pageTitle, text: snapshot.fields.map((field) => field.label).join(' ') });
+  };
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
