@@ -1,0 +1,19 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { matchSubmissionConfirmation } = require('../electron/jobs/application-confirmation-email.cjs');
+const { classifyApplicationFailure, boundedRetry } = require('../electron/jobs/application-reliability.cjs');
+
+test('submission confirmation requires explicit language and current job evidence', () => {
+  const base = { id: 'email-1', recipients: 'josh@example.com', receivedAt: '2026-08-23T15:05:00Z', subject: 'Application received', body: 'Thank you for applying to Acme for the Forward Deployed Engineer role. Confirmation number: ABC-123.' };
+  const match = matchSubmissionConfirmation({ email: base, candidateEmail: 'josh@example.com', application: { applicationUrl: 'https://jobs.example.com/apply' }, job: { company: 'Acme', roleTitle: 'Forward Deployed Engineer' }, requestedAt: '2026-08-23T15:00:00Z', now: '2026-08-23T15:10:00Z' });
+  assert.deepEqual(match.signals, ['explicit_submission_language', 'employer_match', 'role_match']);
+  assert.equal(match.confirmationNumber, 'ABC-123');
+  assert.equal(matchSubmissionConfirmation({ email: { ...base, subject: 'Weekly job alert', body: 'Thank you for applying? Unsubscribe from alerts.' }, candidateEmail: 'josh@example.com', job: { company: 'Acme', roleTitle: 'Forward Deployed Engineer' } }), null);
+  assert.equal(matchSubmissionConfirmation({ email: base, candidateEmail: 'other@example.com', job: { company: 'Acme', roleTitle: 'Forward Deployed Engineer' } }), null);
+});
+
+test('failure classification is bounded and retry policy never retries protected actions', () => {
+  assert.deepEqual(classifyApplicationFailure({ code: 'network_timeout', message: 'Timed out' }), { class: 'network', retryable: true, reasonCode: 'network_timeout', message: 'Timed out' });
+  assert.equal(boundedRetry({ attempt: 0, maxAttempts: 2, failure: { code: 'network_timeout' } }).exhausted, false);
+  assert.equal(boundedRetry({ attempt: 0, maxAttempts: 2, failure: { code: 'captcha_detected' } }).exhausted, true);
+});
