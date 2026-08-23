@@ -749,7 +749,7 @@ async function startAutonomousApplicationQueue() {
     } catch (error) {
       const message = String(error?.message || 'Application browser opening failed.').slice(0, 500);
       coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message } });
-      autonomousApplicationQueueState.message = `Application opening stopped: ${message}`;
+      const message = String(error?.message || 'Application browser opening failed.').slice(0, 500); const failure = classifyApplicationFailure({ code: error?.code || 'opening_failed', message }); coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: failure.reasonCode } });
     }
   } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
   autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true;
