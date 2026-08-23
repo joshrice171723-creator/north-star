@@ -43,9 +43,9 @@ test('AI answers can fill safe application questions while protected controls st
   assert.equal(validated.find((field) => field.fieldFingerprint === 'question-1').action, 'fill');
 });
 
-test('plans leave already completed editable fields unchanged', () => {
+test('plans replace stale completed identity fields with verified profile values', () => {
   const fields = [{ fieldFingerprint: 'completed', elementType: 'input', inputType: 'text', label: 'Portfolio', category: 'identity_contact', empty: false }];
   const plan = buildFillPlan({ sessionId: 'session-1', applicationId: 'application-1', pageFingerprint: 'page-1', fields, profile: { portfolioUrl: 'https://example.test' } });
-  assert.equal(plan.fields[0].action, 'leave_unchanged');
-  assert.equal(plan.fields[0].reasonCode, 'already_completed');
+  assert.equal(plan.fields[0].action, 'fill');
+  assert.equal(plan.fields[0].displayValue, 'https://example.test');
 });

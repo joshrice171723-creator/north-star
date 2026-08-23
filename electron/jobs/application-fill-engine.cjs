@@ -6,7 +6,10 @@ function buildFillPlan({ sessionId, applicationId, pageFingerprint, fields = [],
   const excludedSet = new Set(excluded);
   return { id: planId(), sessionId, applicationId, pageFingerprint, createdAt: new Date().toISOString(), diagnostics, fields: fields.map((field) => {
     const deterministic = decideField(field, { profile, excluded: excludedSet.has(field.fieldFingerprint) });
-    if (deterministic.action !== 'blocked' && field.empty === false) return { fieldFingerprint: field.fieldFingerprint, category: field.category, label: field.label, action: 'leave_unchanged', displayValue: '', protectedValueRef: '', provenance: [], confidence: 1, reasonCode: 'already_completed', reason: 'Already completed on the employer page', aiGenerated: false };
+    // Employer profiles can retain a value from an earlier application. Replace
+    // completed identity fields with the current verified profile, while still
+    // preserving non-identity values that the candidate already entered.
+    if (deterministic.action !== 'blocked' && field.empty === false && deterministic.reasonCode !== 'verified_profile') return { fieldFingerprint: field.fieldFingerprint, category: field.category, label: field.label, action: 'leave_unchanged', displayValue: '', protectedValueRef: '', provenance: [], confidence: 1, reasonCode: 'already_completed', reason: 'Already completed on the employer page', aiGenerated: false };
     const ai = aiDecisions?.[field.fieldFingerprint];
     // AI may answer safe application questions, but identity fields remain tied
     // to the verified profile and protected categories can never be overridden.
