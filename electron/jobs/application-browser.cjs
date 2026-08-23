@@ -146,7 +146,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const advance = async ({ handoffOnly = false, googleLoginOnly = false } = {}) => {
     const snapshot = await inspect();
     if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
-    const allowedLabel = googleLoginOnly ? /^continue with google$/i : handoffOnly ? /^apply(?: now| for this job| on company site| externally)?$/i : /^(next|continue|continue with google|save and continue|proceed|review|apply|apply now|apply for this job|apply on company site|apply externally|view application)$/i;
+    const allowedLabel = googleLoginOnly ? /^continue with google$/i : handoffOnly ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$/i : /^(next|continue|continue with google|save and continue|proceed|review|easy apply|apply|apply now|apply for this job|apply on company site|apply externally|view application)$/i;
     const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && allowedLabel.test(field.label));
     // Some job-board variants expose the same safe handoff as a styled anchor
     // without a button role. Keep the fallback exact-label and visible-only so
@@ -159,7 +159,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   };
   const clickSafeControl = async ({ action = '', targetLabel = '' } = {}) => {
     const snapshot = await inspect(); const label = String(targetLabel || '').replace(/\s+/g, ' ').trim();
-    const allowed = action === 'dismiss' ? /^(no thanks|close|dismiss|not now|skip)$/i : action === 'handoff' ? /^apply(?: now| for this job| on company site| externally)?$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
+    const allowed = action === 'dismiss' ? /^(no thanks|close|dismiss|not now|skip)$/i : action === 'handoff' ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
     const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && field.label === label && allowed.test(field.label));
     if (!candidate) return { status: 'blocked', reason: 'safe_control_not_found', pageFingerprint: snapshot.pageFingerprint };
     const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled && !el.readOnly); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'safe_control_changed' }; const el = matches[0]; el.focus(); el.click(); return { status: 'activated', label: field.label }; }`, candidate);
