@@ -2,7 +2,7 @@
 
 ## Implementation status (updated 2026-08-23)
 
-The delivery is organized into five stages. Stages 1 through 4 are complete; Stage 5 remains gated until its preceding provider contracts are verified in the operational workflow.
+The delivery is organized into five stages. All five stages are complete. Production provider enablement and final submission remain explicitly safety-gated by the contracts documented below.
 
 ### Five-stage roadmap
 
@@ -10,7 +10,7 @@ The delivery is organized into five stages. Stages 1 through 4 are complete; Sta
 2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **Complete.**
 3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention. **Complete.**
 4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests. **Complete.**
-5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
+5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history. **Complete.**
 
 ### Stage 1 completion criteria
 
@@ -45,12 +45,12 @@ Stage 1 implementation commits:
 
 Verification completed: focused application persistence and preparation-queue tests, Stage 1 queue/restart tests, Node syntax checks, Vite production build, and `git diff --check`.
 
-### Next session handoff — begin Stage 5
+### Final handoff — all planned stages complete
 
-1. Add restart-safe queue execution and pause/resume controls around the existing browser and provider contracts.
-2. Add bounded provider diagnostics and failure classification to the queue and audit UI.
-3. Implement submission-email confirmation correlation and missing-email handling before any `Applied` transition.
-4. Preserve the Stage 3 account host/email identity boundary and Stage 4 production gate.
+1. Use the application queue with its persisted checkpoints, pause/resume controls, and restart recovery.
+2. Keep provider adapters production-gated until controlled live validation enables a provider.
+3. Treat browser confirmation without a matching Gmail confirmation as unverified; never move that application to `Applied`.
+4. Preserve the Stage 3 account host/email identity boundary and all credential redaction rules.
 
 ### Stage 2 progress — 2026-08-23
 
@@ -124,6 +124,23 @@ Stage 4 commits:
 - `b6a1331` — provider fixtures and end-to-end contract coverage.
 
 Acceptance verification: 65 application/autonomous tests passed; all adapter and regression tests passed; adapter module syntax checks passed; production build passed; `git diff --check` passed; Electron was restarted after each Stage 4 commit. Existing build warnings remain limited to Vite's config-loader notice and large generated chunks.
+
+### Stage 5 completion — 2026-08-23
+
+Stage 5 is complete and the entire five-stage automation plan is complete. The queue retains durable checkpoints across restart, exposes pause/resume and manual release controls, and records bounded failure classes for opening failures. Submission evidence is now durable and has two required sources: browser confirmation plus a matching employer email. Email matching requires explicit submission language, linked-job identity, recipient/time bounds, and employer or role evidence; missing email leaves the application in `verifying_email_confirmation` and never moves the job to `Applied`.
+
+Verified submissions now create the existing employer-response follow-up task idempotently, record redacted evidence and audit events, and preserve the confirmation number without persisting raw email payloads. The workflow remains manual at the final employer submit action, while all irreversible state changes remain approval- and evidence-gated.
+
+Stage 5 commits:
+
+- `4b2a2f3` — submission confirmation and failure contracts.
+- `8ce496e` — durable submission evidence migration.
+- `fc23119` / `cc6aa52` / `ba4e8d4` — verified submission database and Electron flow.
+- `dcd5d11` / `0e02e16` — classified queue failure diagnostics.
+- `c5587e4` — restart-safe missing-confirmation coverage.
+- `7c26556` — final application workflow contract alignment.
+
+Final acceptance verification: 245 repository tests passed; Electron main, database, preload, reliability, and confirmation modules passed syntax checks; production build passed; `git diff --check` passed; Electron was restarted after every task-related commit. Existing build warnings remain limited to Vite's config-loader notice and large generated chunks.
 
 ## Purpose
 
