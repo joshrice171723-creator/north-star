@@ -2,14 +2,14 @@
 
 ## Implementation status (updated 2026-08-23)
 
-The delivery is organized into five complete stages. Stage 1 is complete; later stages remain gated until their preceding stage is verified.
+The delivery is organized into five stages. Stages 1 through 4 are complete; Stage 5 remains gated until its preceding provider contracts are verified in the operational workflow.
 
 ### Five-stage roadmap
 
 1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow. **Complete.**
 2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **Complete.**
 3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention. **Complete.**
-4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests.
+4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests. **Complete.**
 5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
 
 ### Stage 1 completion criteria
@@ -45,12 +45,12 @@ Stage 1 implementation commits:
 
 Verification completed: focused application persistence and preparation-queue tests, Stage 1 queue/restart tests, Node syntax checks, Vite production build, and `git diff --check`.
 
-### Next session handoff — begin Stage 4
+### Next session handoff — begin Stage 5
 
-1. Add production-gated provider adapters beginning with Greenhouse, using the generic Stage 2/3 browser contracts.
-2. Keep provider-specific selectors and transitions isolated behind `electron/jobs/adapters/`.
-3. Add one local fixture and end-to-end test for each provider before enabling its production path.
-4. Preserve the Stage 3 account host/email identity boundary and never broaden credentials across providers.
+1. Add restart-safe queue execution and pause/resume controls around the existing browser and provider contracts.
+2. Add bounded provider diagnostics and failure classification to the queue and audit UI.
+3. Implement submission-email confirmation correlation and missing-email handling before any `Applied` transition.
+4. Preserve the Stage 3 account host/email identity boundary and Stage 4 production gate.
 
 ### Stage 2 progress — 2026-08-23
 
@@ -111,6 +111,19 @@ Stage 3 commits:
 - `8acc0db` — restart-safe Stage 3 contract coverage.
 
 Acceptance verification: Stage 3 activation/account tests and Stage 2 regression tests passed; restart persistence preserved account and activation metadata; Electron main, database, browser, activation, and preload syntax checks passed; production build passed; `git diff --check` passed; Electron was restarted after every task-related commit. Existing build warnings remain limited to Vite's config-loader notice and large generated chunks.
+
+### Stage 4 completion — 2026-08-23
+
+Stage 4 is complete. Provider-specific application rules now live behind `electron/jobs/adapters/` and share the generic Stage 2/3 inspection, account, navigation, and confirmation boundaries without mutating remote forms directly. The registry supports Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and the combined iCIMS/Taleo lane.
+
+Each provider has a local multi-page fixture and an end-to-end contract test covering HTTPS/provider detection, tracking-parameter URL normalization, form-step detection, required-field discovery, unambiguous control lookup, account-flow markers, confirmation evidence, duplicate-application markers, bounded retry policy, and diagnostics. Provider selection is explicitly gated; unknown pages, non-HTTPS URLs, and all default production paths continue to use the fail-closed generic adapter until controlled live validation enables a provider.
+
+Stage 4 commits:
+
+- `c6a57cb` — gated provider adapter contracts and provider-specific rules.
+- `b6a1331` — provider fixtures and end-to-end contract coverage.
+
+Acceptance verification: 65 application/autonomous tests passed; all adapter and regression tests passed; adapter module syntax checks passed; production build passed; `git diff --check` passed; Electron was restarted after each Stage 4 commit. Existing build warnings remain limited to Vite's config-loader notice and large generated chunks.
 
 ## Purpose
 
