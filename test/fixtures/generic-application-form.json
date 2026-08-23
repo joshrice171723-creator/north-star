@@ -17,6 +17,14 @@
         { "elementType": "input", "inputType": "file", "label": "Cover letter", "name": "coverLetter", "required": true, "empty": true },
         { "elementType": "button", "inputType": "submit", "label": "Submit application", "required": false, "empty": false }
       ]
+    },
+    {
+      "pageTitle": "Application received",
+      "url": "https://fixture.example/apply/confirmation",
+      "fields": [
+        { "elementType": "heading", "inputType": "text", "label": "Thank you for applying", "required": false, "empty": false },
+        { "elementType": "text", "inputType": "text", "label": "Confirmation number F-12345", "required": false, "empty": false }
+      ]
     }
   ]
 }
