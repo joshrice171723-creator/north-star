@@ -147,7 +147,9 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const snapshot = await inspect();
     if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
     const allowedLabel = googleLoginOnly ? /^continue with google$/i : handoffOnly ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$/i : /^(next|continue|continue with google|save and continue|proceed|review|easy apply|apply|apply now|apply for this job|apply on company site|apply externally|view application)$/i;
-    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && allowedLabel.test(field.label));
+    // Job boards frequently render Apply as an anchor styled like a button.
+    // The category is the safety boundary; the DOM element type is not.
+    const candidate = snapshot.fields.find((field) => field.category === 'navigation' && allowedLabel.test(field.label));
     // Some job-board variants expose the same safe handoff as a styled anchor
     // without a button role. Keep the fallback exact-label and visible-only so
     // recipe recovery cannot click arbitrary links.
