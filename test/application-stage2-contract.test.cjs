@@ -17,12 +17,14 @@ test('generic application fixture exposes bounded inspection and safe page bound
   assert.equal(first.fields.some((field) => Object.hasOwn(field, 'value')), false);
 });
 
-test('Stage 2 browser adapter keeps uploads and next-page navigation separate from submission', () => {
+test('Stage 2 browser adapter supports one guarded final-control submission', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'jobs', 'application-browser.cjs'), 'utf8');
   assert.match(source, /DOM\.setFileInputFiles/);
   assert.match(source, /const advance = async/);
+  assert.match(source, /const submit = async/);
+  assert.match(source, /category === 'final_submit'/);
   assert.match(source, /category === 'navigation'/);
-  assert.doesNotMatch(source, /requestSubmit\(|\.submit\(|\.click\(/);
+  assert.doesNotMatch(source, /requestSubmit\(|\.submit\(/);
   assert.equal(classifyField({ elementType: 'button', inputType: 'submit', label: 'Submit application' }), 'final_submit');
   assert.equal(classifyField({ elementType: 'button', inputType: 'button', label: 'Review' }), 'navigation');
 });
