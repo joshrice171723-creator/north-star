@@ -153,7 +153,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const advance = async ({ handoffOnly = false, googleLoginOnly = false } = {}) => {
     const snapshot = await inspect();
     if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
-    const dismiss = snapshot.fields.find((field) => /^(no thanks|close|dismiss|not now|skip)$/i.test(field.label));
+    const dismiss = snapshot.fields.find((field) => /^(no thanks|close|dismiss|not now|skip|decline|reject cookies)$/i.test(field.label));
     if (dismiss) {
       const dismissed = await executeOnDocument(`function (expectedLabel) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"],a[href]')).filter((el) => !el.disabled && el.getAttribute('aria-hidden') !== 'true' && el.offsetParent !== null); const matches = controls.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === expectedLabel); if (matches.length !== 1) return { status: 'blocked', reason: 'dismiss_control_changed' }; matches[0].click(); return { status: 'activated' }; }`, dismiss.label);
       if (dismissed?.status === 'activated') { await new Promise((resolve) => setTimeout(resolve, 250)); return advance({ handoffOnly, googleLoginOnly }); }
