@@ -69,10 +69,12 @@ Stage 2 commits:
 - `aa84e29` — generic application form navigation and uploads.
 - `078158b` — generic single-file upload control handling.
 - `2b2d6b7` — generic application fixture contracts.
+- `e8d6826` — queue claim to isolated browser opening and first-page checkpoint.
+- `0120620` — queue/browser handoff contract coverage.
 
-Verification completed for this slice: six focused browser/Stage 2 tests, zero failures, and Electron restart after each commit.
+Verification completed for this slice: eight focused browser/Stage 1/Stage 2 tests, zero failures, Electron restart after each commit, Electron syntax checks, production build, and `git diff --check`.
 
-Stage 2 remains in progress. The next implementation slice must connect the queue's `opening` claim to `applicationBrowser.open`, persist the first inspected page as the opening checkpoint, and add an orchestration test that exercises the fixture page across inspection, approved fill, upload, and safe navigation. Confirmation-page detection remains gated until that handoff is verified.
+Stage 2 remains in progress. The queue now opens the claimed HTTPS application, prefers a recorded ATS destination, preserves prior checkpoint metadata, and records a bounded opening failure. The next implementation slice must add a fixture-backed orchestration test that exercises inspection, approved fill, upload, and safe navigation together. Confirmation-page detection remains gated until that end-to-end handoff is verified.
 
 ## Purpose
 
