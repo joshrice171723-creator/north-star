@@ -71,8 +71,15 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     view.webContents.on('context-menu', (_event, params) => {
       Menu.buildFromTemplate(buildContextMenuTemplate({ params, webContents: view.webContents, clipboard })).popup();
     });
-    const guard = (event, url, details = {}) => { const decision = decideNavigation({ fromUrl: view.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts }); if (decision.action !== 'allow') { event.preventDefault(); requestNavigation(url, details.isMainFrame !== false).catch(() => {}); } };
-    view.webContents.on('will-navigate', guard); view.webContents.on('will-redirect', guard); view.webContents.on('did-finish-load', async () => { active.currentUrl = redactUrl(view.webContents.getURL()); active.status = 'observing'; try { await inspect(); onState(active); } catch { onState({ ...active, error: 'Inspection was unavailable for this page.' }); } });
+    const sessionView = view;
+    const guard = (event, url, details = {}) => {
+      // A redirect can arrive after the queue has closed this view. Ignore that
+      // stale event instead of dereferencing the replacement session or null.
+      if (view !== sessionView || !active || !sessionView.webContents || sessionView.webContents.isDestroyed()) return;
+      const decision = decideNavigation({ fromUrl: sessionView.webContents.getURL(), toUrl: url, isMainFrame: details.isMainFrame !== false, approvedHosts: active.approvedHosts });
+      if (decision.action !== 'allow') { event.preventDefault(); requestNavigation(url, details.isMainFrame !== false).catch(() => {}); }
+    };
+    sessionView.webContents.on('will-navigate', guard); sessionView.webContents.on('will-redirect', guard); sessionView.webContents.on('did-finish-load', async () => { if (view !== sessionView || !active || sessionView.webContents.isDestroyed()) return; active.currentUrl = redactUrl(sessionView.webContents.getURL()); active.status = 'observing'; try { await inspect(); onState(active); } catch { onState({ ...active, error: 'Inspection was unavailable for this page.' }); } });
     await view.webContents.loadURL(initialUrl); if (!active.snapshot) await inspect(); return publicState(); };
   const approveHost = async (host) => { if (!active?.pendingHost || host !== active.pendingHost || !active.pendingUrl) throw new Error('No matching navigation approval is pending.'); const pendingUrl = active.pendingUrl; active.approvedHosts.add(host); active.pendingHost = ''; active.pendingUrl = ''; await view.webContents.loadURL(pendingUrl); return publicState(); };
   const createFillPlan = async (profile, aiDecisions = {}, diagnostics = {}) => { if (!active) throw new Error('Open an application page before building a fill plan.'); const snapshot = await inspect(); const plan = buildFillPlan({ sessionId: active.applicationId, applicationId: active.applicationId, pageFingerprint: snapshot.pageFingerprint, fields: snapshot.fields, profile, aiDecisions, diagnostics }); active.plans.set(plan.id, plan); return plan; };
