@@ -4,6 +4,7 @@ const BLOCKED = new Set(['sensitive_voluntary_disclosure', 'legal_signature', 'a
 const fieldText = (field = {}) => `${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.autocomplete || ''} ${field.inputType || ''}`.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_./-]+/g, ' ').toLowerCase();
 const profileSource = (field) => {
   const text = fieldText(field);
+  if (/current location|location/.test(text)) return 'location';
   if (/first name|given name|forename/.test(text)) return 'firstName';
   if (/last name|family name|surname|second name/.test(text)) return 'lastName';
   if (/email/.test(text)) return 'email';
@@ -35,7 +36,7 @@ function classifyField(field = {}) {
   if (/race|ethnicity|gender|veteran|disability|voluntary self/.test(text)) return 'sensitive_voluntary_disclosure';
   if (/signature|certify|attest|legal agreement|terms and conditions/.test(text)) return 'legal_signature';
   if (field.inputType === 'file') return 'file_upload';
-  if (/email|phone|mobile|telephone|cell|first name|last name|given name|forename|family name|surname|full name|address|street|city|town|locality|state|province|region|county|postal|zip|post code|country|linkedin|github|portfolio/.test(text)) return 'identity_contact';
+  if (/email|phone|mobile|telephone|cell|first name|last name|given name|forename|family name|surname|full name|address|street|city|town|locality|current location|location|state|province|region|county|postal|zip|post code|country|linkedin|github|portfolio/.test(text)) return 'identity_contact';
   if (/authorized|sponsorship|visa/.test(text)) return 'work_authorization';
   if (/salary|compensation|relocat|travel|start date/.test(text)) return 'compensation';
   if (field.elementType === 'textarea' || /why are you|describe|cover letter|additional information/.test(text)) return 'free_text';
@@ -48,7 +49,7 @@ function decideField(field, { profile = {}, excluded = false } = {}) {
   if (BLOCKED.has(category)) return { action: 'blocked', reasonCode: category, value: null, provenance: [], confidence: 1 };
   if (excluded) return { action: 'leave_blank', reasonCode: 'user_excluded', value: null, provenance: [], confidence: 1 };
   if (category === 'identity_contact') {
-    const source = profileSource(field); const value = profile[source];
+    const source = profileSource(field); const value = source === 'location' ? [profile.city, profile.state, profile.postalCode, profile.country].filter(Boolean).join(', ') : profile[source];
     return value ? { action: 'fill', reasonCode: 'verified_profile', value, provenance: [`profile.${source}`], confidence: 1 } : { action: 'ask', reasonCode: 'missing_profile', value: null, provenance: [], confidence: 1 };
   }
   // Reusable answers are always written by the user in the local assistant.

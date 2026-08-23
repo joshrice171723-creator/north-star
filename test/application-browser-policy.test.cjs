@@ -22,6 +22,11 @@ test('common ATS aliases map to the verified profile', () => {
   assert.equal(decideField({ elementType: 'input', label: 'Town / locality' }, { profile }).value, 'London');
   assert.equal(decideField({ elementType: 'input', label: 'Post code' }, { profile }).value, 'NW1');
 });
+test('current location uses the verified address composite', () => {
+  const profile = { city: 'Ardmore', state: 'OK', postalCode: '73401', country: 'United States' };
+  assert.equal(classifyField({ elementType: 'input', label: 'Current Location' }), 'identity_contact');
+  assert.equal(decideField({ elementType: 'input', label: 'Current Location' }, { profile }).value, 'Ardmore, OK, 73401, United States');
+});
 test('user-approved reusable answers only fill an exact field match', () => {
   const profile = { reusableAnswers: [{ id: 'answer-1', questionKey: 'desired salary', questionText: 'Desired salary', answerText: '120000' }] };
   assert.equal(decideField({ elementType: 'input', label: 'Desired salary' }, { profile }).value, '120000');
