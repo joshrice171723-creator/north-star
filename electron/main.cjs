@@ -777,7 +777,12 @@ async function startAutonomousApplicationQueue() {
         // example, Dice's Continue Application). Cross only a small bounded
         // chain before returning to the visible application checkpoint.
         for (let step = 0; step < 2; step += 1) {
-          const followUp = await applicationBrowser.advance({ handoffOnly: true });
+          let followUp;
+          for (let attempt = 0; attempt < 40; attempt += 1) {
+            followUp = await applicationBrowser.advance({ handoffOnly: true });
+            if (followUp.status !== 'blocked' || followUp.reason !== 'next_control_not_found' || attempt === 39) break;
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
           if (followUp.status !== 'advanced') break;
           handoff = followUp;
         }
