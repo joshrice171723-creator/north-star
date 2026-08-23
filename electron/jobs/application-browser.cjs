@@ -120,7 +120,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const results = [];
     for (const documentType of requested) {
       const result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = clean((el.id || '') + ' ' + (el.name || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.closest('label')?.innerText || '')); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
-      if (result?.status !== 'ready') { results.push({ documentType, status: result?.status || 'missing', pageFingerprint: snapshot.pageFingerprint }); continue; }
+      if (!['ready', 'candidate'].includes(result?.status)) { results.push({ documentType, status: result?.status || 'missing', pageFingerprint: snapshot.pageFingerprint }); continue; }
       const debuggerClient = view.webContents.debugger; let attached = false;
       try {
         if (!debuggerClient.isAttached()) { debuggerClient.attach('1.3'); attached = true; }
