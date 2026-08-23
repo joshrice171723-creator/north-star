@@ -2356,7 +2356,11 @@ async function prepareJobApplication(jobId) {
       let documents = coachDatabase.applications.documents.list(application.id, documentType);
       let document = documents.find((entry) => entry.isSelected && entry.status === 'approved' && !entry.validation?.errors?.length);
       if (!document) document = documents.find((entry) => entry.status === 'approved' && !entry.validation?.errors?.length);
-      if (!document) document = (await generateApplicationDocument({ applicationId: application.id, documentType })).document;
+      // Reuse a validated draft left by an interrupted run before generating
+      // another paid draft. The generator returns the document itself.
+      if (!document) document = documents.find((entry) => entry.status === 'draft' && entry.validation?.valid !== false && !entry.validation?.errors?.length);
+      if (!document) document = await generateApplicationDocument({ applicationId: application.id, documentType });
+      if (!document?.id) throw new Error(`No ${documentType === 'resume' ? 'resume' : 'cover letter'} was produced for this job.`);
       const current = coachDatabase.applications.documents.get(document.id);
       const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
       const evidenceCatalog = buildEvidenceCatalog(coachDatabase.profiles.getCurrent() || {}, coachDatabase.resumes.getMaster() || {});

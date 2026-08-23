@@ -10,6 +10,8 @@ test('application preparation is exposed as a renderer bridge and validates both
   assert.match(main, /jobs:applications:prepare/);
   assert.match(main, /prepareDocument\('resume'\)/);
   assert.match(main, /prepareDocument\('cover_letter'\)/);
+  assert.match(main, /document = await generateApplicationDocument/);
+  assert.doesNotMatch(main, /generateApplicationDocument\([^\n]+\)\)\.document/);
   assert.match(main, /documents\.approve\(current\.id\)/);
   assert.match(main, /documents\.select\(current\.id\)/);
 });
