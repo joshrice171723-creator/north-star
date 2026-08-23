@@ -44,6 +44,7 @@ test('Stage 2 browser adapter supports one guarded final-control submission', ()
   assert.match(source, /const submit = async/);
   assert.match(source, /category === 'final_submit'/);
   assert.match(source, /category === 'navigation'/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'electron', 'jobs', 'application-inspector.cjs'), 'utf8'), /a\[role=\\"button\\"\]/);
   assert.doesNotMatch(source, /requestSubmit\(|\.submit\(/);
   assert.equal(classifyField({ elementType: 'button', inputType: 'submit', label: 'Submit application' }), 'final_submit');
   assert.equal(classifyField({ elementType: 'button', inputType: 'button', label: 'Review' }), 'navigation');
