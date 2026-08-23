@@ -15,6 +15,9 @@ test('background preparation drains Researching before Target and stops on block
   assert.match(source, /preparation-start/);
   assert.match(source, /preparation-pause/);
   assert.match(source, /applicationPreparationState\.running/);
+  assert.match(source, /ApplicationPreparationPausedError/);
+  assert.match(source, /eventType: 'preparation_paused'/);
+  assert.match(source, /application_document_\$\{documentType\}_repair_/);
   assert.match(source, /counts: \{ total, completed, failed, remaining/);
   assert.doesNotMatch(source, /setInterval\(\(\) => \{ runApplicationPreparationQueue/);
 });

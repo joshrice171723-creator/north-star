@@ -20,7 +20,7 @@ const { discoverOutreachContacts } = require('./outreach-discovery.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
 const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthorizationUrl, exchangeGmailAuthorizationCode } = require('./gmail-oauth.cjs');
-const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
+const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { applicationExportDirectory, applicationExportFilename, ensureApplicationFileStructure } = require('./jobs/application-export.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
@@ -684,6 +684,10 @@ const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'o
 const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
+class ApplicationPreparationPausedError extends Error { constructor() { super('Preparation paused safely before the next document.'); this.code = 'PREPARATION_PAUSED'; } }
+function assertPreparationCanContinue() {
+  if (applicationPreparationState.activeJobId && applicationPreparationState.paused) throw new ApplicationPreparationPausedError();
+}
 async function generateApplicationDocument(input = {}) {
   const applicationId = validateApplicationId(input.applicationId); const documentType = input.documentType;
   if (!['resume', 'cover_letter'].includes(documentType)) throw new Error('Invalid document type.');
@@ -724,7 +728,26 @@ async function generateApplicationDocument(input = {}) {
         } catch {}
       }
     }
-    const validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job, claimLedger); if (claimLedger) validation.claimLedger = claimLedger; const status = validation.errors.length ? 'needs_review' : 'draft';
+    let validation = validateGeneratedDocument(documentType, content, evidenceCatalog, job, claimLedger);
+    // Validation failures are repaired inside the generation boundary so the
+    // queue does not turn an ordinary model formatting mistake into a user
+    // blocker. Two attempts cap cost while preserving a truthful failure path
+    // for genuinely unsupported claims or missing candidate evidence.
+    for (let attempt = 0; attempt < 2 && validation.errors.length; attempt += 1) {
+      const repairMessages = documentType === 'cover_letter'
+        ? buildCoverLetterRevisionMessages({ job, profile, evidenceCatalog, claimLedger, draft: content, review: { issues: validation.errors.map((error) => error.message).slice(0, 16), revisionRequired: true } })
+        : buildResumeRepairMessages({ job, profile, evidenceCatalog, draft: content, errors: validation.errors.map((error) => error.message).slice(0, 16) });
+      const repairResponse = await openRouterChat(repairMessages, { auditPurpose: `application_document_${documentType}_repair_${attempt + 1}`, response_format: { type: 'json_object' }, max_tokens: 5000 });
+      if (!repairResponse?.ok) break;
+      try {
+        const repaired = documentType === 'cover_letter'
+          ? cleanCoverLetterPresentation(normalizeGeneratedContent(documentType, JSON.parse(repairResponse.message?.content || '')), profile)
+          : normalizeGeneratedContent(documentType, JSON.parse(repairResponse.message?.content || ''));
+        const repairedValidation = validateGeneratedDocument(documentType, repaired, evidenceCatalog, job, claimLedger);
+        if (repairedValidation.valid) { content = repaired; validation = repairedValidation; response = repairResponse; }
+      } catch { /* Keep the last valid candidate and stop this bounded repair attempt. */ }
+    }
+    if (claimLedger) validation.claimLedger = claimLedger; const status = validation.errors.length ? 'needs_review' : 'draft';
     return coachDatabase.applications.documents.save({ applicationId, documentType, title: `${job.roleTitle} ${documentType === 'resume' ? 'Resume' : 'Cover Letter'}`, content, validation, provenance: validation.evidenceIds, sourceResumeVersion: resume.version, modelName: response.model, promptVersion: PROMPT_VERSION, status });
   } finally { documentGenerationInFlight.delete(key); }
 }
@@ -2359,7 +2382,9 @@ async function prepareJobApplication(jobId) {
       // Reuse a validated draft left by an interrupted run before generating
       // another paid draft. The generator returns the document itself.
       if (!document) document = documents.find((entry) => entry.status === 'draft' && entry.validation?.valid !== false && !entry.validation?.errors?.length);
+      assertPreparationCanContinue();
       if (!document) document = await generateApplicationDocument({ applicationId: application.id, documentType });
+      assertPreparationCanContinue();
       if (!document?.id) throw new Error(`No ${documentType === 'resume' ? 'resume' : 'cover letter'} was produced for this job.`);
       const current = coachDatabase.applications.documents.get(document.id);
       const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
@@ -2375,6 +2400,7 @@ async function prepareJobApplication(jobId) {
        return coachDatabase.applications.documents.get(current.id);
     };
     const resume = await prepareDocument('resume');
+    assertPreparationCanContinue();
     const coverLetter = await prepareDocument('cover_letter');
     const preparedApplication = coachDatabase.applications.get(application.id);
     const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId);
@@ -2424,6 +2450,11 @@ async function runApplicationPreparationQueue() {
     applicationPreparationState.retryAt = 0;
   } catch (cause) {
     const message = cause?.message || 'Preparation stopped before Ready to apply.';
+    if (cause?.code === 'PREPARATION_PAUSED') {
+      const application = coachDatabase.applications.getForJob(job.id);
+      if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_paused', summary: message });
+      return false;
+    }
     applicationPreparationState.blockers[job.id] = message;
     const application = coachDatabase.applications.getForJob(job.id);
     if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_failed', summary: message });
