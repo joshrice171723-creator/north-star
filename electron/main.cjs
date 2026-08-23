@@ -776,7 +776,15 @@ async function startAutonomousApplicationQueue() {
         // Prefer the provider's Google SSO path when the first employer page
         // offers it. The click is safe navigation only; Google account choice,
         // MFA, consent, and any CAPTCHA remain visible user checkpoints.
-        const googleLogin = await applicationBrowser.advance({ googleLoginOnly: true });
+        let googleLogin;
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          googleLogin = await applicationBrowser.advance({ googleLoginOnly: true });
+          if (googleLogin.status !== 'blocked' || googleLogin.reason !== 'next_control_not_found' || attempt === 11) break;
+          // Employer login controls often arrive after an SPA handoff. Keep the
+          // retry bounded and exact-label so delayed rendering does not become a
+          // false manual checkpoint or click an unrelated control.
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
         autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
           ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
           : 'Opened the job listing and followed its Apply handoff to the employer application.';
