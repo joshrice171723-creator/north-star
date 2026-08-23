@@ -2410,7 +2410,23 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:interview:report', async (event, input) => { assertTrustedRenderer(event); return exportInterviewReport(input || {}); });
   ipcMain.handle('jobs:interview:transcript', async (event, input) => { assertTrustedRenderer(event); return exportInterviewTranscript(input || {}); });
   // The remote WebContentsView is controlled only by this narrow local-renderer API.
-  ipcMain.handle('jobs:browser:open', async (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); const resumeUrl = application?.automationCheckpoint?.redactedUrl || ''; const result = await applicationBrowser.open({ applicationId, resumeUrl }); applicationBrowser.setBounds(input?.bounds); return result; });
+  ipcMain.handle('jobs:browser:open', async (event, input) => {
+    assertTrustedRenderer(event);
+    const applicationId = validateApplicationId(input?.applicationId);
+    const current = applicationBrowser.publicState();
+    // Checkpoint next may already own the isolated view. Re-opening the same
+    // application here would reset the page back to Dice's listing after the
+    // queue has safely clicked Apply Now.
+    if (current?.applicationId === applicationId) {
+      applicationBrowser.setBounds(input?.bounds);
+      return current;
+    }
+    const application = coachDatabase.applications.get(applicationId);
+    const resumeUrl = application?.automationCheckpoint?.redactedUrl || '';
+    const result = await applicationBrowser.open({ applicationId, resumeUrl });
+    applicationBrowser.setBounds(input?.bounds);
+    return result;
+  });
   ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
   ipcMain.handle('jobs:browser:bounds', (event, bounds) => { assertTrustedRenderer(event); applicationBrowser.setBounds(bounds); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });
