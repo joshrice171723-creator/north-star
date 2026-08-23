@@ -773,6 +773,14 @@ async function startAutonomousApplicationQueue() {
         autonomousApplicationQueueState.activeApplicationId = null;
         autonomousApplicationQueueState.message = 'Job unavailable: removed from the active application run. Review the listing or return it to the queue.';
       } else if (handoff.status === 'advanced') {
+        // A job board may expose a second safe handoff after Apply (for
+        // example, Dice's Continue Application). Cross only a small bounded
+        // chain before returning to the visible application checkpoint.
+        for (let step = 0; step < 2; step += 1) {
+          const followUp = await applicationBrowser.advance({ handoffOnly: true });
+          if (followUp.status !== 'advanced') break;
+          handoff = followUp;
+        }
         // Prefer the provider's Google SSO path when the first employer page
         // offers it. The click is safe navigation only; Google account choice,
         // MFA, consent, and any CAPTCHA remain visible user checkpoints.
