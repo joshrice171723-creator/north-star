@@ -26,6 +26,7 @@ const { applicationExportDirectory, applicationExportFilename, ensureApplication
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { classifyApplicationFailure } = require('./jobs/application-reliability.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
+const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
 const { transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
 installApiAuditFetch();
@@ -774,6 +775,16 @@ async function startAutonomousApplicationQueue() {
   return autonomousApplicationQueueStatus();
 }
 function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
+async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}) {
+  const state = applicationBrowser.publicState();
+  if (!state?.applicationId || state.applicationId !== applicationId) throw new Error('Open the application browser before requesting recovery guidance.');
+  const response = await openRouterChat(buildRecoveryMessages({ snapshot: { pageTitle: state.snapshot?.pageTitle, url: state.currentUrl, fields: state.snapshot?.fields }, blockedReason }), { auditPurpose: 'application_recovery_guidance', response_format: { type: 'json_object' }, max_tokens: 350 });
+  if (!response?.ok) return { status: 'unavailable', reason: response?.error || 'AI recovery is unavailable.' };
+  let plan; try { plan = parseRecoveryResponse(response); } catch (error) { return { status: 'unavailable', reason: error.message }; }
+  if (plan.confidence < 0.65 || ['ask', 'stop'].includes(plan.action)) return { status: 'guidance', plan };
+  const action = await applicationBrowser.clickSafeControl({ action: plan.action, targetLabel: plan.targetLabel });
+  return { status: action.status === 'activated' ? 'applied' : 'blocked', plan, action, browser: applicationBrowser.publicState() };
+}
 async function startApprovedApplicationBatch() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) return { status: autonomousApplicationQueueStatus(), results: [], blocked: 'Finish the active application before starting the approved batch.' };
