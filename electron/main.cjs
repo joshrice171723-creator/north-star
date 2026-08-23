@@ -807,7 +807,7 @@ async function startAutonomousApplicationQueue() {
         // enters the shared safe pass instead of being left open indefinitely.
         let liveSnapshot = applicationBrowser.publicState()?.snapshot;
         let formVisible = false;
-        for (let attempt = 0; attempt < 20; attempt += 1) {
+        for (let attempt = 0; attempt < 60; attempt += 1) {
           formVisible = Boolean(liveSnapshot?.fields?.some((field) => field.inputType === 'file' || /resume|cv|cover letter|first name|last name|email|phone/i.test(field.label || '')));
           if (formVisible || attempt === 19) break;
           await new Promise((resolve) => setTimeout(resolve, 500));
