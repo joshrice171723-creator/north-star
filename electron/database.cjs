@@ -339,8 +339,8 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     return { eligible: true, reason: '' };
   };
   function recoverAutonomousApplications() {
-    const stamp = now(); const recovered = sqlite.prepare(`SELECT id, automation_state, automation_checkpoint_json FROM job_applications WHERE deleted_at IS NULL AND automation_state IN (${AUTONOMOUS_ACTIVE_STATES.map(() => '?').join(',')})`).all(...AUTONOMOUS_ACTIVE_STATES);
-    const recover = sqlite.transaction(() => recovered.forEach((row) => { const checkpoint = parseObject(row.automation_checkpoint_json, {}); const nextCheckpoint = { ...checkpoint, recoveredFrom: row.automation_state, recoveredAt: stamp }; sqlite.prepare("UPDATE job_applications SET automation_state = 'queued', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id); recordApplicationEvent({ applicationId: row.id, eventType: 'automation_recovered', summary: `Recovered autonomous work from ${row.automation_state} after restart.` }); }));
+    const stamp = now(); const recovered = sqlite.prepare(`SELECT a.id, a.automation_state, a.automation_checkpoint_json FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND (a.automation_state IN (${AUTONOMOUS_ACTIVE_STATES.map(() => '?').join(',')}) OR (a.automation_state = 'idle' AND j.stage = 'ready'))`).all(...AUTONOMOUS_ACTIVE_STATES);
+    const recover = sqlite.transaction(() => recovered.forEach((row) => { const checkpoint = parseObject(row.automation_checkpoint_json, {}); const nextCheckpoint = { ...checkpoint, recoveredFrom: row.automation_state, recoveredAt: stamp, ...(row.automation_state === 'idle' ? { readyHandoff: 'legacy_idle_ready_recovered' } : {}) }; sqlite.prepare("UPDATE job_applications SET automation_state = 'queued', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id); recordApplicationEvent({ applicationId: row.id, eventType: 'automation_recovered', summary: `Recovered autonomous work from ${row.automation_state} after restart.` }); }));
     recover(); return recovered.length;
   }
   function listAutonomousQueue() {
@@ -450,7 +450,16 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
       fs.copyFileSync(sourcePath, versionPath);
       fs.copyFileSync(sourcePath, selectedPath);
     } else if (fs.existsSync(selectedPath)) fs.unlinkSync(selectedPath);
-    if (movedToReady) recordJobActivity(readyJobId, 'documents_ready', 'Resume and cover letter selected; opportunity is ready to apply.');
+    if (movedToReady) {
+      recordJobActivity(readyJobId, 'documents_ready', 'Resume and cover letter selected; opportunity is ready to apply.');
+      const readyApplication = getApplication(current.applicationId);
+      // Document preparation is the handoff into the browser queue. Older
+      // records may still have the pre-automation `idle` state, so normalize
+      // every newly Ready application to a claimable queued checkpoint here.
+      if (readyApplication && !['submitted', 'verifying_confirmation', 'verifying_email_confirmation'].includes(readyApplication.automationState)) {
+        updateAutonomousApplicationState({ applicationId: readyApplication.id, state: 'queued', checkpoint: { ...readyApplication.automationCheckpoint, readyHandoffAt: now(), readyHandoff: 'documents_selected' } });
+      }
+    }
     return getDocument(documentId);
   }
   function selectMasterResume(applicationId) {

@@ -44,3 +44,21 @@ test('Stage 1 claims one eligible ready application and recovers its opening che
     fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
+
+test('document preparation hands a Ready application to the claimable queue', () => {
+  const { userDataPath, db } = create();
+  try {
+    db.jobs.create({ id: 'legacy-ready', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'researching' });
+    const app = db.applications.createOrResume({ jobId: 'legacy-ready' });
+    const resume = db.applications.documents.save({ applicationId: app.id, documentType: 'resume', title: 'Resume', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
+    const cover = db.applications.documents.save({ applicationId: app.id, documentType: 'cover_letter', title: 'Cover letter', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
+    db.applications.documents.select(resume.id);
+    db.applications.documents.select(cover.id);
+    assert.equal(db.applications.get(app.id).automationState, 'queued');
+    assert.equal(db.applications.get(app.id).automationCheckpoint.readyHandoff, 'documents_selected');
+    assert.equal(db.applications.claimNextAutomation().id, app.id);
+  } finally {
+    try { db.close(); } catch {}
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
