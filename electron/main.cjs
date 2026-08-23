@@ -688,6 +688,7 @@ const autonomousApplicationQueueState = { running: false, paused: true, activeAp
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, active: queue.filter((entry) => ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(entry.automationState)).length } };
+}
 function startAutonomousApplicationQueue() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.message = '';
