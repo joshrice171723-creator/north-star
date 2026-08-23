@@ -145,6 +145,16 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     await new Promise((resolve) => setTimeout(resolve, 150));
     const nextSnapshot = await inspect(); return { status: 'advanced', previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
   };
+  const clickSafeControl = async ({ action = '', targetLabel = '' } = {}) => {
+    const snapshot = await inspect(); const label = String(targetLabel || '').replace(/\s+/g, ' ').trim();
+    const allowed = action === 'dismiss' ? /^(no thanks|close|dismiss|not now|skip)$/i : action === 'handoff' ? /^apply(?: for this job| on company site| externally)?$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
+    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && field.label === label && allowed.test(field.label));
+    if (!candidate) return { status: 'blocked', reason: 'safe_control_not_found', pageFingerprint: snapshot.pageFingerprint };
+    const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled && !el.readOnly); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'safe_control_changed' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated', label: field.label }; }`, candidate);
+    if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'safe_control_failed' };
+    await new Promise((resolve) => setTimeout(resolve, 250)); const nextSnapshot = await inspect();
+    return { status: 'activated', action, targetLabel: label, previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
+  };
   const submit = async () => {
     const snapshot = await inspect();
     const candidates = snapshot.fields.filter((field) => field.elementType === 'button' && field.category === 'final_submit' && /^(submit|submit application|send application|finish application|complete application)$/i.test(field.label));
@@ -179,6 +189,6 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
