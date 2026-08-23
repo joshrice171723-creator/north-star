@@ -138,7 +138,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   };
   const advance = async () => {
     const snapshot = await inspect();
-    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && /^(next|continue|save and continue|proceed|review)$/i.test(field.label));
+    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && /^(next|continue|save and continue|proceed|review|apply|apply on company site|apply externally|view application)$/i.test(field.label));
     if (!candidate) return { status: 'blocked', reason: 'next_control_not_found', pageFingerprint: snapshot.pageFingerprint };
     const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'next_control_changed' }; const el = matches[0]; el.focus(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return { status: 'activated' }; }`, candidate);
     if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'next_control_failed' };
