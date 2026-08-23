@@ -46,6 +46,7 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
   webContents.executeJavaScript = async () => fixture.pages[pageIndex];
   webContents.loadURL = async (url) => { webContents.currentUrl = url; webContents.emit('did-finish-load'); };
   webContents.close = () => {};
+  webContents.setWindowOpenHandler = () => {};
   webContents.canGoBack = () => false;
   webContents.canGoForward = () => false;
   webContents.debugger = {
