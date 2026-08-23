@@ -11,4 +11,6 @@ test('background preparation drains Researching before Target and stops on block
   assert.match(source, /applicationPreparationState\.retryAt = 0/);
   assert.match(source, /eventType: 'preparation_failed'/);
   assert.match(source, /function syncPreparationActivity\(\)/);
+  assert.match(source, /applicationPreparationTimer = null;/);
+  assert.doesNotMatch(source, /setInterval\(\(\) => \{ runApplicationPreparationQueue/);
 });

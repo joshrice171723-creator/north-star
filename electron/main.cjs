@@ -2664,10 +2664,10 @@ async function runApplicationPreparationQueue() {
   ipcMain.handle('google-voice:open', () => openGoogleVoiceWindow());
   ipcMain.handle('google-voice:set-visible', (_event, visible) => setGoogleVoiceViewVisible(visible));
   ipcMain.handle('google-voice:test-notification', () => { showGoogleVoiceNotification('Google Voice monitor', 'Desktop notifications are working.'); return { ok: true }; });
-  // This runner lives with the database IPC registration so it can access the
-  // preparation implementation without leaking a second global queue.
-  applicationPreparationTimer = setInterval(() => { runApplicationPreparationQueue().catch(() => {}); }, 5000);
-  runApplicationPreparationQueue().catch(() => {});
+  // Preparing a job can make paid AI calls. Keep the batch runner off until an
+  // explicit queue-start control exists; the per-job Prepare application action
+  // remains available and records the same progress events.
+  applicationPreparationTimer = null;
 }
 
 app.whenReady().then(() => {
