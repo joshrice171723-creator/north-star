@@ -6,8 +6,8 @@ The delivery is organized into five complete stages. Stage 1 is complete; later 
 
 ### Five-stage roadmap
 
-1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow.
-2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection.
+1. **Queue and state foundation** — durable autonomous state/checkpoints, one-at-a-time eligible queue selection, restart recovery, bounded retry policy, and visible unknown-question pause/resume workflow. **Complete.**
+2. **Generic autonomous applications** — HTTPS page opening, generic form inspection/fill, approved document upload, simple multi-page navigation, and confirmation-page detection. **In progress.**
 3. **Account creation and Gmail activation** — secure employer-account references, login/create flows, activation-code/link matching, resume-after-activation, and duplicate-account prevention.
 4. **Provider adapters** — production-gated Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS/Taleo adapters, each backed by local fixtures and end-to-end tests.
 5. **Reliability and operations** — restart-safe execution, pause/resume controls, diagnostics, failure classification, email confirmation correlation, follow-up actions, and audit history.
@@ -51,6 +51,28 @@ Verification completed: focused application persistence and preparation-queue te
 2. Inspect fields and create a bounded fill plan using approved profile data and reusable answers.
 3. Pause on unknown questions without submitting, then resume after the Stage 1 UI resolves the answer.
 4. Add approved resume/cover-letter upload and simple multi-page navigation; keep final submit disabled until confirmation evidence exists.
+
+### Stage 2 progress — 2026-08-23
+
+Completed and committed:
+
+- Extended `electron/jobs/application-browser.cjs` with bounded selected-document uploads through Chromium `DOM.setFileInputFiles`.
+- Added safe page advancement that only activates uniquely matched `Next`, `Continue`, `Save and continue`, `Proceed`, or `Review` controls; final-submit controls are never eligible.
+- Added durable `detecting_form`, `uploading_documents`, and `navigating_form` checkpoints through the existing application automation state API.
+- Added main-process IPC and preload methods for approved document upload and safe next-page navigation.
+- Added Jobs application assistant controls for upload and next safe page.
+- Added `test/fixtures/generic-application-form.json` and Stage 2 contract tests for inspection, page fingerprints, file controls, navigation controls, and final-submit exclusion.
+- Preserved the existing reviewed fill-plan and stale-page protections.
+
+Stage 2 commits:
+
+- `aa84e29` — generic application form navigation and uploads.
+- `078158b` — generic single-file upload control handling.
+- `2b2d6b7` — generic application fixture contracts.
+
+Verification completed for this slice: six focused browser/Stage 2 tests, zero failures, and Electron restart after each commit.
+
+Stage 2 remains in progress. The next implementation slice must connect the queue's `opening` claim to `applicationBrowser.open`, persist the first inspected page as the opening checkpoint, and add an orchestration test that exercises the fixture page across inspection, approved fill, upload, and safe navigation. Confirmation-page detection remains gated until that handoff is verified.
 
 ## Purpose
 
