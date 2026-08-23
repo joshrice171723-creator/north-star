@@ -24,6 +24,7 @@ const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthor
 const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, buildSafeCoverLetterFallback, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { applicationExportDirectory, applicationExportFilename, ensureApplicationFileStructure } = require('./jobs/application-export.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
+const { classifyApplicationFailure } = require('./jobs/application-reliability.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
 const { transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
@@ -505,6 +506,21 @@ async function checkApplicationActivation(applicationId) {
   coachDatabase.applications.saveExternalAccount({ applicationId, host: account.host, username: account.username, credentialRef: account.credentialRef, status: 'active' });
   coachDatabase.applications.updateAutomationState({ applicationId, state: 'detecting_form', checkpoint: { activation: { messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, hasCode: Boolean(candidate.code), signals: candidate.signals, usedAt: new Date().toISOString() } } });
   return { status: 'activated', activation: { status: activation.status, pageFingerprint: activation.pageFingerprint || '' }, attempt, browser: applicationBrowser.publicState() };
+}
+async function confirmApplicationSubmission(input = {}) {
+  const applicationId = validateApplicationId(input.applicationId);
+  const application = coachDatabase.applications.get(applicationId);
+  if (!application) throw new Error('Application not found.');
+  const browser = applicationBrowser.publicState();
+  const confirmation = input.confirmation || application.automationCheckpoint?.confirmation || {};
+  let evidence = coachDatabase.applications.listSubmissionEvidence(applicationId).find((entry) => entry.status === 'awaiting_email');
+  if (!evidence) evidence = coachDatabase.applications.beginSubmissionVerification({ applicationId, browserState: confirmation?.signals?.length ? 'confirmed' : 'unverified', browserConfirmationUrl: confirmation.confirmationUrlRedacted || browser?.currentUrl || '', browserConfirmationNumber: confirmation.confirmationNumber || '', requestedAt: new Date().toISOString() });
+  const sync = await syncJobEmails();
+  const match = coachDatabase.applications.findSubmissionConfirmation(applicationId, { requestedAt: evidence.requestedAt });
+  if (!match) return { status: 'verifying_email_confirmation', pending: true, evidence, sync: { ok: Boolean(sync.ok), message: sync.message || '' }, failure: classifyApplicationFailure({ code: 'email_confirmation_missing', message: 'A matching employer confirmation email has not arrived yet.' }) };
+  const verified = coachDatabase.applications.recordSubmissionEmailMatch({ applicationId, evidenceId: evidence.id, match });
+  const completed = coachDatabase.applications.completeSubmission({ applicationId, userAcknowledged: true, emailConfirmationId: match.emailId, confirmationNumber: input.confirmationNumber || verified.confirmationNumber, confirmationUrl: browser?.currentUrl || confirmation.confirmationUrlRedacted || '', nextAction: 'Watch for employer response.', followUpDate: typeof input.followUpDate === 'string' ? input.followUpDate : '' });
+  return { status: 'submitted', pending: false, evidence: verified, application: completed, sync: { ok: Boolean(sync.ok), message: sync.message || '' } };
 }
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
