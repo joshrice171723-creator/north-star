@@ -47,6 +47,7 @@ test('Stage 2 browser adapter supports one guarded final-control submission', ()
   assert.doesNotMatch(source, /requestSubmit\(|\.submit\(/);
   assert.equal(classifyField({ elementType: 'button', inputType: 'submit', label: 'Submit application' }), 'final_submit');
   assert.equal(classifyField({ elementType: 'button', inputType: 'button', label: 'Review' }), 'navigation');
+  assert.match(source, /apply\(\?: now\| for this job/);
 });
 
 test('Stage 2 queue handoff opens one claimed application and checkpoints its first page', () => {
