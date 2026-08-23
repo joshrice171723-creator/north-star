@@ -16,6 +16,7 @@ const { rankJobs } = require('./job-matcher.cjs');
 const { createSearchPlan, refineProviderQuery, fallbackPlan } = require('./job-search-planner.cjs');
 const { publicConfig, createLangSmithRunClient } = require('./job-search-integrations.cjs');
 const { normalizeGmailMessage } = require('./job-email-rag.cjs');
+const { matchActivationEmails, credentialReference, normalizeHost } = require('./jobs/application-activation.cjs');
 const { discoverOutreachContacts } = require('./outreach-discovery.cjs');
 const { extractPhoneNumber, extractGoogleVoiceItemNumber } = require('./google-voice.cjs');
 const { parseJobListing } = require('./job-import.cjs');
