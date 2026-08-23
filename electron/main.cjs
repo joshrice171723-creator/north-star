@@ -689,12 +689,23 @@ function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, active: queue.filter((entry) => ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(entry.automationState)).length } };
 }
-function startAutonomousApplicationQueue() {
+async function startAutonomousApplicationQueue() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.message = '';
   const claimed = coachDatabase.applications.claimNextAutomation();
-  if (claimed) { autonomousApplicationQueueState.activeApplicationId = claimed.id; autonomousApplicationQueueState.message = 'One eligible application was checkpointed at opening; browser execution begins in Stage 2.'; }
-  else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
+  if (claimed) {
+    autonomousApplicationQueueState.activeApplicationId = claimed.id;
+    try {
+      // The queue claims one application at a time; the browser boundary owns
+      // the first inspection checkpoint and never submits the employer form.
+      await applicationBrowser.open({ applicationId: claimed.id });
+      autonomousApplicationQueueState.message = 'Opened one eligible application and inspected its first page.';
+    } catch (error) {
+      const message = String(error?.message || 'Application browser opening failed.').slice(0, 500);
+      coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message } });
+      autonomousApplicationQueueState.message = `Application opening stopped: ${message}`;
+    }
+  } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
   autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true;
   return autonomousApplicationQueueStatus();
 }
@@ -1333,13 +1344,16 @@ function createWindow() {
   createGoogleVoiceView();
   applicationBrowser = createApplicationBrowser({
     electron,
-    getApplicationUrl: (applicationId) => coachDatabase.applications.get(applicationId)?.applicationUrl || '',
+    getApplicationUrl: (applicationId) => {
+      const application = coachDatabase.applications.get(applicationId);
+      return application?.externalApplicationUrl || application?.applicationUrl || '';
+    },
     onState: (state) => {
       if (state?.redirectedToExternalHost && state.currentUrl && state.currentHost) coachDatabase.applications.recordExternalApplicationUrl({ applicationId: state.applicationId, url: state.currentUrl, host: state.currentHost });
       if (state?.applicationId && state.snapshot?.pageFingerprint) {
         const application = coachDatabase.applications.get(state.applicationId);
         if (application && ['opening', 'detecting_form', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(application.automationState)) {
-          coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { pageFingerprint: state.snapshot.pageFingerprint, redactedUrl: state.currentUrl, observedAt: state.lastObservedAt } });
+          coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { ...application.automationCheckpoint, pageFingerprint: state.snapshot.pageFingerprint, redactedUrl: state.currentUrl, observedAt: state.lastObservedAt } });
         }
       }
     },
