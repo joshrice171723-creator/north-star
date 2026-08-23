@@ -40,6 +40,7 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'generic-application-form.json'), 'utf8'));
   const EventEmitter = require('node:events');
   let pageIndex = 0;
+  let navigationCount = 0;
   const stateEvents = [];
   const webContents = new EventEmitter();
   webContents.isDestroyed = () => false;
@@ -61,7 +62,7 @@ test('generic fixture drives adapter inspection, upload, and safe next-page navi
         if (input.functionDeclaration.includes('return { status:')) return { result: { value: { status: 'ready' } } };
         return { result: { objectId: 'file-input' } };
       }
-      if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('buttons = Array.from')) { pageIndex = input.arguments?.[0]?.value?.label === 'Review' ? 2 : 1; return { result: { value: { status: 'activated' } } }; }
+      if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('buttons = Array.from')) { navigationCount += 1; pageIndex = Math.min(navigationCount, fixture.pages.length - 1); return { result: { value: { status: 'activated' } } }; }
       if (command === 'Runtime.callFunctionOn' && input.functionDeclaration.includes('candidates = Array.from')) return { result: { value: { fieldFingerprint: 'fixture-field', status: 'filled', reason: 'verified' } } };
       if (command === 'Runtime.callFunctionOn') return { result: { value: { status: 'activated' } } };
       if (command === 'DOM.getDocument') return { root: { nodeId: 1 } };
