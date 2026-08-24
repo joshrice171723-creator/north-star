@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { chooseNativeFile } = require('./native-file-picker.cjs');
 const { normalizeSnapshot, INSPECTION_SCRIPT, PAGE_STATUS_SCRIPT } = require('./application-inspector.cjs');
 const { buildFillPlan, validatePlanForFill } = require('./application-fill-engine.cjs');
 const { detectConfirmation } = require('./application-confirmation.cjs');
@@ -153,6 +154,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const results = [];
     for (const documentType of requested) {
       const repairTarget = options.repairTargets?.[documentType];
+      let repairActivated = false;
       // Prefer a DOM file input when it already exists. Clicking a provider's
       // visible Attach/Choose File control first can open a native picker and
       // block CDP before DOM.setFileInputFiles gets a chance to run.
@@ -181,9 +183,26 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
           matches.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top); matches[0].focus(); matches[0].click();
           return { status: 'activated' };
         }`, repairTarget.label);
-        if (activated?.status === 'activated') await new Promise((resolve) => setTimeout(resolve, 600));
+        if (activated?.status === 'activated') { repairActivated = true; await new Promise((resolve) => setTimeout(resolve, 600)); }
       }
       let result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && type === 'resume' && Array.from(document.querySelectorAll('button,a,[role="button"]')).some((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'file options')) return { status: 'options' }; if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match && inputs.length > 1) return { status: 'candidate', inputCount: inputs.length, fallbackIndex: type === 'resume' ? 0 : 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
+      if (result?.status === 'missing' && repairActivated) {
+        // Some ATS widgets invoke the Windows picker directly and never mount
+        // an input element. Let the bounded OS fallback finish that action,
+        // then rescan; if the provider still exposes no input, verify the
+        // expected filename in its visible upload surface.
+        const native = await chooseNativeFile(files[documentType]);
+        if (native.status === 'selected') {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); return match ? { status: 'ready', inputCount: inputs.length } : inputs.length ? { status: 'candidate', inputCount: inputs.length } : { status: 'native_selected' }; }`, documentType);
+          if (result?.status === 'native_selected') {
+            const expectedName = path.basename(files[documentType]).toLowerCase();
+            const visibleVerification = await executeOnDocument(`function (expectedName) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const text = clean(document.body && document.body.innerText); return text.includes(clean(expectedName)) ? { status: 'verified' } : { status: 'unverified' }; }`, expectedName);
+            if (visibleVerification?.status === 'verified') { results.push({ documentType, status: 'uploaded', nativePicker: true, optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint }); continue; }
+            result = { status: 'native_upload_unverified' };
+          }
+        }
+      }
       if (result?.status === 'missing') {
         const autofill = await executeOnDocument(`function () { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const controls = Array.from(document.querySelectorAll('button,a,[role="button"]')).filter((el) => !el.disabled && el.offsetParent !== null); const match = controls.find((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'autofill my application'); if (!match) return { status: 'missing' }; match.focus(); match['click'](); return { status: 'activated' }; }`);
         if (autofill?.status === 'activated') {
