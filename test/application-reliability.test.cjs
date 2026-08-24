@@ -27,7 +27,7 @@ test('workflow failure classification preserves retryable and user-decision dist
 
 test('safe-pass failures use AI-repair results before queueing and stop protected-field churn', () => {
   assert.deepEqual(classifySafePassFailure({ error: { code: 'protected_action' }, plan: { fields: [] } }), { state: 'needs_user_answer', reasonCode: 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: 0 });
-  assert.equal(classifySafePassFailure({ error: { code: 'safe_pass_retryable' }, attempt: 1 }).state, 'queued');
+  assert.equal(classifySafePassFailure({ error: { code: 'network_timeout' }, attempt: 1 }).state, 'queued');
   assert.equal(classifySafePassFailure({ error: { code: 'network_timeout' }, attempt: 2 }).reasonCode, 'safe_pass_retry_exhausted');
   assert.equal(classifySafePassFailure({ error: { code: 'unknown' }, plan: { fields: [{ action: 'blocked' }] } }).state, 'needs_user_answer');
 });
