@@ -773,7 +773,7 @@ async function startAutonomousApplicationQueue() {
         // An unavailable listing cannot be retried meaningfully. Preserve the
         // Keep the unavailable opportunity visible in the combined rejected /
         // withdrawn / archived pipeline column while removing it from claims.
-        coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
+        coachDatabase.jobs.archiveUnavailable(claimed.jobId);
         applicationBrowser.close();
         autonomousApplicationQueueState.activeApplicationId = null;
         autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
@@ -809,7 +809,7 @@ async function startAutonomousApplicationQueue() {
           coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'job_listing_unavailable', unavailableSignals: googleLogin?.signals || followUp?.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
           // Keep the blocked checkpoint as history and the dead opportunity
           // visible in the combined rejected / withdrawn / archived column.
-          coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
+          coachDatabase.jobs.archiveUnavailable(claimed.jobId);
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
           autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
