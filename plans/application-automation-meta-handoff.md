@@ -49,6 +49,31 @@ Known unrelated full-suite failures observed during validation:
 
 Next milestone: wrap the existing Dice browser path behind the orchestrator, observation, planning, execution, and verification boundaries without moving final submission authority out of the existing approval-gated path.
 
+### Phase 2 — Observe, plan, execute, verify: complete (2026-08-23)
+
+Completed in commits `7cd0458` and `1bedf68`:
+
+- Added [electron/jobs/automation/observation.cjs](../electron/jobs/automation/observation.cjs) to normalize the existing sanitized browser snapshot into bounded, provider-neutral observations.
+- Added [electron/jobs/automation/planner.cjs](../electron/jobs/automation/planner.cjs) with deterministic page classification for job listings, login, application forms, CAPTCHA, confirmation, and unavailable listings. It proposes only bounded handoff/login navigation or a user pause for protected states.
+- Added [electron/jobs/automation/executor.cjs](../electron/jobs/automation/executor.cjs) as the safe Dice browser adapter. It permits exact-label handoff and Google-login navigation only; it has no submit path.
+- Added [electron/jobs/automation/verifier.cjs](../electron/jobs/automation/verifier.cjs) to require verified navigation, classify unavailable listings, and keep blocked/protected actions inconclusive or user-gated.
+- Wired the existing autonomous Dice checkpoint in [electron/main.cjs](../electron/main.cjs) through `createApplicationOrchestrator()`. The main-process repository adapter persists step evidence through existing application events, replays successful idempotency keys, and routes outcomes through the central transition policy.
+- Preserved the latest redacted URL and automation checkpoint when a user returns an active application to the queue, allowing the next claim to reopen the same boundary.
+- Kept uploads, approved-field filling, final submission, confirmation detection, and employer-email verification behind their existing safety boundaries. Phase 2 does not authorize autonomous submission.
+- Added [test/application-automation-contracts.test.cjs](../test/application-automation-contracts.test.cjs) covering observation, page classification, planning, safe execution, verification, unavailable listings, login, and protected-form pauses.
+
+Phase 2 exit criteria are met: the existing Dice path runs through the observe/plan/execute/verify wrapper; the renderer does not own workflow transitions; one application persists a redacted URL/checkpoint and can be released/reclaimed from the same checkpoint; and final submission remains approval-gated.
+
+Validation completed:
+
+- Focused Phase 2, orchestrator, result-contract, and transition-policy tests: 11 passing.
+- `node --check electron/main.cjs` and all new automation modules: passing.
+- `npm.cmd run build`: passing, with only the existing Vite CommonJS/ESM and large-chunk warnings.
+- Electron restarted after both Phase 2 commits.
+- Computer Use inspection after restart: North Star rendered normally; autonomous queue showed `PAUSED`, `10 eligible`, `0 active`, `0 failed`, `0 blocked`; application queue showed its existing `PAUSED` / `1 failed` review state. No UI change was required.
+
+Known unrelated full-suite failures remain documented from the prior baseline: the existing browser-source contract assertion, the Stage 3 source contract assertion, and a Windows temporary-directory cleanup `EPERM` in the autonomous foundation test. These do not affect the focused Phase 2 validation or production build.
+
 ### Phase 1 — Normalize the workflow core: complete (2026-08-23)
 
 The remaining Phase 1 gaps are now closed in commit `0282a9a`:
