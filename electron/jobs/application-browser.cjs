@@ -165,7 +165,11 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
         };
         const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly);
         const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); });
-        return match || inputs.length ? { status: 'available', inputCount: inputs.length } : { status: 'missing' };
+        // A lone unlabeled input is not enough to prove that it belongs to
+        // this document type. In particular, a visible cover-letter drop zone
+        // can coexist with the profile's resume input; treating that resume
+        // input as reusable would upload the resume into the cover-letter slot.
+        return match || inputs.length > 1 ? { status: 'available', inputCount: inputs.length } : { status: 'missing' };
       }`, documentType);
       if (repairTarget?.label && existingInput?.status !== 'available') {
         const activated = await executeOnDocument(`function (label) {
