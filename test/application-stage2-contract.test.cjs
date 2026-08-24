@@ -66,6 +66,8 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /aiRepairAttempts: repairAttempts \+ 1/);
   assert.match(source, /state: needsUser \? 'needs_user_answer' : 'failed', checkpoint: \{ stage: 'opening', error: message/);
   assert.match(source, /current\?\.applicationId === applicationId/);
+  assert.match(source, /automation-queue:start', \(event, input\)/);
+  assert.match(source, /startAutonomousApplicationQueue\(applicationId\)/);
 });
 
 test('generic fixture drives adapter inspection, upload, and safe next-page navigation together', async () => {

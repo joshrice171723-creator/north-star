@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,saveJobApplicationUnknownQuestion: (input) => ipcRenderer.invoke('jobs:applications:unknown-questions:save', input)
   ,resolveJobApplicationUnknownQuestion: (input) => ipcRenderer.invoke('jobs:applications:unknown-questions:resolve', input)
   ,listJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:list')
-  ,startJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:start')
+  ,startJobApplicationAutomationQueue: (input) => ipcRenderer.invoke('jobs:applications:automation-queue:start', input)
   ,pauseJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:pause')
   ,approveJobApplicationForBatch: (input) => ipcRenderer.invoke('jobs:applications:automation-batch:approve', input)
   ,startApprovedJobApplicationBatch: () => ipcRenderer.invoke('jobs:applications:automation-batch:start')
