@@ -890,6 +890,7 @@ async function startAutonomousApplicationQueue() {
       // Preserve the opening failure checkpoint contract while adding the bounded
       // classification fields used by Stage 5 diagnostics.
       // state: 'failed', checkpoint: { stage: 'opening', error: message }
+      console.error('[application-queue] checkpoint failed', error?.stack || error);
       const message = String(error?.message || 'Application browser opening failed.').slice(0, 500); const failure = classifyApplicationFailure({ code: error?.code || 'opening_failed', message }); coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: failure.reasonCode } });
       applicationBrowser.close();
       autonomousApplicationQueueState.activeApplicationId = null;
