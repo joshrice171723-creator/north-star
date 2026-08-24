@@ -2725,7 +2725,7 @@ function registerDatabaseIpc() {
       const label = String(plan.targets?.[documentType]?.label || '').trim().slice(0, 200);
       if (!label) continue;
       const matches = observation.controls.filter((control) => String(control.label || '').trim() === label);
-      if (matches.length !== 1) throw new Error(`AI document-upload repair target for ${documentType} was not an exact visible control.`);
+      if (!matches.length) throw new Error(`AI document-upload repair target for ${documentType} was not an exact visible control.`);
       targets[documentType] = { label };
     }
     if (!Object.keys(targets).length) throw new Error('AI document-upload repair found no safe upload controls.');

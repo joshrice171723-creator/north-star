@@ -157,8 +157,8 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
           const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
           const controls = Array.from(document.querySelectorAll('button,a,label,[role="button"],[role="menuitem"]')).filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null);
           const matches = controls.filter((element) => clean(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('placeholder')) === clean(label));
-          if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'upload_repair_target_ambiguous' : 'upload_repair_target_missing' };
-          matches[0].focus(); matches[0].click();
+          if (!matches.length) return { status: 'blocked', reason: 'upload_repair_target_missing' };
+          matches.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top); matches[0].focus(); matches[0].click();
           return { status: 'activated' };
         }`, repairTarget.label);
         if (activated?.status === 'activated') await new Promise((resolve) => setTimeout(resolve, 600));
