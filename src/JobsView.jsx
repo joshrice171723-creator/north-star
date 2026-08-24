@@ -416,9 +416,11 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   };
   const refreshAutomationQueue = async () => {
     const status = await window.desktopShell?.listJobApplicationAutomationQueue?.();
-    if (!status) return;
+    if (!status) return null;
     const queue = await Promise.all((status.queue || []).map(async (entry) => ({ ...entry, unknownQuestions: entry.unknownQuestionCount ? await window.desktopShell?.listJobApplicationUnknownQuestions?.({ applicationId: entry.applicationId }) || [] : [] })));
-    setAutomationQueueStatus({ ...status, queue });
+    const nextStatus = { ...status, queue };
+    setAutomationQueueStatus(nextStatus);
+    return nextStatus;
   };
   useEffect(() => { let disposed = false; const sync = async () => { try { const status = await window.desktopShell?.listJobApplicationAutomationQueue?.(); if (disposed || !status) return; const queue = await Promise.all((status.queue || []).map(async (entry) => ({ ...entry, unknownQuestions: entry.unknownQuestionCount ? await window.desktopShell?.listJobApplicationUnknownQuestions?.({ applicationId: entry.applicationId }) || [] : [] }))); if (!disposed) setAutomationQueueStatus({ ...status, queue }); } catch { /* queue polling is best-effort while Electron is starting */ } }; sync(); const timer = window.setInterval(sync, 2500); return () => { disposed = true; window.clearInterval(timer); }; }, []);
    const startAutomationQueue = async () => {
@@ -432,13 +434,30 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
      if (status) { setAutomationQueueStatus(status); await refreshAutomationQueue(); }
    };
   const pauseAutomationQueue = async () => { const status = await window.desktopShell?.pauseJobApplicationAutomationQueue?.(); if (status) setAutomationQueueStatus(status); };
-  const resolveAutomationQuestion = async (question, suggestedAnswer = '') => { const answerText = String(automationAnswers[question.id] ?? suggestedAnswer).trim(); if (!answerText) return; await window.desktopShell?.resolveJobApplicationUnknownQuestion?.({ id: question.id, answerText }); setAutomationAnswers((current) => ({ ...current, [question.id]: '' })); await refreshAutomationQueue(); };
+  const resumeAfterAnswer = async (applicationId) => {
+    const status = await refreshAutomationQueue();
+    const entry = status?.queue?.find((candidate) => candidate.applicationId === applicationId);
+    // Once the final unanswered field is approved, resume the same job
+    // immediately; remaining questions stay visible instead of auto-skipping.
+    if (!entry || entry.automationState !== 'queued' || entry.automationCheckpoint?.answerReadyForRetry !== true || automationRetryingIds.has(applicationId)) return;
+    setAutomationRetryingIds((current) => new Set(current).add(applicationId));
+    try {
+      const result = await window.desktopShell?.retryJobApplicationAutomation?.({ applicationId });
+      if (result?.status) setAutomationQueueStatus(result.status);
+      await refreshAutomationQueue();
+    } catch (cause) {
+      setAutomationQueueStatus((current) => ({ ...current, message: cause?.message || 'The approved answer was saved, but the application could not resume automatically.' }));
+    } finally {
+      setAutomationRetryingIds((current) => { const next = new Set(current); next.delete(applicationId); return next; });
+    }
+  };
+  const resolveAutomationQuestion = async (question, suggestedAnswer = '') => { const answerText = String(automationAnswers[question.id] ?? suggestedAnswer).trim(); if (!answerText) return; await window.desktopShell?.resolveJobApplicationUnknownQuestion?.({ id: question.id, answerText }); setAutomationAnswers((current) => ({ ...current, [question.id]: '' })); await resumeAfterAnswer(question.applicationId); };
   // AI drafts remain review-only, but carrying them through the checkpoint
   // removes unnecessary typing while preserving the explicit approval gate.
   const answerSuggestionFor = (entry, question) => { const fingerprint = String(question?.questionKey || '').replace(/^safe-pass:/, ''); return entry?.automationCheckpoint?.unresolvedFields?.find((field) => field.fieldFingerprint === fingerprint)?.suggestedValue || ''; };
   const openAutomationAnswerModal = async (entry) => { setAutomationAnswerError(''); const question = entry.unknownQuestions?.find((candidate) => !String(candidate.questionKey || '').startsWith('checkpoint:')) || null; const suggestion = answerSuggestionFor(entry, question); if (question && suggestion) setAutomationAnswers((current) => ({ ...current, [question.id]: current[question.id] || suggestion })); setAutomationAnswerModal({ entry, question }); };
   const openFirstAutomationAnswer = () => { setAutomationQueueOpen(true); const entry = automationQueueStatus.queue.find((candidate) => candidate.automationState === 'needs_user_answer'); if (entry) openAutomationAnswerModal(entry); };
-  const saveAutomationModalAnswer = async () => { const question = automationAnswerModal?.question; const answerText = String(automationAnswers[question?.id] || '').trim(); if (!question || !answerText) return; setAutomationAnswerSaving(true); setAutomationAnswerError(''); try { await window.desktopShell?.resolveJobApplicationUnknownQuestion?.({ id: question.id, answerText }); setAutomationAnswers((current) => ({ ...current, [question.id]: '' })); setAutomationAnswerModal(null); await refreshAutomationQueue(); } catch (cause) { setAutomationAnswerError(cause?.message || 'Could not save this answer.'); } finally { setAutomationAnswerSaving(false); } };
+  const saveAutomationModalAnswer = async () => { const question = automationAnswerModal?.question; const entry = automationAnswerModal?.entry; const answerText = String(automationAnswers[question?.id] ?? answerSuggestionFor(entry, question)).trim(); if (!question || !answerText) return; setAutomationAnswerSaving(true); setAutomationAnswerError(''); try { await window.desktopShell?.resolveJobApplicationUnknownQuestion?.({ id: question.id, answerText }); setAutomationAnswers((current) => ({ ...current, [question.id]: '' })); setAutomationAnswerModal(null); await resumeAfterAnswer(question.applicationId); } catch (cause) { setAutomationAnswerError(cause?.message || 'Could not save this answer.'); } finally { setAutomationAnswerSaving(false); } };
   const releaseAutomationApplication = async (entry) => {
     const answerReady = entry.automationState === 'queued' && entry.automationCheckpoint?.answerReadyForRetry === true;
     if ((entry.automationState !== 'failed' && !answerReady) || automationRetryingIds.has(entry.applicationId)) return;
