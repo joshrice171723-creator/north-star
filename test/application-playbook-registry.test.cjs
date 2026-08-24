@@ -34,4 +34,8 @@ test('a changed fingerprint does not load a stale playbook step', () => {
   const registry = createPlaybookRegistry({ repository });
   registry.recordVerifiedSuccess({ siteHost: 'dice.example', atsKey: 'dice', pageFingerprint: 'fp-1', plan: { stepId: 'dice-handoff', actionType: 'handoff', confidence: 0.98 } });
   assert.equal(registry.match({ siteHost: 'dice.example', atsKey: 'dice', pageFingerprint: 'fp-changed', stepKey: 'dice-handoff' }), null);
+  registry.recordVerifiedSuccess({ siteHost: 'dice.example', atsKey: 'dice', pageFingerprint: 'fp-changed', plan: { stepId: 'dice-handoff', actionType: 'handoff', confidence: 0.99 } });
+  assert.equal(repository.steps.length, 1);
+  assert.equal(repository.steps[0].pageFingerprint, 'fp-changed');
+  assert.equal(repository.steps[0].successIncrement, 1);
 });

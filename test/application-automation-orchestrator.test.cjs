@@ -35,3 +35,19 @@ test('orchestrator executes and records one safe step, then replays a completed 
   assert.equal(second.status, 'replayed');
   assert.equal(calls.filter(([kind]) => kind === 'execute').length, 1);
 });
+
+test('playbook persistence failure does not fail a verified workflow checkpoint', async () => {
+  const calls = [];
+  const orchestrator = createApplicationOrchestrator({
+    repository: { getApplication: () => base, getJob: () => ({ id: 'job-1', stage: 'ready' }), recordStep: () => {}, recordEvent: (entry) => calls.push(entry), updateApplicationState: () => base },
+    playbookRegistry: { recordVerifiedSuccess: () => { throw new Error('learning storage unavailable'); } },
+    observePage: async () => ({ pageFingerprint: 'page-a', pageType: 'application_form', site: 'dice.example' }),
+    planNextStep: async () => ({ actionType: 'handoff', targetFingerprint: 'page-a', stepType: 'safe_navigation', confidence: 0.98 }),
+    executeSafeStep: async () => ({ status: 'executed' }),
+    verifyStepResult: async () => ({ status: 'verified', outcome: 'continue', confidence: 0.98 }),
+  });
+  const result = await orchestrator.runApplicationCheckpoint({ applicationId: 'app-1', checkpoint: { version: 1 } });
+  assert.equal(result.status, 'continued');
+  assert.equal(result.learning.status, 'deferred');
+  assert.equal(calls[0].eventType, 'playbook_persistence_failed');
+});
