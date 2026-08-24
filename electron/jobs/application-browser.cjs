@@ -137,7 +137,16 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
       }
       if (result?.status === 'missing' && documentType === 'cover_letter') {
         const activated = await executeOnDocument(`function () { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const controls = Array.from(document.querySelectorAll('button,a,[role="button"],label,[role="presentation"]')).filter((el) => !el.disabled && el.offsetParent !== null); const upload = controls.find((el) => /^(upload your cover letter|upload cover letter|choose file)$/.test(clean(el.innerText || el.textContent || el.getAttribute('aria-label')))); if (!upload) return { status: 'missing' }; upload.focus(); upload.click(); return { status: 'activated' }; }`);
-        if (activated?.status === 'activated') { await new Promise((resolve) => setTimeout(resolve, 600)); result = await executeOnDocument(`function () { const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); return inputs.length ? { status: 'candidate', inputCount: inputs.length } : { status: 'missing' }; }`); }
+        if (activated?.status === 'activated') {
+          // Custom upload widgets may create their file input asynchronously
+          // after the visible drop zone is activated; poll briefly before
+          // classifying the cover letter as missing.
+          for (let attempt = 0; attempt < 6; attempt += 1) {
+            result = await executeOnDocument(`function () { const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); return inputs.length ? { status: 'candidate', inputCount: inputs.length } : { status: 'missing' }; }`);
+            if (result?.status === 'candidate') break;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
       }
       if (!['ready', 'candidate'].includes(result?.status)) { results.push({ documentType, status: result?.status || 'missing', pageFingerprint: snapshot.pageFingerprint }); continue; }
       const debuggerClient = view.webContents.debugger; let attached = false;
