@@ -32,6 +32,7 @@ const { createSafeExecutor } = require('./jobs/automation/executor.cjs');
 const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
 const { createPlaybookRegistry } = require('./jobs/automation/playbook-registry.cjs');
 const { createRepairLoop } = require('./jobs/automation/repair-loop.cjs');
+const { makeIdempotencyKey } = require('./jobs/automation/idempotency.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, aiCandidateFields, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
@@ -81,9 +82,9 @@ let googleVoiceSnapshot = null;
 const googleVoiceUrl = 'https://voice.google.com/';
 const googleVoicePartition = 'persist:google-voice-native';
 const externalAccountCredentialsPath = () => path.join(app.getPath('userData'), 'external-application-credentials.json');
-function readExternalAccountCredentials() { try { const stored = JSON.parse(fs.readFileSync(externalAccountCredentialsPath(), 'utf8')); if (!stored || typeof stored !== 'object') return {}; const decrypt = (value) => safeStorage.isEncryptionAvailable() ? JSON.parse(safeStorage.decryptString(Buffer.from(value, 'base64'))) : value; return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, decrypt(value)]).filter(([, value]) => value && typeof value === 'object')); } catch { return {}; } }
-function writeExternalAccountCredentials(credentials) { const encrypted = safeStorage.isEncryptionAvailable() ? Object.fromEntries(Object.entries(credentials).map(([key, value]) => [key, safeStorage.encryptString(JSON.stringify(value)).toString('base64')])) : credentials; const destination = externalAccountCredentialsPath(); const temporary = `${destination}.tmp-${process.pid}`; fs.mkdirSync(path.dirname(destination), { recursive: true }); fs.writeFileSync(temporary, JSON.stringify(encrypted), { mode: 0o600 }); fs.renameSync(temporary, destination); }
-function saveExternalAccountCredentials(input = {}) { const host = String(input.host || '').trim().toLowerCase(); const username = String(input.username || '').trim(); const password = String(input.password || ''); const credentialRef = String(input.credentialRef || credentialReference(host, username)).trim(); if (!/^[a-z0-9.-]{1,253}$/.test(host) || !credentialRef || !username) throw new Error('The redirected employer site and account username are required before saving.'); const credentials = readExternalAccountCredentials(); const previous = credentials[credentialRef]; credentials[credentialRef] = { host, username, password: password || previous?.password || '', savedAt: previous?.savedAt || new Date().toISOString(), updatedAt: new Date().toISOString() }; writeExternalAccountCredentials(credentials); return { configured: Boolean(credentials[credentialRef].password), host, username, secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
+function readExternalAccountCredentials() { if (!safeStorage.isEncryptionAvailable()) return {}; try { const stored = JSON.parse(fs.readFileSync(externalAccountCredentialsPath(), 'utf8')); if (!stored || typeof stored !== 'object') return {}; return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, JSON.parse(safeStorage.decryptString(Buffer.from(value, 'base64')))]).filter(([, value]) => value && typeof value === 'object')); } catch { return {}; } }
+function writeExternalAccountCredentials(credentials) { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable. Restart the app before saving an employer login.'); const encrypted = Object.fromEntries(Object.entries(credentials).map(([key, value]) => [key, safeStorage.encryptString(JSON.stringify(value)).toString('base64')])); const destination = externalAccountCredentialsPath(); const temporary = `${destination}.tmp-${process.pid}`; fs.mkdirSync(path.dirname(destination), { recursive: true }); fs.writeFileSync(temporary, JSON.stringify(encrypted), { mode: 0o600 }); fs.renameSync(temporary, destination); }
+function saveExternalAccountCredentials(input = {}) { const host = String(input.host || '').trim().toLowerCase(); const username = String(input.username || '').trim(); const password = String(input.password || ''); const credentialRef = String(input.credentialRef || credentialReference(host, username)).trim(); if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable. Restart the app before saving an employer login.'); if (!/^[a-z0-9.-]{1,253}$/.test(host) || !credentialRef || !username) throw new Error('The redirected employer site and account username are required before saving.'); const credentials = readExternalAccountCredentials(); const previous = credentials[credentialRef]; credentials[credentialRef] = { host, username, password: password || previous?.password || '', savedAt: previous?.savedAt || new Date().toISOString(), updatedAt: new Date().toISOString() }; writeExternalAccountCredentials(credentials); return { configured: Boolean(credentials[credentialRef].password), host, username, secureStorageAvailable: true }; }
 function externalAccountCredentialStatus(credentialRef) { const credential = readExternalAccountCredentials()[String(credentialRef || '')]; return { configured: Boolean(credential?.password), host: credential?.host || '', username: credential?.username || '', secureStorageAvailable: safeStorage.isEncryptionAvailable() }; }
 const googleVoiceSettingsPath = () => path.join(app.getPath('userData'), 'google-voice-settings.json');
 function readGoogleVoiceSettings() {
@@ -741,13 +742,53 @@ const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'o
 const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
-const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
+const autonomousApplicationQueueState = { running: false, paused: true, autopilot: false, activeApplicationId: null, activeStep: '', message: '' };
 const MAX_UNAVAILABLE_AUTO_ADVANCES = 3;
 let autonomousSafeFormPass = null;
+let autonomousAutopilotTimer = null;
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
-  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, blocked: queue.filter((entry) => entry.automationState === 'blocked').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
+  return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, autopilot: autonomousApplicationQueueState.autopilot, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, activeStep: autonomousApplicationQueueState.activeStep, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, blocked: queue.filter((entry) => entry.automationState === 'blocked').length, awaitingEmail: queue.filter((entry) => entry.automationState === 'verifying_email_confirmation').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
+}
+function scheduleAutopilotNext() {
+  if (!autonomousApplicationQueueState.autopilot || autonomousApplicationQueueState.paused || autonomousApplicationQueueState.activeApplicationId) return;
+  if (autonomousAutopilotTimer) clearTimeout(autonomousAutopilotTimer);
+  autonomousApplicationQueueState.running = false;
+  autonomousAutopilotTimer = setTimeout(() => {
+    autonomousAutopilotTimer = null;
+    if (autonomousApplicationQueueState.autopilot && !autonomousApplicationQueueState.paused && !autonomousApplicationQueueState.activeApplicationId) startAutonomousApplicationQueue().catch((error) => { autonomousApplicationQueueState.autopilot = false; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.message = `Autopilot stopped: ${String(error?.message || error).slice(0, 300)}`; });
+  }, 0);
+}
+async function submitAutopilotApplication(applicationId) {
+  const application = coachDatabase.applications.get(applicationId);
+  const browser = applicationBrowser.publicState();
+  const snapshot = browser?.snapshot || await applicationBrowser.inspect();
+  const submitFields = (snapshot?.fields || []).filter((field) => field.elementType === 'button' && field.category === 'final_submit' && /^(submit|submit application|send application|finish application|complete application)$/i.test(field.label));
+  if (submitFields.length !== 1) {
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...application.automationCheckpoint, stage: 'final_submit_review', reasonCode: submitFields.length ? 'final_submit_ambiguous' : 'final_submit_not_found', pageFingerprint: snapshot?.pageFingerprint || '' } });
+    return { status: 'needs_user_answer', reason: submitFields.length ? 'final_submit_ambiguous' : 'final_submit_not_found' };
+  }
+  const idempotencyKey = makeIdempotencyKey({ applicationId, checkpointVersion: Number(application.automationAttempt) || 0, actionType: 'final_submit', targetFingerprint: snapshot.pageFingerprint });
+  if (application.automationCheckpoint?.autopilotSubmission?.idempotencyKey === idempotencyKey) return { status: 'already_submitted', idempotencyKey };
+  // Persist the intent before the irreversible click. A crash or timeout after
+  // this point is review-only; it must never produce a blind second submission.
+  const checkpoint = { ...application.automationCheckpoint, stage: 'submitting', autopilotSubmission: { idempotencyKey, pageFingerprint: snapshot.pageFingerprint, requestedAt: new Date().toISOString() } };
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'submitting', checkpoint });
+  coachDatabase.applications.workflowSteps.save({ applicationId, jobId: application.jobId, checkpointVersion: Number(application.automationAttempt) || 0, stepKey: 'autopilot-final-submit', stepType: 'final_submit', pageFingerprint: snapshot.pageFingerprint, plan: { actionType: 'final_submit', targetLabel: submitFields[0].label }, execution: { status: 'started' }, verification: {}, outcome: 'planned', idempotencyKey });
+  const submission = await applicationBrowser.submit();
+  if (submission.status !== 'submitted') {
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...checkpoint, stage: 'final_submit_review', reasonCode: submission.reason || 'final_submit_failed' } });
+    return { status: 'needs_user_answer', reason: submission.reason || 'final_submit_failed' };
+  }
+  const confirmation = await applicationBrowser.detectConfirmationPage();
+  const submittedCheckpoint = { ...checkpoint, autopilotSubmission: { ...checkpoint.autopilotSubmission, submittedAt: new Date().toISOString(), previousPageFingerprint: submission.previousPageFingerprint, pageFingerprint: submission.pageFingerprint }, confirmation: confirmation.state === 'confirmed' ? confirmation : null };
+  coachDatabase.applications.updateAutomationState({ applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint: submittedCheckpoint });
+  coachDatabase.applications.workflowSteps.save({ applicationId, jobId: application.jobId, checkpointVersion: Number(application.automationAttempt) || 0, stepKey: 'autopilot-final-submit', stepType: 'final_submit', pageFingerprint: snapshot.pageFingerprint, plan: { actionType: 'final_submit', targetLabel: submitFields[0].label }, execution: { status: 'submitted' }, verification: { confirmationState: confirmation.state }, outcome: 'submitted_pending_verification', idempotencyKey });
+  if (confirmation.state === 'confirmed') {
+    try { await confirmApplicationSubmission({ applicationId, userAcknowledged: true, confirmation }); } catch { /* browser evidence remains durable while Gmail catches up */ }
+  }
+  return { status: confirmation.state === 'confirmed' ? 'awaiting_email' : 'verifying_confirmation', idempotencyKey };
 }
 async function requeueAndRetryAutonomousApplication({ applicationId, checkpoint, message } = {}) {
   coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint });
