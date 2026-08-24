@@ -892,14 +892,41 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
         }
       }
     } catch (error) {
-      // Preserve the opening failure checkpoint contract while adding the bounded
-      // classification fields used by Stage 5 diagnostics.
-      // state: 'failed', checkpoint: { stage: 'opening', error: message }
       console.error('[application-queue] checkpoint failed', error?.stack || error);
-      const message = String(error?.message || 'Application browser opening failed.').slice(0, 500); const failure = classifyApplicationFailure({ code: error?.code || 'opening_failed', message }); coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: failure.reasonCode } });
-      applicationBrowser.close();
-      autonomousApplicationQueueState.activeApplicationId = null;
-      autonomousApplicationQueueState.message = `Checkpoint failed: ${message}`;
+      const message = String(error?.message || 'Application browser opening failed.').slice(0, 500);
+      const failure = classifyApplicationFailure({ code: error?.code || 'opening_failed', message });
+      const browserState = applicationBrowser.publicState();
+      const currentCheckpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
+      const repairAttempts = Number(currentCheckpoint.aiRepairAttempts || 0);
+      // Opening failures can still leave a usable page behind (for example an
+      // interstitial or changed handoff). Let the bounded AI recovery planner
+      // inspect that page once before converting the application to failure.
+      if (repairAttempts < 1 && browserState?.applicationId === claimed.id && !['authentication', 'captcha', 'protected_action'].includes(failure.class)) {
+        try {
+          const repair = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: message });
+          if (repair.status === 'applied') {
+            coachDatabase.applications.releaseAutomation({ applicationId: claimed.id, state: 'queued', checkpoint: { ...currentCheckpoint, aiRepairAttempts: repairAttempts + 1, stage: 'opening_repaired', reasonCode: 'opening_ai_repaired', repairReason: repair.plan?.reason || '', retryQueuedAt: new Date().toISOString() } });
+            applicationBrowser.close();
+            autonomousApplicationQueueState.activeApplicationId = null;
+            autonomousApplicationQueueState.message = 'AI repaired the opening page; the same application is queued for retry.';
+          } else {
+            throw new Error(repair.reason || 'AI opening repair did not produce a safe action.');
+          }
+        } catch (repairError) {
+          console.warn('[application-queue] opening repair unavailable', repairError?.message || repairError);
+          const needsUser = ['authentication', 'captcha', 'protected_action'].includes(failure.class);
+          coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: needsUser ? 'needs_user_answer' : 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: needsUser ? 'opening_requires_user' : failure.reasonCode, aiRepairError: String(repairError?.message || '').slice(0, 300) } });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.message = needsUser ? 'Opening requires your sign-in, CAPTCHA, or protected-action decision.' : `Checkpoint failed after bounded AI repair: ${message}`;
+        }
+      } else {
+        const needsUser = ['authentication', 'captcha', 'protected_action'].includes(failure.class);
+        coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: needsUser ? 'needs_user_answer' : 'failed', checkpoint: { stage: 'opening', error: message, failureClass: failure.class, retryable: failure.retryable, reasonCode: needsUser ? 'opening_requires_user' : failure.reasonCode } });
+        applicationBrowser.close();
+        autonomousApplicationQueueState.activeApplicationId = null;
+        autonomousApplicationQueueState.message = needsUser ? 'Opening requires your sign-in, CAPTCHA, or protected-action decision.' : `Checkpoint failed: ${message}`;
+      }
     }
   } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
   // A successful checkpoint keeps the browser-owned application active for
