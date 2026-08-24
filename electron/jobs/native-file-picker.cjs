@@ -20,7 +20,7 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
     '    Set-Clipboard -Value $env:NORTHSTAR_PICKER_PATH',
     '    $shell.SendKeys("^v")',
     '    Start-Sleep -Milliseconds 100',
-    '    $shell.SendKeys("{ENTER}")',
+    '    $shell.SendKeys("%o")',
     '    exit 0',
     '  }',
     '  Start-Sleep -Milliseconds 100',
