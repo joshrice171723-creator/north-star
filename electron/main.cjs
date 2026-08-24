@@ -843,10 +843,14 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
         let formVisible = false;
         for (let attempt = 0; attempt < 60; attempt += 1) {
           const applicationFields = liveSnapshot?.fields?.filter((field) => ['identity_contact', 'work_authorization', 'compensation', 'free_text', 'file_upload'].includes(field.category)) || [];
+          const hasAutofillControl = Boolean(liveSnapshot?.fields?.some((field) => /^autofill my application$/i.test(String(field.label || '').trim())));
           // Listing pages commonly contain one newsletter email field and many
           // navigation links. Require an upload control or multiple classified
-          // application fields before attempting the document pass.
-          formVisible = Boolean(liveSnapshot?.fields?.some((field) => field.category === 'file_upload') || applicationFields.filter((field) => field.category !== 'file_upload').length >= 2);
+          // application fields before attempting the document pass. Some
+          // providers expose the form behind an exact Autofill control before
+          // creating file inputs; that control is itself a valid form signal
+          // and lets the shared upload/AI path activate it safely.
+          formVisible = Boolean(hasAutofillControl || liveSnapshot?.fields?.some((field) => field.category === 'file_upload') || applicationFields.filter((field) => field.category !== 'file_upload').length >= 2);
           // Keep the full bounded wait so slower employer SPAs get the same
           // form-rendering window promised by the 60-attempt retry loop.
           if (formVisible || attempt === 59) break;
