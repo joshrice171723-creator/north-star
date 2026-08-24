@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { matchSubmissionConfirmation } = require('../electron/jobs/application-confirmation-email.cjs');
-const { classifyApplicationFailure, boundedRetry } = require('../electron/jobs/application-reliability.cjs');
+const { classifyApplicationFailure, classifyWorkflowFailure, boundedRetry } = require('../electron/jobs/application-reliability.cjs');
 
 test('submission confirmation requires explicit language and current job evidence', () => {
   const base = { id: 'email-1', recipients: 'josh@example.com', receivedAt: '2026-08-23T15:05:00Z', subject: 'Application received', body: 'Thank you for applying to Acme for the Forward Deployed Engineer role. Confirmation number: ABC-123.' };
@@ -16,4 +16,11 @@ test('failure classification is bounded and retry policy never retries protected
   assert.deepEqual(classifyApplicationFailure({ code: 'network_timeout', message: 'Timed out' }), { class: 'network', retryable: true, reasonCode: 'network_timeout', message: 'Timed out' });
   assert.equal(boundedRetry({ attempt: 0, maxAttempts: 2, failure: { code: 'network_timeout' } }).exhausted, false);
   assert.equal(boundedRetry({ attempt: 0, maxAttempts: 2, failure: { code: 'captcha_detected' } }).exhausted, true);
+});
+
+test('workflow failure classification preserves retryable and user-decision distinctions', () => {
+  assert.equal(classifyWorkflowFailure({ code: 'network_timeout' }).outcome, 'retryable_failure');
+  assert.equal(classifyWorkflowFailure({ code: 'unsupported_site' }).outcome, 'unsupported_site');
+  assert.equal(classifyWorkflowFailure({ code: 'captcha_detected' }).outcome, 'needs_user');
+  assert.equal(classifyWorkflowFailure({ code: 'unknown_question' }).requiresUser, true);
 });
