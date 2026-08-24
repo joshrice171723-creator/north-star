@@ -376,6 +376,19 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
       sqlite.prepare("UPDATE job_applications SET automation_state = 'needs_user_answer', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state IN ('queued', 'failed')").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
       recordApplicationEvent({ applicationId: row.id, eventType: 'automation_review_normalized', summary: 'Safe-pass blocker moved to the visible answer/review checkpoint.', metadata: { previousState: row.automation_state, previousReasonCode: checkpoint.reasonCode } });
     }
+    // A historical cover-letter upload miss on a visibly optional control is
+    // not a user question. Requeue only this exact stale shape when no real
+    // unanswered question exists; required uploads and all other reviews stay put.
+    const optionalCoverRows = sqlite.prepare("SELECT id, automation_checkpoint_json FROM job_applications WHERE deleted_at IS NULL AND automation_state = 'needs_user_answer'").all();
+    for (const row of optionalCoverRows) {
+      const checkpoint = parseObject(row.automation_checkpoint_json, {});
+      const openQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
+      if (openQuestions || checkpoint.reasonCode !== 'safe_pass_requires_review' || !/Document upload incomplete:\\s*cover_letter:missing/i.test(String(checkpoint.lastError || ''))) continue;
+      const { lastError, failureClass, retryable, safePassFailedAt, ...requeuedCheckpoint } = checkpoint;
+      const nextCheckpoint = { ...requeuedCheckpoint, stage: 'form_retry', reasonCode: 'optional_cover_letter_warning', uploadWarnings: [{ documentType: 'cover_letter', status: 'missing', optional: true }], optionalCoverLetterRecoveredAt: stamp };
+      sqlite.prepare("UPDATE job_applications SET automation_state = 'queued', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state = 'needs_user_answer'").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
+      recordApplicationEvent({ applicationId: row.id, eventType: 'optional_cover_letter_requeued', summary: 'Optional cover-letter upload warning returned to the queue.', metadata: { previousReasonCode: checkpoint.reasonCode } });
+    }
     return sqlite.prepare("SELECT a.*, j.company, j.role_title, j.stage, j.url AS job_url, j.canonical_url FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' ORDER BY CASE a.automation_state WHEN 'opening' THEN 0 WHEN 'needs_user_answer' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, a.last_activity_at ASC").all().map((row) => {
       const eligibility = autonomousEligibility(row); const unknownQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
       const checkpoint = parseObject(row.automation_checkpoint_json, {});
