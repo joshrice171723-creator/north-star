@@ -514,6 +514,7 @@ async function checkApplicationActivation(applicationId) {
   const attempt = coachDatabase.applications.recordActivationAttempt({ id: `activation-${applicationId}`, applicationId, host: account.host, recipient: account.username, status: 'used', messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, codeHash: candidate.codeHash, signals: candidate.signals, requestedAt, matchedAt: candidate.receivedAt });
   coachDatabase.applications.saveExternalAccount({ applicationId, host: account.host, username: account.username, credentialRef: account.credentialRef, status: 'active' });
   coachDatabase.applications.updateAutomationState({ applicationId, state: 'detecting_form', checkpoint: { activation: { messageId: candidate.messageId, activationUrlRedacted: candidate.activationUrlRedacted, hasCode: Boolean(candidate.code), signals: candidate.signals, usedAt: new Date().toISOString() } } });
+  if (autonomousApplicationQueueState.activeApplicationId === applicationId && autonomousSafeFormPass) await autonomousSafeFormPass(applicationId);
   return { status: 'activated', activation: { status: activation.status, pageFingerprint: activation.pageFingerprint || '' }, attempt, browser: applicationBrowser.publicState() };
 }
 async function confirmApplicationSubmission(input = {}) {

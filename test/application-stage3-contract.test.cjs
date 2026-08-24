@@ -15,6 +15,9 @@ test('Stage 3 source contract keeps account passwords out of renderer and persis
   assert.match(browser, /const activate = async/);
   assert.match(browser, /activation_control_ambiguous/);
   assert.doesNotMatch(browser, /requestSubmit\(|\.submit\(|\.click\(/);
+  assert.match(main, /autonomousApplicationQueueState\.activeApplicationId === applicationId && autonomousSafeFormPass/);
+  const panel = fs.readFileSync(path.join(__dirname, '..', 'src', 'jobs', 'ApplicationBrowserPanel.jsx'), 'utf8');
+  assert.match(panel, /setInterval\(\(\) => \{ checkActivation\(\)\.catch/);
 });
 
 test('account reuse and activation checkpoint survive a database restart without raw activation payloads', () => {
