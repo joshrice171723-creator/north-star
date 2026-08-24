@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { observePage } = require('../electron/jobs/automation/observation.cjs');
-const { planNextStep } = require('../electron/jobs/automation/planner.cjs');
+const { planNextStep, classifyPageType } = require('../electron/jobs/automation/planner.cjs');
 const { createSafeExecutor } = require('../electron/jobs/automation/executor.cjs');
 const { createStepVerifier } = require('../electron/jobs/automation/verifier.cjs');
 
@@ -32,4 +32,13 @@ test('phase two verifier classifies unavailable listings as terminal queue trans
   const result = await verifier({ plan: { targetFingerprint: 'fp-3' }, execution: { status: 'unavailable', reason: 'job_listing_unavailable', signals: ['closed'] }, applicationId: 'app-1' });
   assert.equal(result.outcome, 'listing_unavailable');
   assert.equal(result.status, 'verified');
+});
+
+test('phase two planner classifies login and protected form checkpoints without authorizing submission', () => {
+  const login = { pageFingerprint: 'login-fp', pageTitle: 'Sign in', fields: [{ category: 'navigation', label: 'Continue with Google' }] };
+  assert.equal(classifyPageType(login), 'login');
+  assert.equal(planNextStep({ observation: login }).actionType, 'open_google_login');
+  const form = { pageFingerprint: 'form-fp', pageTitle: 'Application', fields: [{ inputType: 'file', category: 'protected', label: 'Resume upload' }] };
+  assert.equal(classifyPageType(form), 'application_form');
+  assert.equal(planNextStep({ observation: form }).actionType, 'pause_for_user');
 });
