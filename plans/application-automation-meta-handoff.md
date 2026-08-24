@@ -74,6 +74,27 @@ Validation completed:
 
 Known unrelated full-suite failures remain documented from the prior baseline: the existing browser-source contract assertion, the Stage 3 source contract assertion, and a Windows temporary-directory cleanup `EPERM` in the autonomous foundation test. These do not affect the focused Phase 2 validation or production build.
 
+### Phase 3 — Playbook storage: complete (2026-08-23)
+
+Completed in commit `667797f`:
+
+- Added migration [electron/migrations/0031_application_site_playbooks.sql](../electron/migrations/0031_application_site_playbooks.sql) for versioned site playbooks, semantic steps, and repair-history storage.
+- Added [electron/jobs/automation/playbook-registry.cjs](../electron/jobs/automation/playbook-registry.cjs) with site/ATS/workflow/fingerprint matching, confidence tracking, candidate creation after verified success, and safe reuse metadata.
+- Added SQLite persistence methods under `coachDatabase.applications.playbooks` and wired the registry into the Phase 2 orchestrator.
+- Updated the planner to consume a matching fingerprinted playbook step only; changed fingerprints return no match and cannot execute stale selectors.
+- Kept every stored step behind the existing safe executor/verifier and final submission approval boundary.
+- Added [test/application-playbook-registry.test.cjs](../test/application-playbook-registry.test.cjs) covering candidate creation, matching reuse, planner consumption, and stale-fingerprint rejection.
+
+Phase 3 exit criteria are met: a verified Dice step creates a candidate playbook, a second matching checkpoint loads the stored step, and a changed page fingerprint does not silently reuse stale targets. The playbook layer remains conservative: candidates are visible and reusable through the safe contract, while only verified/high-confidence records qualify for unattended reuse metadata.
+
+Validation completed:
+
+- Focused Phase 2/3 and core policy tests: 13 passing.
+- SQLite migration, persistence, close/reopen check: passing.
+- `node --check` for changed main/database/automation modules: passing.
+- `npm.cmd run build`: passing with only existing Vite config and chunk-size warnings.
+- Electron restarted after the Phase 3 commit; final Computer Use inspection remains required before handoff.
+
 ### Phase 1 — Normalize the workflow core: complete (2026-08-23)
 
 The remaining Phase 1 gaps are now closed in commit `0282a9a`:
