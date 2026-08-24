@@ -773,6 +773,7 @@ async function startAutonomousApplicationQueue() {
         // An unavailable listing cannot be retried meaningfully. Preserve the
         // application checkpoint for auditability, then archive the job so it
         // leaves both the Ready board and autonomous queue.
+        coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
         coachDatabase.jobs.delete(claimed.jobId);
         applicationBrowser.close();
         autonomousApplicationQueueState.activeApplicationId = null;
@@ -809,6 +810,7 @@ async function startAutonomousApplicationQueue() {
           coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'job_listing_unavailable', unavailableSignals: googleLogin?.signals || followUp?.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
           // Keep the blocked checkpoint as history while removing the dead
           // opportunity from future queue claims and the active job board.
+          coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
           coachDatabase.jobs.delete(claimed.jobId);
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
