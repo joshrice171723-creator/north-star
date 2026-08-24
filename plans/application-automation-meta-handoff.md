@@ -49,6 +49,18 @@ Known unrelated full-suite failures observed during validation:
 
 Next milestone: wrap the existing Dice browser path behind the orchestrator, observation, planning, execution, and verification boundaries without moving final submission authority out of the existing approval-gated path.
 
+### Phase 1 — Normalize the workflow core: complete (2026-08-23)
+
+The remaining Phase 1 gaps are now closed in commit `0282a9a`:
+
+- Added [electron/jobs/automation/idempotency.cjs](../electron/jobs/automation/idempotency.cjs) for stable application/checkpoint/action/target keys.
+- Added [electron/jobs/automation/orchestrator.cjs](../electron/jobs/automation/orchestrator.cjs), an independent repository-driven one-safe-step orchestrator that observes, plans, checks prior completion, executes, verifies, records, and applies the central transition policy.
+- Extended [electron/jobs/application-reliability.cjs](../electron/jobs/application-reliability.cjs) with workflow-level classification. Network, provider-change, and activation-pending failures become `retryable_failure`; unsupported sites become `unsupported_site`; authentication, CAPTCHA, protected actions, and unknown questions become `needs_user`; invalid state becomes `terminal_failure`.
+- Added [test/application-automation-orchestrator.test.cjs](../test/application-automation-orchestrator.test.cjs) for idempotency and replay behavior.
+- Extended [test/application-reliability.test.cjs](../test/application-reliability.test.cjs) for the workflow outcome distinctions.
+
+Phase 1 exit criteria are met: browser and renderer paths have a central policy boundary available, repeated safe actions can replay a recorded success instead of executing twice, and failure classes no longer collapse into an undifferentiated retry or failure state. Existing `main.cjs` browser behavior remains unchanged until Phase 2 migrates the Dice path through these contracts.
+
 ## Current repository anchors
 
 These are the existing execution boundaries. Preserve them unless a change is required to centralize workflow ownership.
