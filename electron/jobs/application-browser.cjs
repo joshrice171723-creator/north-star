@@ -152,7 +152,22 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const results = [];
     for (const documentType of requested) {
       const repairTarget = options.repairTargets?.[documentType];
-      if (repairTarget?.label) {
+      // Prefer a DOM file input when it already exists. Clicking a provider's
+      // visible Attach/Choose File control first can open a native picker and
+      // block CDP before DOM.setFileInputFiles gets a chance to run.
+      const existingInput = await executeOnDocument(`function (type) {
+        const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        const context = (el) => {
+          let node = el;
+          const parts = [];
+          for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || '');
+          return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' '));
+        };
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly);
+        const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); });
+        return match || inputs.length ? { status: 'available', inputCount: inputs.length } : { status: 'missing' };
+      }`, documentType);
+      if (repairTarget?.label && existingInput?.status !== 'available') {
         const activated = await executeOnDocument(`function (label) {
           const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
           const controls = Array.from(document.querySelectorAll('button,a,label,[role="button"],[role="menuitem"]')).filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null);
