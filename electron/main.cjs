@@ -817,7 +817,9 @@ async function startAutonomousApplicationQueue() {
         let formVisible = false;
         for (let attempt = 0; attempt < 60; attempt += 1) {
           formVisible = Boolean(liveSnapshot?.fields?.some((field) => field.inputType === 'file' || /resume|cv|cover letter|first name|last name|email|phone/i.test(field.label || '')));
-          if (formVisible || attempt === 19) break;
+          // Keep the full bounded wait so slower employer SPAs get the same
+          // form-rendering window promised by the 60-attempt retry loop.
+          if (formVisible || attempt === 59) break;
           await new Promise((resolve) => setTimeout(resolve, 500));
           liveSnapshot = (await applicationBrowser.inspect()) || applicationBrowser.publicState()?.snapshot;
         }
