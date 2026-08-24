@@ -2692,7 +2692,7 @@ function registerDatabaseIpc() {
     const observation = await applicationBrowser.inspectUploadControls();
     const boundedObservation = { pageFingerprint: observation.pageFingerprint, controls: observation.controls.slice(0, 80) };
     const response = await openRouterChat([
-      { role: 'system', content: 'You repair document-upload discovery on a job application page. Return JSON only: {"status":"repair"|"requires_user"|"no_repair","targetFingerprint":"","targets":{"resume":{"label":""},"cover_letter":{"label":""}},"confidence":0,"reason":""}. Choose exact visible control labels from OBSERVED_UPLOAD_CONTROLS. A target label may be a visible button, link, label, or menu item that opens a file input. Never propose credentials, CAPTCHA, MFA, submission, arbitrary scripts, or typing into fields. If the page requires login, CAPTCHA, or a protected action, return requires_user with no targets.' },
+      { role: 'system', content: 'You repair document-upload discovery on a job application page. Return JSON only: {"status":"repair"|"requires_user"|"no_repair","action":"handoff"|"activate_upload_control","targetFingerprint":"","targetLabel":"","targets":{"resume":{"label":""},"cover_letter":{"label":""}},"confidence":0,"reason":""}. Choose exact visible control labels from OBSERVED_UPLOAD_CONTROLS. Use handoff only for a safe visible Apply, Easy Apply, Continue Application, View application, or Apply for this job control that opens the application; never use it for final submission. Use activate_upload_control for a visible control that opens a file input. Never propose credentials, CAPTCHA, MFA, submission, arbitrary scripts, or typing into fields. If the page requires login, CAPTCHA, or a protected action, return requires_user with no targets.' },
       { role: 'user', content: `OBSERVED_UPLOAD_CONTROLS:\n${JSON.stringify(boundedObservation)}\nFAILED_UPLOADS:\n${JSON.stringify(failureResults.slice(0, 8))}` },
     ], { auditPurpose: 'application_document_upload_repair', response_format: { type: 'json_object' }, max_tokens: 500 });
     if (!response?.ok) throw new Error(response?.error || 'AI document-upload repair planner unavailable.');
@@ -2701,6 +2701,13 @@ function registerDatabaseIpc() {
     if (!['repair', 'requires_user', 'no_repair'].includes(plan?.status)) throw new Error('AI document-upload repair planner returned an unsupported status.');
     if (plan.status !== 'repair') return { status: plan.status, reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
     if (plan.targetFingerprint !== observation.pageFingerprint) throw new Error('AI document-upload repair targeted a changed page.');
+    const action = plan.action === 'handoff' || plan.action === 'activate_upload_control' ? plan.action : '';
+    const targetLabel = String(plan.targetLabel || '').trim().slice(0, 200);
+    if (!action || !targetLabel) throw new Error('AI document-upload repair returned no safe action target.');
+    const targetMatches = observation.controls.filter((control) => String(control.label || '').trim() === targetLabel);
+    if (targetMatches.length !== 1) throw new Error('AI document-upload repair action target was not an exact visible control.');
+    if (action === 'handoff' && !/^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^continue application$|^view application$/i.test(targetLabel)) throw new Error('AI document-upload repair proposed an unsafe handoff control.');
+    if (action === 'handoff') return { status: 'planned', action, targetLabel, targets: {}, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
     const targets = {};
     for (const documentType of ['resume', 'cover_letter']) {
       const label = String(plan.targets?.[documentType]?.label || '').trim().slice(0, 200);
@@ -2710,7 +2717,7 @@ function registerDatabaseIpc() {
       targets[documentType] = { label };
     }
     if (!Object.keys(targets).length) throw new Error('AI document-upload repair found no safe upload controls.');
-    return { status: 'planned', targets, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
+    return { status: 'planned', action, targetLabel, targets, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
   };
   autonomousSafeFormPass = async (applicationId) => {
     let lastPlan = null;
@@ -2728,6 +2735,11 @@ function registerDatabaseIpc() {
       let requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
       if (requiredUploadFailures.length) {
         uploadRepair = await buildAiDocumentUploadRepair({ failureResults: requiredUploadFailures });
+        if (uploadRepair.status === 'planned' && uploadRepair.action === 'handoff') {
+          const handoff = await applicationBrowser.clickSafeControl({ action: 'handoff', targetLabel: uploadRepair.targetLabel });
+          if (handoff?.status !== 'activated') throw new Error(`Document upload handoff failed: ${handoff?.reason || 'safe control was not activated'}`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
         if (uploadRepair.status === 'planned') {
           const repairedUpload = await applicationBrowser.uploadDocuments(files, { repairTargets: uploadRepair.targets });
           uploadResults = repairedUpload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
