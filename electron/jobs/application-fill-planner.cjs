@@ -42,7 +42,7 @@ function verifiedProfileData(profile = {}) {
 
 function buildFillPlanMessages({ page = {}, fields = [], profile = {}, resumeText = '', coverLetterText = '', job = {}, completionAttempt = false } = {}) {
   const system = `You are the final decision-maker for an application autofill review plan. Return one complete JSON object only:
-{"fields":[{"fieldFingerprint":"...","action":"fill|ask|blocked","displayValue":"always a string","reason":"","confidence":0.0,"evidence":["source.field"]}]}
+{"fields":[{"fieldFingerprint":"...","action":"fill|ask|blocked","displayValue":"always a string","suggestedValue":"optional review draft","reason":"","confidence":0.0,"evidence":["source.field"]}]}
 
 GOAL
 Maximize the number of supplied empty, editable fields that receive a truthful fill action. These supplied fields have already been filtered to controls the application can fill. Produce exactly one decision for every supplied fieldFingerprint; never omit a field. Do not default to ask merely because an answer requires summarizing or combining supplied evidence.
@@ -55,14 +55,14 @@ EVIDENCE RULES
 - For yes/no or multiple-choice questions, map supported evidence to the closest semantically correct supplied option, then return the exact option text.
 - For select controls, displayValue must exactly equal one supplied option string. Ignore placeholder options such as "Select" or "Choose".
 - For date inputs, use YYYY-MM-DD. For number inputs, return digits as a JSON string.
-- Use ask with an empty displayValue only when the supplied evidence truly cannot determine the answer. State the exact missing fact in reason.
+- Use ask with an empty displayValue only when the supplied evidence truly cannot determine an answer that is safe to apply automatically. When the evidence supports a useful draft but still needs the candidate's approval, include that draft in suggestedValue and keep action as ask. Never use suggestedValue for protected or sensitive controls.
 - Never invent employers, dates, credentials, contact details, authorization, sponsorship, salary, relocation, availability, or achievements.
 - Never fill authentication, CAPTCHA, password, file upload, legal attestation, sensitive voluntary-disclosure, navigation, or final-submit controls even if page data is mislabeled.
 
 OUTPUT RULES
 - Every fill action must have a non-empty string displayValue. Never return a JSON number, boolean, null, object, or array as displayValue.
 - Keep free-text answers specific and useful, normally 2-5 sentences unless the question asks for a shorter response.
-- Keep reason under 120 characters, confidence between 0 and 1, and evidence to at most two short source references.
+  - Keep reason under 120 characters, suggestedValue under 5000 characters, confidence between 0 and 1, and evidence to at most two short source references.
 - Do not include markdown fences, commentary, or keys outside the schema.${completionAttempt ? '\n- This is a completeness retry. The prior response omitted or invalidated these fields; resolve every one now.' : ''}`;
   const jobContext = {
     company: job.company, roleTitle: job.roleTitle, location: job.location, employmentType: job.employmentType,
@@ -109,6 +109,7 @@ function normalizeFillPlanDecisions(parsed, fields = []) {
     if (action === 'fill' && !displayValue) { invalid.add(fingerprint); continue; }
     decisions[fingerprint] = {
       action, displayValue: action === 'fill' ? displayValue : '',
+      suggestedValue: action === 'ask' ? scalarDisplayValue({ displayValue: entry.suggestedValue }) : '',
       reason: typeof entry.reason === 'string' ? entry.reason.trim().slice(0, 500) : '',
       confidence: Number.isFinite(Number(entry.confidence)) ? Math.max(0, Math.min(1, Number(entry.confidence))) : 0.5,
       evidence: Array.isArray(entry.evidence) ? entry.evidence.slice(0, 5).map((item) => String(item).slice(0, 160)) : [],

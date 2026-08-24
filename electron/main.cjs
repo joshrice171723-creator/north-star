@@ -2697,7 +2697,7 @@ function registerDatabaseIpc() {
       }
       if (!Object.keys(aiDecisions).length) throw new Error('The AI returned no usable field decisions after a completeness retry. Build the plan again.');
     }
-    const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length, unresolvedFields: unresolvedFields.map((field) => ({ fieldFingerprint: field.fieldFingerprint, label: field.label, category: field.category, controlType: field.elementType, inputType: field.inputType, options: Array.isArray(field.options) ? field.options.slice(0, 30) : [] })) };
+    const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length, unresolvedFields: unresolvedFields.map((field) => { const decision = aiDecisions[field.fieldFingerprint] || {}; return { fieldFingerprint: field.fieldFingerprint, label: field.label, category: field.category, controlType: field.elementType, inputType: field.inputType, options: Array.isArray(field.options) ? field.options.slice(0, 30) : [], suggestedValue: decision.suggestedValue || '', reason: decision.reason || '', confidence: decision.confidence || 0, evidence: Array.isArray(decision.evidence) ? decision.evidence.slice(0, 2) : [] }; }) };
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
   };
   const buildAiDocumentUploadRepair = async ({ failureResults = [] } = {}) => {

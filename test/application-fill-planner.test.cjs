@@ -41,6 +41,13 @@ test('decision normalization preserves scalar answers and retries incomplete or 
   assert.deepEqual(result.unresolvedFields.map((field) => field.fieldFingerprint), ['select', 'missing']);
 });
 
+test('decision normalization preserves AI drafts for user-approved answers', () => {
+  const result = normalizeFillPlanDecisions({ fields: [{ fieldFingerprint: 'question', action: 'ask', suggestedValue: 'I have built workflow automation systems.', reason: 'Supported by resume evidence.' }] }, [{ fieldFingerprint: 'question', elementType: 'textarea', category: 'free_text' }]);
+  assert.equal(result.decisions.question.action, 'ask');
+  assert.equal(result.decisions.question.suggestedValue, 'I have built workflow automation systems.');
+  assert.equal(result.unresolvedFields[0].fieldFingerprint, 'question');
+});
+
 test('fill-plan repair prompt bounds invalid output and excludes resume data', () => {
   const response = { message: { content: '{"fields":[' + 'x'.repeat(30_000) } };
   const messages = repairFillPlanMessages(response, [{ fieldFingerprint: 'field-a' }]);
