@@ -125,6 +125,10 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const requested = ['resume', 'cover_letter'].filter((type) => typeof files[type] === 'string' && files[type].trim());
     if (!requested.length) throw new Error('No approved application document was provided.');
     const snapshot = await inspect();
+    // File controls are often created only after the visible drop zone is
+    // activated. Inspect visible context first so an optional cover letter is
+    // never mistaken for a missing required application field.
+    const coverLetterOptional = Boolean((await executeOnDocument(`function () { const clean = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || el.getAttribute('aria-label') || ''); return clean(parts.join(' ')); }; return Array.from(document.querySelectorAll('input[type="file"],button,a,[role="button"],label,[role="presentation"]')).filter((el) => !el.disabled && el.offsetParent !== null).some((el) => /cover|letter|writing sample/.test(context(el)) && /\boptional\b/.test(context(el))); }`).catch(() => false)));
     const results = [];
     for (const documentType of requested) {
       let result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && type === 'resume' && Array.from(document.querySelectorAll('button,a,[role="button"]')).some((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'file options')) return { status: 'options' }; if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match && inputs.length > 1) return { status: 'candidate', inputCount: inputs.length, fallbackIndex: type === 'resume' ? 0 : 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
@@ -158,7 +162,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
           }
         }
       }
-      if (!['ready', 'candidate'].includes(result?.status)) { results.push({ documentType, status: result?.status || 'missing', pageFingerprint: snapshot.pageFingerprint }); continue; }
+      if (!['ready', 'candidate'].includes(result?.status)) { results.push({ documentType, status: result?.status || 'missing', optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint }); continue; }
       const debuggerClient = view.webContents.debugger; let attached = false;
       try {
         if (!debuggerClient.isAttached()) { debuggerClient.attach('1.3'); attached = true; }
@@ -168,7 +172,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
         await debuggerClient.sendCommand('DOM.getDocument');
         const { nodeId } = await debuggerClient.sendCommand('DOM.requestNode', { objectId: node.result.objectId });
         await debuggerClient.sendCommand('DOM.setFileInputFiles', { nodeId, files: [files[documentType]] });
-        results.push({ documentType, status: 'uploaded', pageFingerprint: snapshot.pageFingerprint });
+        results.push({ documentType, status: 'uploaded', optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint });
       } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
     }
     await inspect(); return { results };

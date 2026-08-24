@@ -2699,9 +2699,11 @@ function registerDatabaseIpc() {
       if (Object.keys(files).length < 2) throw new Error('The selected resume and cover letter could not both be resolved.');
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
       const upload = await applicationBrowser.uploadDocuments(files);
-      const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, pageFingerprint: entry.pageFingerprint }));
-      if (uploadResults.some((entry) => entry.status !== 'uploaded')) throw new Error(`Document upload incomplete: ${uploadResults.filter((entry) => entry.status !== 'uploaded').map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
-      coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults } });
+      const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
+      const requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
+      if (requiredUploadFailures.length) throw new Error(`Document upload incomplete: ${requiredUploadFailures.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
+      const uploadWarnings = uploadResults.filter((entry) => entry.status !== 'uploaded' && entry.optional);
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults, uploadWarnings } });
       for (let pass = 0; pass < 2; pass += 1) {
         const plan = await buildAiApplicationFillPlan(browserProfile());
         lastPlan = plan;
