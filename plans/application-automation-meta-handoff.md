@@ -95,6 +95,31 @@ Validation completed:
 - `npm.cmd run build`: passing with only existing Vite config and chunk-size warnings.
 - Electron restarted after the Phase 3 commit; final Computer Use inspection passed with the autonomous queue visibly paused and no active/failed/blocked items.
 
+Phase 3 cleanup audit completed before Milestone 4. The existing conservative matching and fingerprint guard remain intact; no stale selector reuse or submission-boundary regression was found. A later UI improvement is recorded below: show the selected playbook confidence and answer provenance in the queue/review surface.
+
+### Phase 4 / Milestone 4 — Answer policies: complete (2026-08-23)
+
+Completed in commit `3ac0c05`:
+
+- Added migration [electron/migrations/0032_application_answer_policies.sql](../electron/migrations/0032_application_answer_policies.sql) for durable answer-policy records, matching/value rules, scope, sensitivity, approval, and expiry metadata.
+- Added [electron/jobs/automation/answer-policy.cjs](../electron/jobs/automation/answer-policy.cjs) with normalized question categories, explicit `always`/`batch_review`/`ask`/`never` modes, protected-field blocking, and deterministic salary calculation.
+- Integrated listing-specific salary policy into [electron/jobs/application-policy.cjs](../electron/jobs/application-policy.cjs) and the live browser profile context in [electron/main.cjs](../electron/main.cjs).
+- Salary uses the advertised minimum plus 20% of the public range width, with the required `$120,000` fallback when no public range is available. A current listing range takes precedence over an older reusable salary answer.
+- Preserved approval gates: current salary, legal attestations, ambiguous answers, MFA/password/CAPTCHA, and final submission remain blocked or user-gated.
+- Added [test/application-answer-policy.test.cjs](../test/application-answer-policy.test.cjs) covering range math, fallback, stale-answer protection, and sensitive-field behavior.
+
+Phase 4 exit criteria are met: approved reusable answers remain deterministic, salary is calculated per job, sensitive fields obey explicit policy, and no AI-generated value can override protected categories.
+
+Validation completed:
+
+- 13 focused Phase 3/4 and browser-policy tests passing.
+- `node --check` for changed answer-policy, application-policy, database, and main-process modules passing.
+- `npm.cmd run build` passing with only existing Vite config and chunk-size warnings.
+- Electron restarted after the Phase 4 commit.
+- Computer Use inspection passed on the fresh North Star window; autonomous queue visibly paused. No queue or checkpoint action was taken because those controls can claim or advance a real application.
+
+Deferred UI improvement discovered during Computer Use: surface the answer-policy mode, computed salary value, and provenance beside each planned fill in the application review panel. This is intentionally deferred to the later review/trace work so it can share the per-step evidence model.
+
 ### Phase 1 — Normalize the workflow core: complete (2026-08-23)
 
 The remaining Phase 1 gaps are now closed in commit `0282a9a`:
