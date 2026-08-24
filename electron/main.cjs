@@ -2765,6 +2765,13 @@ function registerDatabaseIpc() {
             const uploadSurface = await applicationBrowser.inspectUploadControls();
             if (uploadSurface.controls.some((control) => /resume|cv|cover|letter|upload|file/i.test(`${control.label} ${control.context}`))) break;
           }
+          // The first repair plan may have been created on the job listing
+          // itself. Re-plan against the newly rendered employer form so
+          // provider controls such as Attach or Choose File become actionable
+          // targets instead of being mistaken for another missing upload.
+          const postHandoffRepair = await buildAiDocumentUploadRepair({ failureResults: requiredUploadFailures });
+          uploadRepair = { ...uploadRepair, postHandoff: postHandoffRepair };
+          if (postHandoffRepair.status === 'planned') uploadRepair = postHandoffRepair;
         }
         if (uploadRepair.status === 'planned') {
           const repairedUpload = await applicationBrowser.uploadDocuments(files, { repairTargets: uploadRepair.targets });
