@@ -770,9 +770,13 @@ async function startAutonomousApplicationQueue() {
       if (handoff.status === 'unavailable') {
         const application = coachDatabase.applications.get(claimed.id);
         coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: handoff.reason, unavailableSignals: handoff.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
+        // An unavailable listing cannot be retried meaningfully. Preserve the
+        // application checkpoint for auditability, then archive the job so it
+        // leaves both the Ready board and autonomous queue.
+        coachDatabase.jobs.delete(claimed.jobId);
         applicationBrowser.close();
         autonomousApplicationQueueState.activeApplicationId = null;
-        autonomousApplicationQueueState.message = 'Job unavailable: removed from the active application run. Review the listing or return it to the queue.';
+        autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
       } else if (handoff.status === 'advanced') {
         // A job board may expose a second safe handoff after Apply (for
         // example, Dice's Continue Application). Cross only a small bounded
@@ -803,9 +807,12 @@ async function startAutonomousApplicationQueue() {
         if (unavailableFollowUp) {
           const application = coachDatabase.applications.get(claimed.id);
           coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'job_listing_unavailable', unavailableSignals: googleLogin?.signals || followUp?.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
+          // Keep the blocked checkpoint as history while removing the dead
+          // opportunity from future queue claims and the active job board.
+          coachDatabase.jobs.delete(claimed.jobId);
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
-          autonomousApplicationQueueState.message = 'Job unavailable: the active application was terminally blocked.';
+          autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
         } else {
         autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
           ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
