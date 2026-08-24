@@ -1,6 +1,7 @@
 // This module is deliberately pure: remote pages and ATS adapters describe fields,
 // but only this shared policy is allowed to decide whether a value is actionable.
 const BLOCKED = new Set(['sensitive_voluntary_disclosure', 'legal_signature', 'authentication_captcha', 'file_upload', 'final_submit', 'navigation']);
+const { answerPolicyForField } = require('./automation/answer-policy.cjs');
 const fieldText = (field = {}) => `${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.autocomplete || ''} ${field.inputType || ''}`.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_./-]+/g, ' ').toLowerCase();
 const profileSource = (field) => {
   const text = fieldText(field);
@@ -54,10 +55,13 @@ function decideField(field, { profile = {}, excluded = false } = {}) {
   }
   // Reusable answers are always written by the user in the local assistant.
   // They deliberately apply only to an exact normalized field label/name match.
-  const reusable = reusableAnswerFor(field, profile.reusableAnswers);
+  const hasJobSalaryContext = profile.jobContext && (profile.jobContext.salaryMin != null || profile.jobContext.salaryMax != null);
+  const reusable = category === 'compensation' && hasJobSalaryContext ? null : reusableAnswerFor(field, profile.reusableAnswers);
   if (reusable?.answerText) return { action: 'fill', reasonCode: 'saved_reusable_answer', value: reusable.answerText, provenance: [`answer.${reusable.id}`], confidence: 1 };
   if (category === 'work_authorization') return profile.workAuthorization ? { action: 'suggest', reasonCode: 'verified_profile', value: profile.workAuthorization, provenance: ['profile.workAuthorization'], confidence: 1 } : { action: 'ask', reasonCode: 'missing_profile', value: null, provenance: [], confidence: 1 };
-  if (category === 'compensation' || category === 'free_text') return { action: 'ask', reasonCode: 'requires_approval', value: null, provenance: [], confidence: 0.8 };
+  const policyDecision = answerPolicyForField(field, { profile, job: profile.jobContext || {}, policies: profile.answerPolicies || [] });
+  if (policyDecision.action === 'fill' || policyDecision.action === 'blocked') return { action: policyDecision.action, reasonCode: policyDecision.reasonCode, value: policyDecision.value, provenance: policyDecision.provenance, confidence: policyDecision.confidence };
+  if (category === 'compensation' || category === 'free_text') return { action: 'ask', reasonCode: policyDecision.reasonCode || 'requires_approval', value: null, provenance: [], confidence: 0.8 };
   return { action: 'ask', reasonCode: 'unknown', value: null, provenance: [], confidence: 0 };
 }
 
