@@ -2705,7 +2705,7 @@ function registerDatabaseIpc() {
     const targetLabel = String(plan.targetLabel || '').trim().slice(0, 200);
     if (!action || !targetLabel) throw new Error('AI document-upload repair returned no safe action target.');
     const targetMatches = observation.controls.filter((control) => String(control.label || '').trim() === targetLabel);
-    if (targetMatches.length !== 1) throw new Error('AI document-upload repair action target was not an exact visible control.');
+    if (!targetMatches.length) throw new Error('AI document-upload repair action target was not an exact visible control.');
     if (action === 'handoff' && !/^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^continue application$|^view application$/i.test(targetLabel)) throw new Error('AI document-upload repair proposed an unsafe handoff control.');
     if (action === 'handoff') return { status: 'planned', action, targetLabel, targets: {}, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
     const targets = {};
@@ -2736,8 +2736,11 @@ function registerDatabaseIpc() {
       if (requiredUploadFailures.length) {
         uploadRepair = await buildAiDocumentUploadRepair({ failureResults: requiredUploadFailures });
         if (uploadRepair.status === 'planned' && uploadRepair.action === 'handoff') {
-          const handoff = await applicationBrowser.clickSafeControl({ action: 'handoff', targetLabel: uploadRepair.targetLabel });
-          if (handoff?.status !== 'activated') throw new Error(`Document upload handoff failed: ${handoff?.reason || 'safe control was not activated'}`);
+          // The bounded handoff path already handles nested/duplicate DOM
+          // representations of one visible Apply control and excludes final
+          // submission labels.
+          const handoff = await applicationBrowser.advance({ handoffOnly: true });
+          if (!['advanced', 'activated'].includes(handoff?.status)) throw new Error(`Document upload handoff failed: ${handoff?.reason || 'safe control was not activated'}`);
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
         if (uploadRepair.status === 'planned') {
