@@ -1,5 +1,11 @@
 const test = require('node:test'); const assert = require('node:assert/strict');
-const { decideNavigation, redactUrl, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser } = require('../electron/jobs/application-browser.cjs');
+const { decideNavigation, redactUrl, isDismissLabel, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser } = require('../electron/jobs/application-browser.cjs');
+test('safe dismissal accepts provider overlay variants without broad substring matching', () => {
+  assert.equal(isDismissLabel('No thanks, take me to the job'), true);
+  assert.equal(isDismissLabel('Close this alert'), true);
+  assert.equal(isDismissLabel('Related jobs'), false);
+  assert.equal(isDismissLabel('Thanks for applying'), false);
+});
 test('browser navigation is HTTPS-only and new-host popups can be routed through a user checkpoint', () => {
   assert.equal(decideNavigation({ fromUrl: 'https://a.test/x', toUrl: 'http://a.test/y' }).action, 'deny');
   assert.equal(decideNavigation({ fromUrl: 'https://a.test/x', toUrl: 'https://b.test/y' }).action, 'ask_user');

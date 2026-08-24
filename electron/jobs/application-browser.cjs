@@ -3,6 +3,10 @@ const { buildFillPlan, validatePlanForFill } = require('./application-fill-engin
 const { detectConfirmation } = require('./application-confirmation.cjs');
 const redactUrl = (value) => { try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ''; } };
 const isHttps = (value) => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
+// Provider overlays often append safe explanatory text to a dismissal label,
+// such as "No thanks, take me to the job". Keep this a bounded prefix match so
+// recovery can dismiss known popup variants without clicking arbitrary text.
+const isDismissLabel = (value) => /^(?:no thanks|close|dismiss|not now|skip|decline|reject cookies)\b/i.test(String(value || '').replace(/\s+/g, ' ').trim());
 function decideNavigation({ fromUrl, toUrl, isMainFrame = true, approvedHosts = new Set() }) { if (!isMainFrame || !isHttps(toUrl)) return { action: 'deny', reason: 'only_main_frame_https' }; const target = new URL(toUrl); if (!fromUrl || new URL(fromUrl).origin === target.origin || approvedHosts.has(target.host)) return { action: 'allow', reason: 'same_or_approved_origin' }; return { action: 'ask_user', reason: 'new_https_host', host: target.host }; }
 
 function buildContextMenuTemplate({ params = {}, webContents, clipboard }) {
@@ -180,7 +184,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const advance = async ({ handoffOnly = false, googleLoginOnly = false } = {}) => {
     const snapshot = await inspect();
     if (snapshot.pageSignals?.length) return { status: 'unavailable', reason: 'job_listing_unavailable', signals: snapshot.pageSignals, pageFingerprint: snapshot.pageFingerprint };
-    const dismiss = snapshot.fields.find((field) => /^(no thanks|close|dismiss|not now|skip|decline|reject cookies)$/i.test(field.label));
+    const dismiss = snapshot.fields.find((field) => isDismissLabel(field.label));
     if (dismiss) {
       const dismissed = await executeOnDocument(`function (expectedLabel) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const controls = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"],a[href],[role="button"]')).filter((el) => !el.disabled && el.getAttribute('aria-hidden') !== 'true' && el.offsetParent !== null); const matches = controls.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === expectedLabel); if (matches.length !== 1) return { status: 'blocked', reason: 'dismiss_control_changed' }; matches[0]['click'](); return { status: 'activated' }; }`, dismiss.label);
       if (dismissed?.status === 'activated') { await new Promise((resolve) => setTimeout(resolve, 250)); return advance({ handoffOnly, googleLoginOnly }); }
@@ -202,7 +206,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   };
   const clickSafeControl = async ({ action = '', targetLabel = '' } = {}) => {
     const snapshot = await inspect(); const label = String(targetLabel || '').replace(/\s+/g, ' ').trim();
-    const allowed = action === 'dismiss' ? /^(no thanks|close|dismiss|not now|skip)$/i : action === 'handoff' ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^continue application$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
+    const allowed = action === 'dismiss' ? isDismissLabel : action === 'handoff' ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^continue application$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
     const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && field.label === label && allowed.test(field.label));
     if (!candidate) return { status: 'blocked', reason: 'safe_control_not_found', pageFingerprint: snapshot.pageFingerprint };
     const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled && !el.readOnly); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'safe_control_changed' }; const el = matches[0]; el.focus(); el['click'](); return { status: 'activated', label: field.label }; }`, candidate);
@@ -246,4 +250,4 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
   return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
-module.exports = { redactUrl, isHttps, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
+module.exports = { redactUrl, isHttps, isDismissLabel, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
