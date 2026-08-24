@@ -125,7 +125,23 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
       return result.result?.value;
     } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
   };
-  const uploadDocuments = async (files = {}) => {
+  const inspectUploadControls = async () => {
+    const controls = await executeOnDocument(`function () {
+      const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const context = (element) => {
+        let node = element;
+        const parts = [];
+        for (let depth = 0; node && depth < 4; depth += 1, node = node.parentElement) parts.push(node.innerText || '');
+        return clean([element.id, element.name, element.getAttribute('aria-label'), element.getAttribute('accept'), ...parts].join(' ')).slice(0, 500);
+      };
+      return Array.from(document.querySelectorAll('input[type="file"],button,a,label,[role="button"],[role="menuitem"]'))
+        .filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null)
+        .slice(0, 80)
+        .map((element) => ({ tag: element.tagName.toLowerCase(), label: clean(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('placeholder')), accept: clean(element.getAttribute('accept')), context: context(element) }));
+    }`);
+    return { pageFingerprint: active?.snapshot?.pageFingerprint || '', controls: Array.isArray(controls) ? controls : [] };
+  };
+  const uploadDocuments = async (files = {}, options = {}) => {
     const requested = ['resume', 'cover_letter'].filter((type) => typeof files[type] === 'string' && files[type].trim());
     if (!requested.length) throw new Error('No approved application document was provided.');
     const snapshot = await inspect();
@@ -135,6 +151,18 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     const coverLetterOptional = Boolean((await executeOnDocument(`function () { const clean = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || el.getAttribute('aria-label') || ''); return clean(parts.join(' ')); }; return Array.from(document.querySelectorAll('input[type="file"],button,a,[role="button"],label,[role="presentation"]')).filter((el) => !el.disabled && el.offsetParent !== null).some((el) => /cover|letter|writing sample/.test(context(el)) && /\boptional\b/.test(context(el))); }`).catch(() => false)));
     const results = [];
     for (const documentType of requested) {
+      const repairTarget = options.repairTargets?.[documentType];
+      if (repairTarget?.label) {
+        const activated = await executeOnDocument(`function (label) {
+          const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+          const controls = Array.from(document.querySelectorAll('button,a,label,[role="button"],[role="menuitem"]')).filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null);
+          const matches = controls.filter((element) => clean(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('placeholder')) === clean(label));
+          if (matches.length !== 1) return { status: 'blocked', reason: matches.length ? 'upload_repair_target_ambiguous' : 'upload_repair_target_missing' };
+          matches[0].focus(); matches[0].click();
+          return { status: 'activated' };
+        }`, repairTarget.label);
+        if (activated?.status === 'activated') await new Promise((resolve) => setTimeout(resolve, 600));
+      }
       let result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && type === 'resume' && Array.from(document.querySelectorAll('button,a,[role="button"]')).some((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'file options')) return { status: 'options' }; if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match && inputs.length > 1) return { status: 'candidate', inputCount: inputs.length, fallbackIndex: type === 'resume' ? 0 : 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
       if (result?.status === 'missing') {
         const autofill = await executeOnDocument(`function () { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const controls = Array.from(document.querySelectorAll('button,a,[role="button"]')).filter((el) => !el.disabled && el.offsetParent !== null); const match = controls.find((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'autofill my application'); if (!match) return { status: 'missing' }; match.focus(); match['click'](); return { status: 'activated' }; }`);
@@ -248,6 +276,6 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, inspectUploadControls, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, isDismissLabel, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };

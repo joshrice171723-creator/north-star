@@ -2688,8 +2688,33 @@ function registerDatabaseIpc() {
     const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length, unresolvedFields: unresolvedFields.map((field) => ({ fieldFingerprint: field.fieldFingerprint, label: field.label, category: field.category, controlType: field.elementType, inputType: field.inputType, options: Array.isArray(field.options) ? field.options.slice(0, 30) : [] })) };
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
   };
+  const buildAiDocumentUploadRepair = async ({ failureResults = [] } = {}) => {
+    const observation = await applicationBrowser.inspectUploadControls();
+    const boundedObservation = { pageFingerprint: observation.pageFingerprint, controls: observation.controls.slice(0, 80) };
+    const response = await openRouterChat([
+      { role: 'system', content: 'You repair document-upload discovery on a job application page. Return JSON only: {"status":"repair"|"requires_user"|"no_repair","targetFingerprint":"","targets":{"resume":{"label":""},"cover_letter":{"label":""}},"confidence":0,"reason":""}. Choose exact visible control labels from OBSERVED_UPLOAD_CONTROLS. A target label may be a visible button, link, label, or menu item that opens a file input. Never propose credentials, CAPTCHA, MFA, submission, arbitrary scripts, or typing into fields. If the page requires login, CAPTCHA, or a protected action, return requires_user with no targets.' },
+      { role: 'user', content: `OBSERVED_UPLOAD_CONTROLS:\n${JSON.stringify(boundedObservation)}\nFAILED_UPLOADS:\n${JSON.stringify(failureResults.slice(0, 8))}` },
+    ], { auditPurpose: 'application_document_upload_repair', response_format: { type: 'json_object' }, max_tokens: 500 });
+    if (!response?.ok) throw new Error(response?.error || 'AI document-upload repair planner unavailable.');
+    let plan;
+    try { plan = JSON.parse(String(response.message?.content || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()); } catch { throw new Error('AI document-upload repair planner returned invalid JSON.'); }
+    if (!['repair', 'requires_user', 'no_repair'].includes(plan?.status)) throw new Error('AI document-upload repair planner returned an unsupported status.');
+    if (plan.status !== 'repair') return { status: plan.status, reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
+    if (plan.targetFingerprint !== observation.pageFingerprint) throw new Error('AI document-upload repair targeted a changed page.');
+    const targets = {};
+    for (const documentType of ['resume', 'cover_letter']) {
+      const label = String(plan.targets?.[documentType]?.label || '').trim().slice(0, 200);
+      if (!label) continue;
+      const matches = observation.controls.filter((control) => String(control.label || '').trim() === label);
+      if (matches.length !== 1) throw new Error(`AI document-upload repair target for ${documentType} was not an exact visible control.`);
+      targets[documentType] = { label };
+    }
+    if (!Object.keys(targets).length) throw new Error('AI document-upload repair found no safe upload controls.');
+    return { status: 'planned', targets, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
+  };
   autonomousSafeFormPass = async (applicationId) => {
     let lastPlan = null;
+    let uploadRepair = null;
     try {
       const files = {};
       for (const documentType of ['resume', 'cover_letter']) {
@@ -2699,8 +2724,16 @@ function registerDatabaseIpc() {
       if (Object.keys(files).length < 2) throw new Error('The selected resume and cover letter could not both be resolved.');
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
       const upload = await applicationBrowser.uploadDocuments(files);
-      const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
-      const requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
+      let uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
+      let requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
+      if (requiredUploadFailures.length) {
+        uploadRepair = await buildAiDocumentUploadRepair({ failureResults: requiredUploadFailures });
+        if (uploadRepair.status === 'planned') {
+          const repairedUpload = await applicationBrowser.uploadDocuments(files, { repairTargets: uploadRepair.targets });
+          uploadResults = repairedUpload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
+          requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
+        }
+      }
       if (requiredUploadFailures.length) throw new Error(`Document upload incomplete: ${requiredUploadFailures.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
       const uploadWarnings = uploadResults.filter((entry) => entry.status !== 'uploaded' && entry.optional);
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults, uploadWarnings } });
@@ -2742,7 +2775,7 @@ function registerDatabaseIpc() {
       }
       const classification = classifySafePassFailure({ error, plan: lastPlan, attempt: application?.automationAttempt || 0 });
       const now = new Date().toISOString();
-      const nextCheckpoint = { ...checkpoint, stage: classification.state === 'needs_user_answer' ? 'form_review' : 'form_retry', reasonCode: classification.reasonCode, lastError: message, failureClass: classification.failureClass || '', retryable: classification.retryable, retryQueuedAt: classification.state === 'queued' ? now : undefined, safePassFailedAt: now };
+      const nextCheckpoint = { ...checkpoint, stage: classification.state === 'needs_user_answer' ? 'form_review' : 'form_retry', reasonCode: classification.reasonCode, lastError: message, failureClass: classification.failureClass || '', retryable: classification.retryable, retryQueuedAt: classification.state === 'queued' ? now : undefined, safePassFailedAt: now, ...(uploadRepair ? { uploadRepair } : {}) };
       // Surface protected or unanswered fields instead of spinning them back
       // into the queue. A transient failure gets at most two same-job retries;
       // exhaustion becomes an explicit Retry action rather than silent churn.
