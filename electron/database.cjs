@@ -363,6 +363,19 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     recover(); return recovered.length;
   }
   function listAutonomousQueue() {
+    // Older queue rows recorded protected/no-answer safe-pass outcomes as
+    // ordinary queued work. Normalize them when the queue is read so they
+    // become visible answer/review checkpoints instead of silently cycling.
+    const reviewReasons = new Set(['protected_action', 'safe_pass_found_no_answerable_fields', 'safe_pass_complete_review_remaining_fields', 'safe_pass_retry_exhausted']);
+    const legacyRows = sqlite.prepare("SELECT id, automation_state, automation_checkpoint_json FROM job_applications WHERE deleted_at IS NULL AND automation_state IN ('queued', 'failed')").all();
+    const stamp = now();
+    for (const row of legacyRows) {
+      const checkpoint = parseObject(row.automation_checkpoint_json, {});
+      if (!reviewReasons.has(checkpoint.reasonCode)) continue;
+      const nextCheckpoint = { ...checkpoint, stage: 'form_review', reasonCode: 'safe_pass_requires_review', normalizedAt: stamp };
+      sqlite.prepare("UPDATE job_applications SET automation_state = 'needs_user_answer', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state IN ('queued', 'failed')").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
+      recordApplicationEvent({ applicationId: row.id, eventType: 'automation_review_normalized', summary: 'Safe-pass blocker moved to the visible answer/review checkpoint.', metadata: { previousState: row.automation_state, previousReasonCode: checkpoint.reasonCode } });
+    }
     return sqlite.prepare("SELECT a.*, j.company, j.role_title, j.stage, j.url AS job_url, j.canonical_url FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' ORDER BY CASE a.automation_state WHEN 'opening' THEN 0 WHEN 'needs_user_answer' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, a.last_activity_at ASC").all().map((row) => {
       const eligibility = autonomousEligibility(row); const unknownQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
       const checkpoint = parseObject(row.automation_checkpoint_json, {});

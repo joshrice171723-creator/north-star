@@ -88,3 +88,18 @@ test('a failed checkpoint can be deliberately returned to the queue for retry', 
     fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
+
+test('legacy safe-pass blockers are normalized into visible review checkpoints', () => {
+  const { userDataPath, db } = create();
+  try {
+    db.jobs.create({ id: 'legacy-blocker-job', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'researching' });
+    const app = db.applications.createOrResume({ jobId: 'legacy-blocker-job' });
+    db.applications.updateAutomationState({ applicationId: app.id, state: 'queued', checkpoint: { reasonCode: 'protected_action' } });
+    const entry = db.applications.listAutomationQueue().find((item) => item.applicationId === app.id);
+    assert.equal(entry.automationState, 'needs_user_answer');
+    assert.equal(entry.pauseReason, 'safe_pass_requires_review');
+  } finally {
+    try { db.close(); } catch {}
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});

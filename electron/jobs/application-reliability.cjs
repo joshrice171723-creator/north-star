@@ -20,8 +20,8 @@ function classifySafePassFailure({ error = {}, plan = null, attempt = 0, maxAtte
   const protectedFields = Array.isArray(plan?.fields)
     ? plan.fields.filter((field) => ['ask', 'blocked'].includes(field?.action))
     : [];
-  if (code.includes('protected') || protectedFields.length) {
-    return { state: 'needs_user_answer', reasonCode: 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: protectedFields.length };
+  if (code.includes('protected') || protectedFields.length || !plan) {
+    return { state: 'needs_user_answer', reasonCode: !plan ? 'safe_pass_requires_review' : 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: protectedFields.length };
   }
   const failure = classifyApplicationFailure(error);
   const nextAttempt = Number(attempt) + 1;
