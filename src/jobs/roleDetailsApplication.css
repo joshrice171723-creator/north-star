@@ -74,4 +74,5 @@
 .job-details-workspace.assistant-open.employer-page-open{margin-right:calc(var(--application-browser-width) + var(--application-assistant-width) + 24px)}
 .application-workspace-guide{display:block;max-width:620px;margin-top:8px;color:var(--muted);font-size:11px;line-height:1.45}
 .application-browser-panel .assistant-ai-waiting{position:sticky;top:8px;z-index:3}
+.application-browser-panel .job-modal-head::after{content:'AI assistant ready';display:block;width:max-content;margin-top:9px;padding:4px 7px;border:1px solid #3f5e78;border-radius:999px;background:#182535;color:#b9d9ef;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}.application-browser-panel:has(.assistant-ai-waiting) .job-modal-head::after{content:'Waiting for AI response';border-color:#8d75d8;background:#28213e;color:#dfd6ff}
 @media(max-width:1250px){.job-details-workspace.assistant-open{margin-right:calc(var(--application-assistant-width) + 14px)}.job-details-workspace.assistant-open.employer-page-open{margin-right:calc(var(--application-browser-width) + var(--application-assistant-width) + 14px)}}
