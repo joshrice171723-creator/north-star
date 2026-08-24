@@ -103,3 +103,19 @@ test('legacy safe-pass blockers are normalized into visible review checkpoints',
     fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
+
+test('an optional cover-letter warning without a question returns to the queue', () => {
+  const { userDataPath, db } = create();
+  try {
+    db.jobs.create({ id: 'optional-cover-job', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'ready' });
+    const app = db.applications.createOrResume({ jobId: 'optional-cover-job' });
+    db.applications.updateAutomationState({ applicationId: app.id, state: 'needs_user_answer', checkpoint: { stage: 'form_review', reasonCode: 'safe_pass_requires_review', lastError: 'Document upload incomplete: cover_letter:missing' } });
+    const entry = db.applications.listAutomationQueue().find((item) => item.applicationId === app.id);
+    assert.equal(entry.automationState, 'queued');
+    assert.equal(entry.pauseReason, 'optional_cover_letter_warning');
+    assert.equal(entry.unknownQuestionCount, 0);
+  } finally {
+    try { db.close(); } catch {}
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
