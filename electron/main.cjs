@@ -771,10 +771,9 @@ async function startAutonomousApplicationQueue() {
         const application = coachDatabase.applications.get(claimed.id);
         coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: handoff.reason, unavailableSignals: handoff.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
         // An unavailable listing cannot be retried meaningfully. Preserve the
-        // application checkpoint for auditability, then archive the job so it
-        // leaves both the Ready board and autonomous queue.
+        // Keep the unavailable opportunity visible in the combined rejected /
+        // withdrawn / archived pipeline column while removing it from claims.
         coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
-        coachDatabase.jobs.delete(claimed.jobId);
         applicationBrowser.close();
         autonomousApplicationQueueState.activeApplicationId = null;
         autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
@@ -808,10 +807,9 @@ async function startAutonomousApplicationQueue() {
         if (unavailableFollowUp) {
           const application = coachDatabase.applications.get(claimed.id);
           coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'blocked', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'job_listing_unavailable', unavailableSignals: googleLogin?.signals || followUp?.signals || [], unavailableAt: new Date().toISOString(), redactedUrl: applicationBrowser.publicState()?.currentUrl || '' } });
-          // Keep the blocked checkpoint as history while removing the dead
-          // opportunity from future queue claims and the active job board.
+          // Keep the blocked checkpoint as history and the dead opportunity
+          // visible in the combined rejected / withdrawn / archived column.
           coachDatabase.jobs.updateStage(claimed.jobId, 'rejected');
-          coachDatabase.jobs.delete(claimed.jobId);
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
           autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';

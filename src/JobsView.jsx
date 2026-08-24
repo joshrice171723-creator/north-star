@@ -420,8 +420,8 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       setStageBusyId(job.id);
       setSearchMessage('');
       try {
-        // Archive is a soft-delete action, not a persisted pipeline stage.
-        await window.desktopShell?.deleteJob?.(job.id);
+        // Keep archived opportunities visible in the combined rejected/withdrawn/archived column.
+        await window.desktopShell?.updateJobStage?.({ jobId: String(job.id), stage: 'rejected' });
         await onRefresh?.();
       } catch (cause) {
         setSearchMessage(cause?.message || 'Could not archive this opportunity.');
