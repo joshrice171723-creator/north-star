@@ -427,15 +427,10 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
    const startAutomationQueue = async () => {
      if (automationQueueStarting) return;
      setAutomationQueueStarting(true);
-     // Mount the existing right-side assistant immediately while the main
-     // process opens and checkpoints the native employer view.
+     // The main process owns the complete run. Opening a separate assistant
+     // here raced the native browser and could release the job it just claimed.
      try {
-       const queuedEntry = automationQueueStatus.queue.find((entry) => entry.eligible && entry.automationState === 'queued');
-       const queuedJob = jobs.find((job) => job.id === queuedEntry?.jobId);
-       const startPromise = window.desktopShell?.startJobApplicationAutomationQueue?.({ applicationId: queuedEntry?.applicationId });
-       const assistantOpened = queuedJob ? await openApplication(queuedJob, 'resume', true) : true;
-       const status = await startPromise;
-       if (!assistantOpened && status?.activeApplicationId) await window.desktopShell?.releaseJobApplicationAutomation?.({ applicationId: status.activeApplicationId });
+       const status = await window.desktopShell?.startJobApplicationAutomationQueue?.({ autopilot: true });
        if (status) { setAutomationQueueStatus(status); await refreshAutomationQueue(); }
      } catch (cause) {
        setError(cause?.message || 'Could not start the application checkpoint.');
