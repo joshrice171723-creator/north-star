@@ -175,14 +175,18 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
         return match || inputs.length > 1 ? { status: 'available', inputCount: inputs.length } : { status: 'missing' };
       }`, documentType);
       if (repairTarget?.label && existingInput?.status !== 'available') {
-        const activated = await executeOnDocument(`function (label) {
+        const activated = await executeOnDocument(`function (request) {
           const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+          const context = (element) => { let node = element; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean(parts.join(' ')).toLowerCase(); };
           const controls = Array.from(document.querySelectorAll('button,a,label,[role="button"],[role="menuitem"]')).filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null);
-          const matches = controls.filter((element) => clean(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('placeholder')) === clean(label));
+          const matches = controls.filter((element) => clean(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('placeholder')) === clean(request.label));
           if (!matches.length) return { status: 'blocked', reason: 'upload_repair_target_missing' };
-          matches.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top); matches[0].focus(); matches[0].click();
+          const term = request.documentType === 'cover_letter' ? /cover|letter|writing sample/ : /resume|cv/;
+          matches.sort((a, b) => Number(term.test(context(b))) - Number(term.test(context(a))) || a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+          if (!term.test(context(matches[0]))) return { status: 'blocked', reason: 'upload_repair_target_wrong_document' };
+          matches[0].focus(); matches[0].click();
           return { status: 'activated' };
-        }`, repairTarget.label);
+        }`, { label: repairTarget.label, documentType });
         if (activated?.status === 'activated') { repairActivated = true; await new Promise((resolve) => setTimeout(resolve, 600)); }
       }
       let result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); if (!match && type === 'resume' && Array.from(document.querySelectorAll('button,a,[role="button"]')).some((el) => clean(el.innerText || el.textContent || el.getAttribute('aria-label')) === 'file options')) return { status: 'options' }; if (!match && inputs.length === 1) return { status: 'candidate', inputCount: 1 }; if (!match && inputs.length > 1) return { status: 'candidate', inputCount: inputs.length, fallbackIndex: type === 'resume' ? 0 : 1 }; if (!match) return { status: 'missing' }; return { status: 'ready', selector: match.id ? '#' + CSS.escape(match.id) : '', inputCount: inputs.length }; }`, documentType);
