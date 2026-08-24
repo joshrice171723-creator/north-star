@@ -104,6 +104,7 @@ Completed in commit `3ac0c05`:
 - Added migration [electron/migrations/0032_application_answer_policies.sql](../electron/migrations/0032_application_answer_policies.sql) for durable answer-policy records, matching/value rules, scope, sensitivity, approval, and expiry metadata.
 - Added [electron/jobs/automation/answer-policy.cjs](../electron/jobs/automation/answer-policy.cjs) with normalized question categories, explicit `always`/`batch_review`/`ask`/`never` modes, protected-field blocking, and deterministic salary calculation.
 - Integrated listing-specific salary policy into [electron/jobs/application-policy.cjs](../electron/jobs/application-policy.cjs) and the live browser profile context in [electron/main.cjs](../electron/main.cjs).
+- Exposed durable policy CRUD through `coachDatabase.applications.answerPolicies`, so approved policy records are usable by the application runtime instead of existing only as an internal helper.
 - Salary uses the advertised minimum plus 20% of the public range width, with the required `$120,000` fallback when no public range is available. A current listing range takes precedence over an older reusable salary answer.
 - Preserved approval gates: current salary, legal attestations, ambiguous answers, MFA/password/CAPTCHA, and final submission remain blocked or user-gated.
 - Added [test/application-answer-policy.test.cjs](../test/application-answer-policy.test.cjs) covering range math, fallback, stale-answer protection, and sensitive-field behavior.
@@ -119,6 +120,30 @@ Validation completed:
 - Computer Use inspection passed on the fresh North Star window; autonomous queue visibly paused. No queue or checkpoint action was taken because those controls can claim or advance a real application.
 
 Deferred UI improvement discovered during Computer Use: surface the answer-policy mode, computed salary value, and provenance beside each planned fill in the application review panel. This is intentionally deferred to the later review/trace work so it can share the per-step evidence model.
+
+### Phase 5 / Milestone 5 — Trace and replay: complete (2026-08-24)
+
+Completed in commit `92dd982`:
+
+- Added [electron/migrations/0033_application_workflow_steps.sql](../electron/migrations/0033_application_workflow_steps.sql) for one durable trace row per orchestrated application step, including observation, plan, execution, verification, outcome, reason code, source, and idempotency key.
+- Added [electron/jobs/automation/trace-store.cjs](../electron/jobs/automation/trace-store.cjs) with bounded recursive redaction, query-string removal from replay observations, trace persistence wiring, and a fixture-only replay runner.
+- Wired the orchestrator's main-process repository adapter to persist workflow steps through `coachDatabase.applications.workflowSteps`; the existing summary event remains for queue history and backward compatibility.
+- Added [test/application-workflow-replay.test.cjs](../test/application-workflow-replay.test.cjs) and [test/fixtures/application-replays/dice-recovery.json](../test/fixtures/application-replays/dice-recovery.json) covering credential redaction, local replay, site-change detection, and recovery metrics.
+
+Phase 4 cleanup and Phase 5 exit criteria are met: answer-policy records are publicly reachable, executed actions have durable verification records, failed runs can be replayed without reopening an external site, and planner/executor/verifier/site-change/human-intervention/recovery metrics are distinguishable. Replay remains fixture-driven and never grants external browser or submission authority.
+
+Validation completed:
+
+- 17 focused Phase 3/4/5, browser-policy, and orchestrator tests passing.
+- `node --check` for changed trace-store, database, and main-process modules passing.
+- `npm.cmd run build` passing with only existing Vite config and chunk-size warnings.
+- Electron restarted after the Phase 5 commit.
+- Fresh Computer Use inspection passed on North Star; Job search rendered normally and the Autonomous Application Queue was visibly paused. No checkpoint or queue control was clicked.
+
+Deferred UI improvements discovered during Computer Use:
+
+- Show answer-policy mode, calculated salary, and provenance beside each planned fill.
+- Add a compact workflow-trace/replay-metrics affordance to the queue review surface so users can inspect why a step paused or recovered without opening raw trace payloads.
 
 ### Phase 1 — Normalize the workflow core: complete (2026-08-23)
 
