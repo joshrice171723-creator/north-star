@@ -746,6 +746,18 @@ function autonomousApplicationQueueStatus() {
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
   return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, blocked: queue.filter((entry) => entry.automationState === 'blocked').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
 }
+async function requeueAndRetryAutonomousApplication({ applicationId, checkpoint, message } = {}) {
+  coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint });
+  applicationBrowser.close();
+  autonomousApplicationQueueState.activeApplicationId = null;
+  autonomousApplicationQueueState.running = false;
+  autonomousApplicationQueueState.paused = true;
+  autonomousApplicationQueueState.message = message;
+  // The retry is explicitly scoped to the same application. Resetting queue
+  // ownership first keeps the single-tenant guard active and prevents a
+  // repaired failure from requiring a second Checkpoint next click.
+  return startAutonomousApplicationQueue(applicationId);
+}
 async function startAutonomousApplicationQueue(targetApplicationId = null) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   // The browser checkpoint is single-tenant. Guard both the async start window
@@ -878,8 +890,15 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
       else {
         const recovery = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: handoff.reason });
         if (recovery.status === 'applied') {
-          const recoveredHandoff = await applicationBrowser.advance({ handoffOnly: true });
-          autonomousApplicationQueueState.message = recoveredHandoff.status === 'advanced' ? 'AI cleared a blocking control and followed the Apply handoff.' : 'AI cleared a blocking control; review the next application step.';
+          const application = coachDatabase.applications.get(claimed.id);
+          const repairAttempts = Number(application?.automationCheckpoint?.aiRepairAttempts || 0);
+          if (repairAttempts < 1) {
+            return requeueAndRetryAutonomousApplication({ applicationId: claimed.id, checkpoint: { ...application.automationCheckpoint, aiRepairAttempts: repairAttempts + 1, stage: 'opening_repaired', reasonCode: 'opening_ai_repaired', repairReason: recovery.plan?.reason || '', retryQueuedAt: new Date().toISOString() }, message: 'AI repaired the opening page; retrying the same application automatically.' });
+          }
+          coachDatabase.applications.releaseAutomation({ applicationId: claimed.id, state: 'failed', checkpoint: { ...application.automationCheckpoint, stage: 'opening', reasonCode: 'opening_ai_repair_exhausted', retryable: true, lastError: recovery.plan?.reason || 'The repaired opening checkpoint remained blocked.' } });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.message = 'AI repair attempts were exhausted; review this application before retrying.';
         } else {
           const application = coachDatabase.applications.get(claimed.id);
           // A recoverable blocker must not consume the job's queue slot. Return
@@ -917,10 +936,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
         try {
           const repair = await recoverApplicationStep({ applicationId: claimed.id, blockedReason: message });
           if (repair.status === 'applied') {
-            coachDatabase.applications.releaseAutomation({ applicationId: claimed.id, state: 'queued', checkpoint: { ...currentCheckpoint, aiRepairAttempts: repairAttempts + 1, stage: 'opening_repaired', reasonCode: 'opening_ai_repaired', repairReason: repair.plan?.reason || '', retryQueuedAt: new Date().toISOString() } });
-            applicationBrowser.close();
-            autonomousApplicationQueueState.activeApplicationId = null;
-            autonomousApplicationQueueState.message = 'AI repaired the opening page; the same application is queued for retry.';
+            return requeueAndRetryAutonomousApplication({ applicationId: claimed.id, checkpoint: { ...currentCheckpoint, aiRepairAttempts: repairAttempts + 1, stage: 'opening_repaired', reasonCode: 'opening_ai_repaired', repairReason: repair.plan?.reason || '', retryQueuedAt: new Date().toISOString() }, message: 'AI repaired the opening page; retrying the same application automatically.' });
           } else {
             throw new Error(repair.reason || 'AI opening repair did not produce a safe action.');
           }
