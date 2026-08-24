@@ -25,6 +25,11 @@ const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessag
 const { applicationExportDirectory, applicationExportFilename, ensureApplicationFileStructure } = require('./jobs/application-export.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
 const { classifyApplicationFailure } = require('./jobs/application-reliability.cjs');
+const { createApplicationOrchestrator } = require('./jobs/automation/orchestrator.cjs');
+const { observePage } = require('./jobs/automation/observation.cjs');
+const { planNextStep } = require('./jobs/automation/planner.cjs');
+const { createSafeExecutor } = require('./jobs/automation/executor.cjs');
+const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
@@ -63,6 +68,7 @@ let googleVoiceViewVisible = false;
 let academyLayout = null;
 let coachDatabase;
 let applicationBrowser;
+let applicationWorkflowOrchestrator;
 let emailMonitorTimer;
 let googleVoiceWindow;
 let googleVoiceMonitorTimer;
@@ -763,8 +769,15 @@ async function startAutonomousApplicationQueue() {
       // control before recording a false “no handoff” checkpoint.
       let handoff;
       for (let attempt = 0; attempt < 40; attempt += 1) {
-        handoff = await applicationBrowser.advance({ handoffOnly: true });
-        if (handoff.status !== 'blocked' || handoff.reason !== 'next_control_not_found' || attempt === 39) break;
+        const checkpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
+        const workflow = await applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: applicationBrowser.publicState(), checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey: 'dice-handoff' }, context: { site: applicationBrowser.publicState()?.currentHost || 'dice', atsKey: 'dice', mode: 'deterministic' } });
+        const result = workflow.result;
+        handoff = result?.outcome === 'listing_unavailable'
+          ? { status: 'unavailable', reason: result.reasonCode, signals: result.evidenceIds, pageFingerprint: result.pageFingerprint }
+          : result?.outcome === 'continue'
+            ? { status: 'advanced', pageFingerprint: result.pageFingerprint }
+            : { status: 'blocked', reason: result?.reasonCode || 'next_control_not_found', pageFingerprint: result?.pageFingerprint };
+        if (handoff.status !== 'blocked' || attempt === 39) break;
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
       if (handoff.status === 'unavailable') {
@@ -1583,6 +1596,24 @@ function createWindow() {
     },
     attachView: (view) => mainWindow?.contentView.addChildView(view),
     detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
+  });
+  // Phase 2 owns the first Dice/browser handoff checkpoint. The repository
+  // adapter records the workflow contract through existing application events
+  // until the dedicated workflow-step tables arrive in the playbook phase.
+  applicationWorkflowOrchestrator = createApplicationOrchestrator({
+    repository: {
+      getApplication: (applicationId) => coachDatabase.applications.get(applicationId),
+      getJob: (jobId) => coachDatabase.jobs.list().find((job) => job.id === jobId) || null,
+      updateApplicationState: ({ applicationId, state, checkpoint }) => coachDatabase.applications.updateAutomationState({ applicationId, state, checkpoint }),
+      archiveUnavailableJob: (jobId) => coachDatabase.jobs.archiveUnavailable(jobId),
+      recordEvent: (entry) => coachDatabase.applications.recordEvent(entry),
+      findCompletedStep: (idempotencyKey) => coachDatabase.applications.listActive().flatMap((entry) => coachDatabase.applications.listEvents(entry.id)).find((event) => event.eventType === 'workflow_step_recorded' && event.metadata?.idempotencyKey === idempotencyKey && event.metadata?.outcome === 'continue') || null,
+      recordStep: ({ applicationId, jobId, plan, execution, verification, result, idempotencyKey }) => coachDatabase.applications.recordEvent({ applicationId, eventType: 'workflow_step_recorded', summary: `Safe ${plan.actionType} step ${result.outcome}.`, metadata: { jobId, idempotencyKey, actionType: plan.actionType, stepType: plan.stepType, executionStatus: execution?.status || '', verificationStatus: verification?.status || '', outcome: result.outcome, pageFingerprint: plan.targetFingerprint } }),
+    },
+    observePage: async ({ browserState }) => observePage({ browserState }),
+    planNextStep,
+    executeSafeStep: createSafeExecutor({ browser: applicationBrowser }),
+    verifyStepResult: createStepVerifier({ observe: async () => observePage({ browserState: applicationBrowser.publicState() }) }),
   });
   academyBounds();
 
