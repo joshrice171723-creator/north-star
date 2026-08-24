@@ -10,7 +10,7 @@ test('autopilot owns queue progression and records final-submit intent before cl
   assert.match(main, /autopilot: false/);
   assert.match(main, /scheduleAutopilotNext/);
   assert.match(main, /autopilotSubmission: \{ idempotencyKey/);
-  assert.match(main, /state: 'verifying_email_confirmation'/);
+  assert.match(main, /confirmation\.state === 'confirmed' \? 'verifying_email_confirmation' : 'verifying_confirmation'/);
   assert.match(main, /attempt < 30/);
   assert.match(main, /attempt < 24/);
   assert.match(main, /replaySavedAutopilotLogin/);
