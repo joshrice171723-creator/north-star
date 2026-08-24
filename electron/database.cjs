@@ -383,7 +383,7 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
     for (const row of optionalCoverRows) {
       const checkpoint = parseObject(row.automation_checkpoint_json, {});
       const openQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
-      if (openQuestions || checkpoint.reasonCode !== 'safe_pass_requires_review' || !/Document upload incomplete:\\s*cover_letter:missing/i.test(String(checkpoint.lastError || ''))) continue;
+      if (openQuestions || checkpoint.reasonCode !== 'safe_pass_requires_review' || !/Document upload incomplete:\s*cover_letter:missing/i.test(String(checkpoint.lastError || ''))) continue;
       const { lastError, failureClass, retryable, safePassFailedAt, ...requeuedCheckpoint } = checkpoint;
       const nextCheckpoint = { ...requeuedCheckpoint, stage: 'form_retry', reasonCode: 'optional_cover_letter_warning', uploadWarnings: [{ documentType: 'cover_letter', status: 'missing', optional: true }], optionalCoverLetterRecoveredAt: stamp };
       sqlite.prepare("UPDATE job_applications SET automation_state = 'queued', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state = 'needs_user_answer'").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
