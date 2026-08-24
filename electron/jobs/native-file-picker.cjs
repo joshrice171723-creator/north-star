@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 
 // Chromium's DOM debugger cannot control a Windows file dialog. This bounded
@@ -6,6 +7,7 @@ const { spawn } = require('node:child_process');
 // document filename can never become PowerShell source code.
 async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
   if (process.platform !== 'win32' || typeof filePath !== 'string' || !filePath.trim()) return { status: 'unsupported' };
+  if (!fs.existsSync(filePath)) return { status: 'path_not_found', filePath };
   const script = [
     '$shell = New-Object -ComObject WScript.Shell',
     '$deadline = (Get-Date).AddMilliseconds(10000)',

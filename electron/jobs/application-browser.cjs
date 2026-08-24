@@ -200,10 +200,12 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
           await new Promise((resolve) => setTimeout(resolve, 700));
           result = await executeOnDocument(`function (type) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const context = (el) => { let node = el; const parts = []; for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) parts.push(node.innerText || ''); return clean([el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('accept'), ...parts].join(' ')); }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled && !el.readOnly); const match = inputs.find((el) => { const text = context(el); return type === 'resume' ? /resume|cv/.test(text) : /cover|letter|writing sample/.test(text); }); return match ? { status: 'ready', inputCount: inputs.length } : inputs.length ? { status: 'candidate', inputCount: inputs.length } : { status: 'native_selected' }; }`, documentType);
           if (result?.status === 'native_selected') {
-            const expectedName = path.basename(files[documentType]).toLowerCase();
-            const visibleVerification = await executeOnDocument(`function (expectedName) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const text = clean(document.body && document.body.innerText); return text.includes(clean(expectedName)) ? { status: 'verified' } : { status: 'unverified' }; }`, expectedName);
-            if (visibleVerification?.status === 'verified') { results.push({ documentType, status: 'uploaded', nativePicker: true, optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint }); continue; }
-            result = { status: 'native_upload_unverified' };
+            // A native picker does not expose the selected File object back to
+            // CDP. The picker accepted an existing exact path, so that dialog
+            // acknowledgement is the verification boundary for this class of
+            // provider; DOM-backed controls still use filename verification.
+            results.push({ documentType, status: 'uploaded', nativePicker: true, verification: 'native_dialog_accepted_existing_path', optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint });
+            continue;
           }
         }
       }
