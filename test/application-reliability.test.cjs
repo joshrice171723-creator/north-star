@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { matchSubmissionConfirmation } = require('../electron/jobs/application-confirmation-email.cjs');
-const { classifyApplicationFailure, classifyWorkflowFailure, boundedRetry } = require('../electron/jobs/application-reliability.cjs');
+const { classifyApplicationFailure, classifyWorkflowFailure, classifySafePassFailure, boundedRetry } = require('../electron/jobs/application-reliability.cjs');
 
 test('submission confirmation requires explicit language and current job evidence', () => {
   const base = { id: 'email-1', recipients: 'josh@example.com', receivedAt: '2026-08-23T15:05:00Z', subject: 'Application received', body: 'Thank you for applying to Acme for the Forward Deployed Engineer role. Confirmation number: ABC-123.' };
@@ -23,4 +23,11 @@ test('workflow failure classification preserves retryable and user-decision dist
   assert.equal(classifyWorkflowFailure({ code: 'unsupported_site' }).outcome, 'unsupported_site');
   assert.equal(classifyWorkflowFailure({ code: 'captcha_detected' }).outcome, 'needs_user');
   assert.equal(classifyWorkflowFailure({ code: 'unknown_question' }).requiresUser, true);
+});
+
+test('safe-pass failures use AI-repair results before queueing and stop protected-field churn', () => {
+  assert.deepEqual(classifySafePassFailure({ error: { code: 'protected_action' }, plan: { fields: [] } }), { state: 'needs_user_answer', reasonCode: 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: 0 });
+  assert.equal(classifySafePassFailure({ error: { code: 'safe_pass_retryable' }, attempt: 1 }).state, 'queued');
+  assert.equal(classifySafePassFailure({ error: { code: 'network_timeout' }, attempt: 2 }).reasonCode, 'safe_pass_retry_exhausted');
+  assert.equal(classifySafePassFailure({ error: { code: 'unknown' }, plan: { fields: [{ action: 'blocked' }] } }).state, 'needs_user_answer');
 });

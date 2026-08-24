@@ -15,5 +15,18 @@ function classifyWorkflowFailure(input = {}) {
       : classified.class === 'invalid_state' ? 'terminal_failure' : 'terminal_failure';
   return { ...classified, outcome, requiresUser: outcome === 'needs_user' };
 }
+function classifySafePassFailure({ error = {}, plan = null, attempt = 0, maxAttempts = 2 } = {}) {
+  const code = String(error.code || error.reason || '').toLowerCase();
+  const protectedFields = Array.isArray(plan?.fields)
+    ? plan.fields.filter((field) => ['ask', 'blocked'].includes(field?.action))
+    : [];
+  if (code.includes('protected') || protectedFields.length) {
+    return { state: 'needs_user_answer', reasonCode: 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: protectedFields.length };
+  }
+  const failure = classifyApplicationFailure(error);
+  const nextAttempt = Number(attempt) + 1;
+  const exhausted = !failure.retryable || nextAttempt > Math.max(0, Number(maxAttempts) || 0);
+  return { state: exhausted ? 'failed' : 'queued', reasonCode: exhausted ? 'safe_pass_retry_exhausted' : 'safe_pass_retryable', retryable: failure.retryable, exhausted, failureClass: failure.class, nextAttempt };
+}
 function boundedRetry({ attempt = 0, maxAttempts = 2, failure = {} } = {}) { const classified = failure.class ? failure : classifyApplicationFailure(failure); const nextAttempt = Number(attempt) + 1; return { ...classified, attempt: nextAttempt, exhausted: !classified.retryable || nextAttempt > Math.max(0, Number(maxAttempts) || 0), nextRetryAt: classified.retryable && nextAttempt <= maxAttempts ? new Date(Date.now() + Math.min(15 * 60 * 1000, 1000 * 2 ** Math.min(nextAttempt, 5))).toISOString() : null }; }
-module.exports = { FAILURE_CLASSES, classifyApplicationFailure, classifyWorkflowFailure, boundedRetry };
+module.exports = { FAILURE_CLASSES, classifyApplicationFailure, classifyWorkflowFailure, classifySafePassFailure, boundedRetry };

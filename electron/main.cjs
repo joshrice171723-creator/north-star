@@ -24,7 +24,7 @@ const { tokenIsUsable, refreshGmailAccessToken, createPkcePair, buildGmailAuthor
 const { buildEvidenceCatalog, buildCoverLetterClaimLedger, buildGenerationMessages, buildCoverLetterRevisionMessages, buildResumeRepairMessages, buildSafeCoverLetterFallback, normalizeGeneratedContent, cleanCoverLetterPresentation, validateGeneratedDocument, renderPlainText, PROMPT_VERSION } = require('./jobs/application-documents.cjs');
 const { applicationExportDirectory, applicationExportFilename, ensureApplicationFileStructure } = require('./jobs/application-export.cjs');
 const { createApplicationBrowser, handleMouseNavigationInput } = require('./jobs/application-browser.cjs');
-const { classifyApplicationFailure } = require('./jobs/application-reliability.cjs');
+const { classifyApplicationFailure, classifySafePassFailure } = require('./jobs/application-reliability.cjs');
 const { createApplicationOrchestrator } = require('./jobs/automation/orchestrator.cjs');
 const { observePage } = require('./jobs/automation/observation.cjs');
 const { planNextStep } = require('./jobs/automation/planner.cjs');
@@ -2654,6 +2654,7 @@ function registerDatabaseIpc() {
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
   };
   autonomousSafeFormPass = async (applicationId) => {
+    let lastPlan = null;
     try {
       const files = {};
       for (const documentType of ['resume', 'cover_letter']) {
@@ -2666,7 +2667,6 @@ function registerDatabaseIpc() {
       const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, pageFingerprint: entry.pageFingerprint }));
       if (uploadResults.some((entry) => entry.status !== 'uploaded')) throw new Error(`Document upload incomplete: ${uploadResults.filter((entry) => entry.status !== 'uploaded').map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults } });
-      let lastPlan = null;
       for (let pass = 0; pass < 2; pass += 1) {
         const plan = await buildAiApplicationFillPlan(browserProfile());
         lastPlan = plan;
@@ -2689,12 +2689,42 @@ function registerDatabaseIpc() {
     } catch (error) {
       const application = coachDatabase.applications.get(applicationId);
       const message = String(error?.message || 'Safe form pass did not complete.').slice(0, 500);
-      // A form or document mismatch is recoverable. Requeue this same
-      // application with evidence so a retry cannot skip ahead to another job.
-      coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...application?.automationCheckpoint, stage: 'form_retry', reasonCode: 'safe_pass_retryable', lastError: message, retryQueuedAt: new Date().toISOString() } });
+      const checkpoint = application?.automationCheckpoint || {};
+      const repairAttempts = Number(checkpoint.aiRepairAttempts || 0);
+      // Give the AI one bounded chance to repair a changed non-protected
+      // control before classifying the failure. The repair planner can only
+      // dismiss, hand off, or advance; authentication, CAPTCHA, disclosures,
+      // and final submission remain user checkpoints.
+      if (repairAttempts < 1 && applicationBrowser.publicState()?.applicationId === applicationId) {
+        const repair = await recoverApplicationStep({ applicationId, blockedReason: message });
+        if (repair.status === 'applied') {
+          coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { ...checkpoint, aiRepairAttempts: repairAttempts + 1, stage: 'form_repaired', reasonCode: 'safe_pass_ai_repaired', repairReason: repair.plan?.reason || '' } });
+          autonomousApplicationQueueState.message = 'AI repaired the application page; re-running the same form checkpoint.';
+          return autonomousSafeFormPass(applicationId);
+        }
+      }
+      const classification = classifySafePassFailure({ error, plan: lastPlan, attempt: application?.automationAttempt || 0 });
+      const now = new Date().toISOString();
+      const nextCheckpoint = { ...checkpoint, stage: classification.state === 'needs_user_answer' ? 'form_review' : 'form_retry', reasonCode: classification.reasonCode, lastError: message, failureClass: classification.failureClass || '', retryable: classification.retryable, retryQueuedAt: classification.state === 'queued' ? now : undefined, safePassFailedAt: now };
+      // Surface protected or unanswered fields instead of spinning them back
+      // into the queue. A transient failure gets at most two same-job retries;
+      // exhaustion becomes an explicit Retry action rather than silent churn.
+      if (classification.state === 'needs_user_answer') {
+        const browserState = applicationBrowser.publicState();
+        for (const field of (lastPlan?.fields || []).filter((candidate) => candidate?.action === 'ask').slice(0, 20)) {
+          coachDatabase.applications.saveUnknownQuestion({ applicationId, providerHost: browserState?.currentHost || browserState?.initialHost || '', pageFingerprint: lastPlan?.pageFingerprint || '', controlLabel: field.label || field.fieldFingerprint, controlType: field.category || field.inputType || 'field', questionKey: `safe-pass:${field.fieldFingerprint}`, questionText: `What answer should be entered for “${field.label || field.fieldFingerprint}”?`, options: field.options || [] });
+        }
+        coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: nextCheckpoint });
+      } else {
+        coachDatabase.applications.releaseAutomation({ applicationId, state: classification.state, checkpoint: nextCheckpoint });
+      }
       applicationBrowser.close();
       autonomousApplicationQueueState.activeApplicationId = null;
-      autonomousApplicationQueueState.message = `Same application returned to the queue for retry: ${message}`;
+      autonomousApplicationQueueState.message = classification.state === 'needs_user_answer'
+        ? 'AI could not safely answer the remaining form controls; review the highlighted application checkpoint.'
+        : classification.state === 'queued'
+          ? `AI could not repair the form yet; the same application is queued for a bounded retry: ${message}`
+          : `AI repair attempts were exhausted: ${message}`;
     }
   };
   ipcMain.handle('jobs:browser:build-fill-plan', async (event) => { assertTrustedRenderer(event); return buildAiApplicationFillPlan(browserProfile()); });
