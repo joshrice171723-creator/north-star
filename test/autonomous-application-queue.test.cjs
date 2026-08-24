@@ -119,3 +119,35 @@ test('an optional cover-letter warning without a question returns to the queue',
     fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
+
+test('required document failures are retry review, not answer questions', () => {
+  const { userDataPath, db } = create();
+  try {
+    db.jobs.create({ id: 'required-upload-job', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'ready' });
+    const app = db.applications.createOrResume({ jobId: 'required-upload-job' });
+    db.applications.updateAutomationState({ applicationId: app.id, state: 'needs_user_answer', checkpoint: { stage: 'form_review', reasonCode: 'safe_pass_requires_review', lastError: 'Document upload incomplete: resume:missing, cover_letter:missing' } });
+    const entry = db.applications.listAutomationQueue().find((item) => item.applicationId === app.id);
+    assert.equal(entry.automationState, 'failed');
+    assert.equal(entry.pauseReason, 'required_document_upload_failed');
+    assert.equal(entry.unknownQuestionCount, 0);
+  } finally {
+    try { db.close(); } catch {}
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
+test('a verified safe pass with no unresolved fields returns to the queue', () => {
+  const { userDataPath, db } = create();
+  try {
+    db.jobs.create({ id: 'no-question-job', company: 'Acme', roleTitle: 'Engineer', url: 'https://jobs.example.test/apply', stage: 'ready' });
+    const app = db.applications.createOrResume({ jobId: 'no-question-job' });
+    db.applications.updateAutomationState({ applicationId: app.id, state: 'needs_user_answer', checkpoint: { stage: 'form_review', reasonCode: 'safe_pass_requires_review', unresolvedFields: [], uploadResults: [{ documentType: 'resume', status: 'uploaded' }, { documentType: 'cover_letter', status: 'uploaded' }] } });
+    const entry = db.applications.listAutomationQueue().find((item) => item.applicationId === app.id);
+    assert.equal(entry.automationState, 'queued');
+    assert.equal(entry.pauseReason, 'safe_pass_no_question_retry');
+    assert.equal(entry.unknownQuestionCount, 0);
+  } finally {
+    try { db.close(); } catch {}
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});

@@ -389,6 +389,23 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
       sqlite.prepare("UPDATE job_applications SET automation_state = 'queued', automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state = 'needs_user_answer'").run(JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
       recordApplicationEvent({ applicationId: row.id, eventType: 'optional_cover_letter_requeued', summary: 'Optional cover-letter upload warning returned to the queue.', metadata: { previousReasonCode: checkpoint.reasonCode } });
     }
+    // Required document failures and stale review rows with no unresolved
+    // fields are workflow retry states, not questions. Keeping them out of
+    // needs_user_answer prevents the answer modal from asking the user to
+    // invent an answer when there is no employer question to answer.
+    const staleReviewRows = sqlite.prepare("SELECT id, automation_state, automation_checkpoint_json FROM job_applications WHERE deleted_at IS NULL AND automation_state = 'needs_user_answer'").all();
+    for (const row of staleReviewRows) {
+      const checkpoint = parseObject(row.automation_checkpoint_json, {});
+      const openQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
+      if (openQuestions) continue;
+      const uploadFailure = /Document upload incomplete:/i.test(String(checkpoint.lastError || ''));
+      const allUploadsVerified = Array.isArray(checkpoint.uploadResults) && checkpoint.uploadResults.length > 0 && checkpoint.uploadResults.every((entry) => entry.status === 'uploaded');
+      if (!uploadFailure && !(checkpoint.reasonCode === 'safe_pass_requires_review' && allUploadsVerified && Array.isArray(checkpoint.unresolvedFields) && checkpoint.unresolvedFields.length === 0)) continue;
+      const nextCheckpoint = { ...checkpoint, stage: 'form_retry', reasonCode: uploadFailure ? 'required_document_upload_failed' : 'safe_pass_no_question_retry', normalizedAt: stamp, retryable: true };
+      const nextState = uploadFailure ? 'failed' : 'queued';
+      sqlite.prepare("UPDATE job_applications SET automation_state = ?, automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state = 'needs_user_answer'").run(nextState, JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
+      recordApplicationEvent({ applicationId: row.id, eventType: 'automation_review_reclassified', summary: `Review checkpoint reclassified as ${nextState}; no unanswered employer question exists.`, metadata: { previousReasonCode: checkpoint.reasonCode, nextReasonCode: nextCheckpoint.reasonCode } });
+    }
     return sqlite.prepare("SELECT a.*, j.company, j.role_title, j.stage, j.url AS job_url, j.canonical_url FROM job_applications a JOIN job_opportunities j ON j.id = a.job_id WHERE a.deleted_at IS NULL AND j.deleted_at IS NULL AND j.stage = 'ready' ORDER BY CASE a.automation_state WHEN 'opening' THEN 0 WHEN 'needs_user_answer' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, a.last_activity_at ASC").all().map((row) => {
       const eligibility = autonomousEligibility(row); const unknownQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
       const checkpoint = parseObject(row.automation_checkpoint_json, {});
