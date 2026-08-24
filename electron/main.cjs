@@ -2576,7 +2576,7 @@ function registerDatabaseIpc() {
       }
       if (!Object.keys(aiDecisions).length) throw new Error('The AI returned no usable field decisions after a completeness retry. Build the plan again.');
     }
-    const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length };
+    const diagnostics = { candidateCount: candidateFields.length, decisionCount: Object.keys(aiDecisions).length, aiFillCount: Object.values(aiDecisions).filter((entry) => entry.action === 'fill').length, unresolvedCount: unresolvedFields.length, unresolvedFields: unresolvedFields.map((field) => ({ fieldFingerprint: field.fieldFingerprint, label: field.label, category: field.category, controlType: field.elementType, inputType: field.inputType, options: Array.isArray(field.options) ? field.options.slice(0, 30) : [] })) };
     return applicationBrowser.createFillPlan(profile, aiDecisions, diagnostics);
   };
   autonomousSafeFormPass = async (applicationId) => {
@@ -2592,13 +2592,23 @@ function registerDatabaseIpc() {
       const uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, pageFingerprint: entry.pageFingerprint }));
       if (uploadResults.some((entry) => entry.status !== 'uploaded')) throw new Error(`Document upload incomplete: ${uploadResults.filter((entry) => entry.status !== 'uploaded').map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults } });
+      let lastPlan = null;
       for (let pass = 0; pass < 2; pass += 1) {
         const plan = await buildAiApplicationFillPlan(browserProfile());
+        lastPlan = plan;
         if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
         await applicationBrowser.fillPlan(plan.id, browserProfile());
       }
       const updated = coachDatabase.applications.get(applicationId);
-      coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...updated.automationCheckpoint, stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', safePassCompletedAt: new Date().toISOString() } });
+      const unresolvedFields = Array.isArray(lastPlan?.diagnostics?.unresolvedFields) ? lastPlan.diagnostics.unresolvedFields : [];
+      const needsUserAnswer = unresolvedFields.length > 0;
+      if (needsUserAnswer) {
+        const browserState = applicationBrowser.publicState();
+        for (const field of unresolvedFields.slice(0, 20)) {
+          coachDatabase.applications.saveUnknownQuestion({ applicationId, providerHost: browserState?.currentHost || browserState?.initialHost || '', pageFingerprint: lastPlan?.pageFingerprint || '', controlLabel: field.label || field.fieldFingerprint, controlType: field.controlType || field.inputType || 'field', questionKey: `safe-pass:${field.fieldFingerprint}`, questionText: `What answer should be entered for “${field.label || field.fieldFingerprint}”?`, options: field.options || [] });
+        }
+      }
+      coachDatabase.applications.updateAutomationState({ applicationId, state: needsUserAnswer ? 'needs_user_answer' : 'queued', checkpoint: { ...updated.automationCheckpoint, stage: needsUserAnswer ? 'form_review' : 'form_retry', reasonCode: needsUserAnswer ? 'safe_pass_complete_review_remaining_fields' : 'safe_pass_found_no_answerable_fields', unresolvedFields, safePassCompletedAt: new Date().toISOString() } });
       applicationBrowser.close();
       autonomousApplicationQueueState.activeApplicationId = null;
       autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
