@@ -816,7 +816,10 @@ async function startAutonomousApplicationQueue() {
         let liveSnapshot = applicationBrowser.publicState()?.snapshot;
         let formVisible = false;
         for (let attempt = 0; attempt < 60; attempt += 1) {
-          formVisible = Boolean(liveSnapshot?.fields?.some((field) => field.inputType === 'file' || /resume|cv|cover letter|first name|last name|email|phone/i.test(field.label || '')));
+          const applicationFields = liveSnapshot?.fields?.filter((field) => /resume|cv|cover letter|first name|last name|email|phone|street address|city|state|zip|country/i.test(field.label || '')) || [];
+          // Listing pages commonly contain one newsletter email field. Require
+          // a file control or multiple application signals before uploading.
+          formVisible = Boolean(liveSnapshot?.fields?.some((field) => field.inputType === 'file') || applicationFields.length >= 2);
           // Keep the full bounded wait so slower employer SPAs get the same
           // form-rendering window promised by the 60-attempt retry loop.
           if (formVisible || attempt === 59) break;
