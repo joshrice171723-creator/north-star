@@ -31,6 +31,7 @@ const { planNextStep } = require('./jobs/automation/planner.cjs');
 const { createSafeExecutor } = require('./jobs/automation/executor.cjs');
 const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
 const { createPlaybookRegistry } = require('./jobs/automation/playbook-registry.cjs');
+const { createRepairLoop } = require('./jobs/automation/repair-loop.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
@@ -1600,6 +1601,19 @@ function createWindow() {
   });
   // Phase 2 owns the first Dice/browser handoff checkpoint. Phase 3 adds the
   // registry as a storage-backed candidate layer without granting it submit authority.
+  const repairLoop = createRepairLoop({
+    proposeRepair: async ({ observation, failedPlan, failure }) => {
+      const repairInput = { pageTitle: observation.pageTitle, pageFingerprint: observation.pageFingerprint, currentUrl: String(observation.currentUrl || '').split('?')[0], fields: (observation.fields || []).slice(0, 80).map((field) => ({ label: field.label, name: field.name, category: field.category, elementType: field.elementType, inputType: field.inputType })) };
+      const response = await openRouterChat([
+        { role: 'system', content: 'You propose one safe browser repair for a changed job-application page. Return JSON only with actionType, targetFingerprint, targetLabel, confidence. Allowed actionType values are handoff, open_google_login, pause_for_user. Never propose submit, fill, upload, credential entry, CAPTCHA, MFA, salary, identity, demographic, or arbitrary script actions. targetFingerprint must equal the observed fingerprint. Use an exact visible button label only.' },
+        { role: 'user', content: `OBSERVED_PAGE:\n${JSON.stringify(repairInput)}\nFAILED_PLAN:\n${JSON.stringify({ actionType: failedPlan?.actionType, targetFingerprint: failedPlan?.targetFingerprint })}\nFAILURE:\n${JSON.stringify({ reasonCode: failure?.reasonCode || failure?.code })}` },
+      ], { auditPurpose: 'application_repair', max_tokens: 220, response_format: { type: 'json_object' } });
+      if (!response?.ok) throw new Error(response?.error || 'AI repair planner unavailable.');
+      try { return JSON.parse(String(response.message.content).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()); } catch { throw new Error('AI repair planner returned invalid JSON.'); }
+    },
+    executeSafeStep: createSafeExecutor({ browser: applicationBrowser }),
+    verifyStepResult: createStepVerifier({ observe: async () => observePage({ browserState: applicationBrowser.publicState() }) }),
+  });
   applicationWorkflowOrchestrator = createApplicationOrchestrator({
     repository: {
       getApplication: (applicationId) => coachDatabase.applications.get(applicationId),
@@ -1608,16 +1622,20 @@ function createWindow() {
       archiveUnavailableJob: (jobId) => coachDatabase.jobs.archiveUnavailable(jobId),
       recordEvent: (entry) => coachDatabase.applications.recordEvent(entry),
       findCompletedStep: (idempotencyKey) => coachDatabase.applications.listActive().flatMap((entry) => coachDatabase.applications.listEvents(entry.id)).find((event) => event.eventType === 'workflow_step_recorded' && event.metadata?.idempotencyKey === idempotencyKey && event.metadata?.outcome === 'continue') || null,
-      recordStep: ({ applicationId, jobId, plan, execution, verification, result, idempotencyKey }) => { coachDatabase.applications.workflowSteps.save({ applicationId, jobId, stepKey: plan.stepKey || plan.actionType, stepType: plan.stepType || plan.actionType, pageFingerprint: plan.targetFingerprint, observationId: plan.observationId, plan, execution, verification, outcome: result.outcome, reasonCode: result.reasonCode, source: result.source, requiresUser: result.requiresUser, idempotencyKey }); return coachDatabase.applications.recordEvent({ applicationId, eventType: 'workflow_step_recorded', summary: `Safe ${plan.actionType} step ${result.outcome}.`, metadata: { jobId, idempotencyKey, actionType: plan.actionType, stepType: plan.stepType, executionStatus: execution?.status || '', verificationStatus: verification?.status || '', outcome: result.outcome, pageFingerprint: plan.targetFingerprint } }); },
+      recordStep: ({ applicationId, jobId, observation, plan, execution, verification, result, idempotencyKey }) => { coachDatabase.applications.workflowSteps.save({ applicationId, jobId, observation, stepKey: plan.stepKey || plan.actionType, stepType: plan.stepType || plan.actionType, pageFingerprint: plan.targetFingerprint, observationId: plan.observationId, plan, execution, verification, outcome: result.outcome, reasonCode: result.reasonCode, source: result.source, requiresUser: result.requiresUser, idempotencyKey }); return coachDatabase.applications.recordEvent({ applicationId, eventType: 'workflow_step_recorded', summary: `Safe ${plan.actionType} step ${result.outcome}.`, metadata: { jobId, idempotencyKey, actionType: plan.actionType, stepType: plan.stepType, executionStatus: execution?.status || '', verificationStatus: verification?.status || '', outcome: result.outcome, pageFingerprint: plan.targetFingerprint } }); },
     },
-    playbookRegistry: createPlaybookRegistry({
+    playbookRegistry: {
+      ...createPlaybookRegistry({
       repository: {
         listPlaybooks: (input) => coachDatabase.applications.playbooks.list(input),
         listPlaybookSteps: (playbookId) => coachDatabase.applications.playbooks.steps(playbookId),
         savePlaybook: (input) => coachDatabase.applications.playbooks.save(input),
         savePlaybookStep: (input) => coachDatabase.applications.playbooks.saveStep(input),
+        saveRepair: (input) => coachDatabase.applications.playbooks.repairs.save(input),
       },
-    }),
+      }),
+      repairLoop: { handle: (input) => repairLoop.handle({ ...input, recordRepair: (repair) => coachDatabase.applications.playbooks.repairs.save({ ...repair, pageFingerprint: input.observation?.pageFingerprint, plan: repair.plan, failedPlan: input.failedPlan }) }) },
+    },
     observePage: async ({ browserState }) => observePage({ browserState }),
     planNextStep,
     executeSafeStep: createSafeExecutor({ browser: applicationBrowser }),

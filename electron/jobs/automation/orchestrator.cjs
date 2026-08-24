@@ -37,6 +37,16 @@ function createApplicationOrchestrator({ repository, observePage, planNextStep, 
     if (prior) return { status: 'replayed', idempotencyKey, prior };
     const execution = await executeSafeStep({ ...plan, idempotencyKey }, { applicationId, browserState });
     const verification = await verifyStepResult({ plan, execution, browserState, applicationId });
+    if (playbookRegistry?.repairLoop && verification?.status !== 'verified') {
+      const repair = await playbookRegistry.repairLoop.handle({ applicationId, observation, failedPlan: plan, failure: verification, browserState, context: { ...context, repairAttempts: Number(checkpoint.repairAttempts) || 0 } });
+      if (repair.status === 'repaired') {
+        const repairedPlan = repair.plan;
+        const repairedResult = resultFromVerification({ applicationId, jobId: application.jobId, plan: repairedPlan, verification: repair.verification });
+        if (typeof repository.recordStep === 'function') repository.recordStep({ applicationId, jobId: application.jobId, observation, plan: repairedPlan, execution: repair.execution, verification: repair.verification, result: repairedResult, idempotencyKey: makeIdempotencyKey({ applicationId, checkpointVersion: Number(checkpoint.version) || 0, actionType: repairedPlan.actionType, targetFingerprint: repairedPlan.targetFingerprint }) });
+        if (playbookRegistry.recordVerifiedSuccess) playbookRegistry.recordVerifiedSuccess({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan: repairedPlan, source: 'ai_repair' });
+        return { status: 'repaired', result: repairedResult, repair };
+      }
+    }
     const result = resultFromVerification({ applicationId, jobId: application.jobId, plan, verification });
     if (typeof repository.recordStep === 'function') repository.recordStep({ applicationId, jobId: application.jobId, plan, execution, verification, result, idempotencyKey });
     if (playbookRegistry?.recordVerifiedSuccess && result.outcome === 'continue' && verification?.status === 'verified') playbookRegistry.recordVerifiedSuccess({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan, source: plan.source });
