@@ -115,7 +115,7 @@ function normalizeFillPlanDecisions(parsed, fields = []) {
       evidence: Array.isArray(entry.evidence) ? entry.evidence.slice(0, 5).map((item) => String(item).slice(0, 160)) : [],
     };
   }
-  return { decisions, unresolvedFields: fields.filter((field) => !decisions[field.fieldFingerprint] || invalid.has(field.fieldFingerprint)) };
+  return { decisions, unresolvedFields: fields.filter((field) => !decisions[field.fieldFingerprint] || invalid.has(field.fieldFingerprint) || decisions[field.fieldFingerprint].action === 'ask') };
 }
 
 function repairFillPlanMessages(response, fields) {
