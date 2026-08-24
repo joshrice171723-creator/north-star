@@ -61,6 +61,7 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /const resumeUrl = claimed\.automationCheckpoint\?\.redactedUrl/);
   assert.match(source, /externalApplicationUrl \|\| application\?\.applicationUrl/);
   assert.match(source, /\.\.\.application\.automationCheckpoint/);
+  assert.match(source, /answerPolicies: coachDatabase\.applications\.answerPolicies\.list\(\)/);
   assert.match(source, /async function requeueAndRetryAutonomousApplication/);
   assert.match(source, /return requeueAndRetryAutonomousApplication\(\{ applicationId: claimed\.id/);
   assert.match(source, /aiRepairAttempts: repairAttempts \+ 1/);
