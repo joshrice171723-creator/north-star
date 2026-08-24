@@ -27,6 +27,16 @@ test('logical playbook identity updates changed fingerprints and preserves separ
   } finally { database.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('deferred playbook learning survives until it is resolved', () => {
+  const root = tempRoot(); const database = createDatabase({ userDataPath: root, seedPath: path.join(root, 'missing.csv') });
+  try {
+    const retry = database.applications.playbooks.learningRetries.queue({ applicationId: 'application-1', siteHost: 'dice.example', atsKey: 'dice', stepKey: 'dice-handoff', pageFingerprint: 'fp-1', plan: { stepId: 'dice-handoff', actionType: 'handoff' }, lastError: 'temporary failure' });
+    assert.equal(database.applications.playbooks.learningRetries.listPending().length, 1);
+    database.applications.playbooks.learningRetries.resolve(retry.id);
+    assert.equal(database.applications.playbooks.learningRetries.listPending().length, 0);
+  } finally { database.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('migration merges historical duplicate logical steps before enforcing identity', () => {
   const root = tempRoot(); const file = path.join(root, 'legacy.sqlite'); const sqlite = new BetterSqlite3(file);
   try {
