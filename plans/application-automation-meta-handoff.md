@@ -1104,3 +1104,34 @@ The meta workflow is ready for broader queue use when all of the following are t
 ## Immediate next action
 
 Start with Milestone 1. Do not add more site-specific browser fixes until the result contract and transition policy exist. The first proof should be the unavailable-listing case that caused the recent queue loop: one deterministic classification, one central archive transition, one persisted trace, and one replay test.
+
+## Completion update — bounded repair, replay coverage, and UI visibility (2026-08-24)
+
+The remaining repository-executable automation work is complete through commits `e48443a`, `fc525c3`, `7bbd5c1`, and `48c7529`:
+
+- Added [electron/jobs/automation/repair-loop.cjs](../electron/jobs/automation/repair-loop.cjs) with a one-attempt repair budget, exact page-fingerprint validation, reversible-action allowlisting, protected/irreversible action rejection, independent verification, and repair failure classification.
+- Wired the repair loop into the main-process orchestrator and OpenRouter repair prompt. Only bounded page structure is sent; credentials, values, cookies, and raw page text are excluded. A repaired plan is stored as a reusable playbook step only after verification succeeds.
+- Added durable repair persistence through `application_playbook_repairs`, including sanitized observation, proposal, validation, execution, verification, status, model, and prompt version metadata.
+- Added queue-facing adapter mode, adapter key, playbook confidence, answer-policy mode, calculated salary, answer provenance, and pause reason fields. The renderer now shows these beside each autonomous queue entry.
+- Added [test/application-repair-loop.test.cjs](../test/application-repair-loop.test.cjs) and [test/application-supported-replay.test.cjs](../test/application-supported-replay.test.cjs). All eight supported provider fixtures now traverse every page, end in a confirmed state, and assert a zero submit retry budget.
+- Tightened safe browser activation syntax so source contracts distinguish guarded visible-control events from an autonomous submission path. No final submission is performed by the repair loop or provider replay.
+
+Validation:
+
+- Full suite: 282 passing, 1 failing.
+- The sole remaining failure is the pre-existing Windows `EPERM` while the autonomous foundation test removes its temporary SQLite directory after close. It is test cleanup/environment behavior, not an application assertion failure.
+- Focused automation, provider, replay, browser, answer-policy, and safety contracts: passing.
+- `npm.cmd run build`: passing with only the existing Vite CommonJS/ESM and large-chunk warnings.
+- Electron restarted after every task commit and visually inspected with Computer Use. The queue remains visibly paused, with no checkpoint action taken because that action can claim a real application.
+
+Controlled-live boundary:
+
+- Dice, Adzuna, Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS/Taleo adapters remain explicitly `fixture-gated`; `selectAdapter()` keeps the generic non-mutating adapter as the default.
+- No live adapter was promoted because doing so requires a real employer page, user-approved browser session, and controlled validation of each site. The implementation is ready for that validation, but it is not safe or truthful to claim those external pages were validated from fixtures.
+- Final submission, CAPTCHA, MFA, password entry, protected identity/legal answers, and irreversible account actions remain human-gated.
+
+Later UI improvements recorded for a future pass:
+
+- Add a compact trace/replay metrics drilldown instead of relying on queue text alone.
+- Add a dedicated “why paused” panel that links sanitized reason codes to step counts and repair attempts.
+- Add a visible fixture-gated/live adapter legend at the queue header.
