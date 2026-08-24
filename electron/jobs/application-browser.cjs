@@ -1,3 +1,4 @@
+const path = require('node:path');
 const { normalizeSnapshot, INSPECTION_SCRIPT, PAGE_STATUS_SCRIPT } = require('./application-inspector.cjs');
 const { buildFillPlan, validatePlanForFill } = require('./application-fill-engine.cjs');
 const { detectConfirmation } = require('./application-confirmation.cjs');
@@ -223,6 +224,9 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
         await debuggerClient.sendCommand('DOM.getDocument');
         const { nodeId } = await debuggerClient.sendCommand('DOM.requestNode', { objectId: node.result.objectId });
         await debuggerClient.sendCommand('DOM.setFileInputFiles', { nodeId, files: [files[documentType]] });
+        const assignedName = await debuggerClient.sendCommand('Runtime.callFunctionOn', { objectId: node.result.objectId, returnByValue: true, functionDeclaration: "function () { return this.files && this.files[0] ? this.files[0].name : ''; }" });
+        const expectedName = path.basename(files[documentType]);
+        if (assignedName.result?.value !== expectedName) throw new Error(`The ${documentType} upload control received ${assignedName.result?.value || 'no file'} instead of ${expectedName}.`);
         results.push({ documentType, status: 'uploaded', optional: documentType === 'cover_letter' && coverLetterOptional, pageFingerprint: snapshot.pageFingerprint });
       } finally { if (attached && debuggerClient.isAttached()) debuggerClient.detach(); }
     }
