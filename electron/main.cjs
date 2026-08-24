@@ -741,6 +741,7 @@ const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
+const MAX_UNAVAILABLE_AUTO_ADVANCES = 3;
 let autonomousSafeFormPass = null;
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
@@ -759,7 +760,21 @@ async function requeueAndRetryAutonomousApplication({ applicationId, checkpoint,
   // repaired failure from requiring a second Checkpoint next click.
   return startAutonomousApplicationQueue(applicationId);
 }
-async function startAutonomousApplicationQueue(targetApplicationId = null) {
+async function continueAfterUnavailableApplication(message, depth = 0) {
+  autonomousApplicationQueueState.activeApplicationId = null;
+  autonomousApplicationQueueState.running = false;
+  autonomousApplicationQueueState.paused = true;
+  autonomousApplicationQueueState.message = message;
+  if (depth >= MAX_UNAVAILABLE_AUTO_ADVANCES) return autonomousApplicationQueueStatus();
+  // An unavailable listing is terminal and requires no user decision. Start
+  // the next eligible application automatically, but cap the chain so a bad
+  // provider response cannot consume the whole queue in one click.
+  const next = await startAutonomousApplicationQueue(null, depth + 1);
+  const continuation = next.activeApplicationId ? ' Continuing with the next eligible application.' : ` ${next.message || ''}`;
+  autonomousApplicationQueueState.message = `${message}${continuation}`.trim();
+  return autonomousApplicationQueueStatus();
+}
+async function startAutonomousApplicationQueue(targetApplicationId = null, unavailableAdvanceDepth = 0) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   // The browser checkpoint is single-tenant. Guard both the async start window
   // and a claimed checkpoint so two renderer clicks cannot switch applications
@@ -807,8 +822,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
         // withdrawn / archived pipeline column while removing it from claims.
         coachDatabase.jobs.archiveUnavailable(claimed.jobId);
         applicationBrowser.close();
-        autonomousApplicationQueueState.activeApplicationId = null;
-        autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
+        return continueAfterUnavailableApplication('Job unavailable: archived from the active application run.', unavailableAdvanceDepth);
       } else if (handoff.status === 'advanced') {
         // A job board may expose a second safe handoff after Apply (for
         // example, Dice's Continue Application). Cross only a small bounded
@@ -843,8 +857,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
           // visible in the combined rejected / withdrawn / archived column.
           coachDatabase.jobs.archiveUnavailable(claimed.jobId);
           applicationBrowser.close();
-          autonomousApplicationQueueState.activeApplicationId = null;
-          autonomousApplicationQueueState.message = 'Job unavailable: archived from the active application run.';
+          return continueAfterUnavailableApplication('Job unavailable: archived from the active application run.', unavailableAdvanceDepth);
         } else {
         autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
           ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
