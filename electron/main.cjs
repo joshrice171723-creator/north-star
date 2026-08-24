@@ -765,7 +765,11 @@ async function startAutonomousApplicationQueue() {
       const resumeUrl = claimed.automationCheckpoint?.redactedUrl || '';
       await applicationBrowser.open({ applicationId: claimed.id, resumeUrl });
       const contentBounds = mainWindow?.getContentBounds?.() || { width: 1440, height: 900 };
-      applicationBrowser.setBounds({ x: 0, y: 58, width: Math.max(1, contentBounds.width), height: Math.max(1, contentBounds.height - 58) });
+      // Keep the right-side React assistant rail visible while the queue owns
+      // the native employer view. Full-window bounds hide its close control.
+      const assistantWidth = Math.max(280, Math.min(420, Math.round(contentBounds.width * 0.22)));
+      const browserWidth = Math.max(310, contentBounds.width - assistantWidth - 210 - 270);
+      applicationBrowser.setBounds({ x: Math.max(0, contentBounds.width - assistantWidth - browserWidth), y: 58, width: browserWidth, height: Math.max(1, contentBounds.height - 58) });
       // Dice and similar job boards render the real Apply control after the
       // initial document load. Give the page a bounded window to expose that
       // control before recording a false “no handoff” checkpoint.
