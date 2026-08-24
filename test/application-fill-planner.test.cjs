@@ -34,6 +34,14 @@ test('fill-plan prompt supplies the full verified profile and job evidence with 
   assert.match(messages[1].content, /Build systems/);
 });
 
+test('fill-plan prompt can attach a bounded screenshot as supplemental evidence', () => {
+  const messages = buildFillPlanMessages({ fields: [{ fieldFingerprint: 'field-a', elementType: 'input', inputType: 'text', label: 'Why this role?' }], profile: {}, resumeText: 'Candidate resume', screenshotDataUrl: 'data:image/jpeg;base64,ZmFrZQ==' });
+  assert.equal(Array.isArray(messages[1].content), true);
+  assert.equal(messages[1].content[0].type, 'text');
+  assert.equal(messages[1].content[1].type, 'image_url');
+  assert.match(messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
+});
+
 test('decision normalization preserves scalar answers and retries incomplete or invalid select decisions', () => {
   const fields = [
     { fieldFingerprint: 'number', elementType: 'input', inputType: 'number' },
