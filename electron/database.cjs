@@ -399,10 +399,11 @@ function createDatabase({ userDataPath, seedPath, applicationDocumentsPath, mast
       const openQuestions = Number(sqlite.prepare("SELECT COUNT(*) AS count FROM job_application_unknown_questions WHERE application_id = ? AND status = 'open'").get(row.id).count);
       if (openQuestions) continue;
       const uploadFailure = /Document upload incomplete:/i.test(String(checkpoint.lastError || ''));
+      const uploadRepairFailure = /AI document-upload repair/i.test(String(checkpoint.lastError || '')) || checkpoint.uploadRepair?.status === 'no_repair';
       const allUploadsVerified = Array.isArray(checkpoint.uploadResults) && checkpoint.uploadResults.length > 0 && checkpoint.uploadResults.every((entry) => entry.status === 'uploaded');
-      if (!uploadFailure && !(checkpoint.reasonCode === 'safe_pass_requires_review' && allUploadsVerified && Array.isArray(checkpoint.unresolvedFields) && checkpoint.unresolvedFields.length === 0)) continue;
-      const nextCheckpoint = { ...checkpoint, stage: 'form_retry', reasonCode: uploadFailure ? 'required_document_upload_failed' : 'safe_pass_no_question_retry', normalizedAt: stamp, retryable: true };
-      const nextState = uploadFailure ? 'failed' : 'queued';
+      if (!uploadFailure && !uploadRepairFailure && !(checkpoint.reasonCode === 'safe_pass_requires_review' && allUploadsVerified && Array.isArray(checkpoint.unresolvedFields) && checkpoint.unresolvedFields.length === 0)) continue;
+      const nextCheckpoint = { ...checkpoint, stage: 'form_retry', reasonCode: uploadRepairFailure ? 'document_upload_repair_failed' : uploadFailure ? 'required_document_upload_failed' : 'safe_pass_no_question_retry', normalizedAt: stamp, retryable: true };
+      const nextState = uploadFailure || uploadRepairFailure ? 'failed' : 'queued';
       sqlite.prepare("UPDATE job_applications SET automation_state = ?, automation_checkpoint_json = ?, automation_next_retry_at = NULL, last_activity_at = ?, updated_at = ? WHERE id = ? AND automation_state = 'needs_user_answer'").run(nextState, JSON.stringify(nextCheckpoint), stamp, stamp, row.id);
       recordApplicationEvent({ applicationId: row.id, eventType: 'automation_review_reclassified', summary: `Review checkpoint reclassified as ${nextState}; no unanswered employer question exists.`, metadata: { previousReasonCode: checkpoint.reasonCode, nextReasonCode: nextCheckpoint.reasonCode } });
     }
