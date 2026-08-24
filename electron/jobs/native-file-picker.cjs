@@ -9,20 +9,25 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
   if (process.platform !== 'win32' || typeof filePath !== 'string' || !filePath.trim()) return { status: 'unsupported' };
   if (!fs.existsSync(filePath)) return { status: 'path_not_found', filePath };
   const script = [
-    '$shell = New-Object -ComObject WScript.Shell',
+    // UI Automation writes the complete path into the dialog's edit control;
+    // SendKeys/clipboard is unreliable for paths containing parentheses.
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    '$root = [System.Windows.Automation.AutomationElement]::RootElement',
     '$deadline = (Get-Date).AddMilliseconds(10000)',
     'while ((Get-Date) -lt $deadline) {',
-    '  if ($shell.AppActivate("Open")) {',
-    '    Start-Sleep -Milliseconds 250',
-    '    $shell.SendKeys("%n")',
-    '    Start-Sleep -Milliseconds 100',
-    '    $shell.SendKeys("^a")',
-    // Clipboard paste preserves parentheses, spaces, ampersands, and other
-    // valid Windows path characters that WScript.SendKeys interprets.
-    '    Set-Clipboard -Value $env:NORTHSTAR_PICKER_PATH',
-    '    $shell.SendKeys("^v")',
-    '    Start-Sleep -Milliseconds 100',
-    '    $shell.SendKeys("%o")',
+    '  $dialogs = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)',
+    '  foreach ($dialog in $dialogs) {',
+    '    if ($dialog.Current.Name -ne "Open") { continue }',
+    '    $editCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)',
+    '    $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)',
+    '    if (-not $edit) { continue }',
+    '    $valuePattern = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)',
+    '    $valuePattern.SetValue($env:NORTHSTAR_PICKER_PATH)',
+    '    $buttonCondition = New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)), (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Open")))',
+    '    $button = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)',
+    '    if (-not $button) { continue }',
+    '    $invokePattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)',
+    '    $invokePattern.Invoke()',
     '    exit 0',
     '  }',
     '  Start-Sleep -Milliseconds 100',
@@ -30,7 +35,7 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
     'exit 2',
   ].join('; ');
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script], {
       windowsHide: true,
       env: { ...process.env, NORTHSTAR_PICKER_PATH: filePath },
     });
