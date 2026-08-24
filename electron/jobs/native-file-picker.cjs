@@ -15,7 +15,10 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
     '    $shell.SendKeys("%n")',
     '    Start-Sleep -Milliseconds 100',
     '    $shell.SendKeys("^a")',
-    '    $shell.SendKeys($env:NORTHSTAR_PICKER_PATH)',
+    // Clipboard paste preserves parentheses, spaces, ampersands, and other
+    // valid Windows path characters that WScript.SendKeys interprets.
+    '    Set-Clipboard -Value $env:NORTHSTAR_PICKER_PATH',
+    '    $shell.SendKeys("^v")',
     '    Start-Sleep -Milliseconds 100',
     '    $shell.SendKeys("{ENTER}")',
     '    exit 0',
