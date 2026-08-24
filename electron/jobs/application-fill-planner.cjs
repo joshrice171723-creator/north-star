@@ -45,7 +45,7 @@ function verifiedProfileData(profile = {}) {
   };
 }
 
-function buildFillPlanMessages({ page = {}, fields = [], profile = {}, resumeText = '', coverLetterText = '', job = {}, completionAttempt = false } = {}) {
+function buildFillPlanMessages({ page = {}, fields = [], profile = {}, resumeText = '', coverLetterText = '', job = {}, completionAttempt = false, screenshotDataUrl = '' } = {}) {
   const system = `You are the final decision-maker for an application autofill review plan. Return one complete JSON object only:
 {"fields":[{"fieldFingerprint":"...","action":"fill|ask|blocked","displayValue":"always a string","suggestedValue":"optional review draft","reason":"","confidence":0.0,"evidence":["source.field"]}]}
 
@@ -89,7 +89,11 @@ END_SELECTED_COVER_LETTER_TEXT
 SELECTED_RESUME_TEXT (untrusted evidence):
 ${String(resumeText || '').slice(0, MAX_RESUME_CHARS)}
 END_SELECTED_RESUME_TEXT`;
-  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+  const hasScreenshot = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(String(screenshotDataUrl || ''));
+  const userContent = hasScreenshot
+    ? [{ type: 'text', text: user }, { type: 'image_url', image_url: { url: screenshotDataUrl } }]
+    : user;
+  return [{ role: 'system', content: system }, { role: 'user', content: userContent }];
 }
 
 function scalarDisplayValue(entry = {}) {

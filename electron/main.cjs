@@ -596,8 +596,17 @@ function validateOpenRouterMessages(messages) {
   if (!Array.isArray(messages) || !messages.length || messages.length > OPENROUTER_MAX_MESSAGES) {
     throw new Error('OpenRouter requires between 1 and 100 messages.');
   }
-  if (messages.some((message) => !message || !['system', 'user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || !message.content.trim())) {
-    throw new Error('OpenRouter messages must contain a valid role and non-empty text content.');
+  const validContent = (content) => {
+    if (typeof content === 'string') return Boolean(content.trim());
+    if (!Array.isArray(content) || !content.length) return false;
+    return content.every((part) => {
+      if (!part || typeof part !== 'object') return false;
+      if (part.type === 'text') return typeof part.text === 'string' && Boolean(part.text.trim());
+      return part.type === 'image_url' && typeof part.image_url?.url === 'string' && /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(part.image_url.url);
+    });
+  };
+  if (messages.some((message) => !message || !['system', 'user', 'assistant'].includes(message.role) || !validContent(message.content))) {
+    throw new Error('OpenRouter messages must contain a valid role and non-empty text or image content.');
   }
   return messages.map(({ role, content }) => ({ role, content }));
 }
@@ -2792,13 +2801,14 @@ function registerDatabaseIpc() {
     const application = state.applicationId ? coachDatabase.applications.get(state.applicationId) : null;
     const job = application ? (coachDatabase.jobs.list().find((entry) => entry.id === application.jobId) || {}) : {};
     const fields = state.snapshot.fields.map((field) => ({ fieldFingerprint: field.fieldFingerprint, elementType: field.elementType, inputType: field.inputType, label: field.label, name: field.name, id: field.id, autocomplete: field.autocomplete, required: field.required, disabled: field.disabled, readOnly: field.readOnly, empty: field.empty, validationMessage: field.validationMessage, category: field.category, options: field.options }));
+    const screenshotDataUrl = await applicationBrowser.captureScreenshot().catch(() => null);
     // Deterministic profile, reusable-answer, and approved-policy decisions
     // do not need an AI round trip. Keeping only unresolved safe fields here
     // reduces model failures and preserves a fully local path when no AI call
     // is necessary for the current form.
     const candidateFields = aiCandidateFields(fields, profile);
     const requestDecisions = async (targetFields, { auditPurpose, completionAttempt = false } = {}) => {
-      const messages = buildFillPlanMessages({ page: { title: state.snapshot.pageTitle, url: state.currentUrl }, fields: targetFields, profile, resumeText, coverLetterText, job, completionAttempt });
+      const messages = buildFillPlanMessages({ page: { title: state.snapshot.pageTitle, url: state.currentUrl }, fields: targetFields, profile, resumeText, coverLetterText, job, completionAttempt, screenshotDataUrl });
       let response = await openRouterChat(messages, { auditPurpose, max_tokens: 50000, response_format: { type: 'json_object' } });
       if (!response.ok) throw new Error(response.error || 'The AI fill-plan request failed.');
       try { return parseFillPlanResponse(response); }
@@ -2831,9 +2841,14 @@ function registerDatabaseIpc() {
   const buildAiDocumentUploadRepair = async ({ failureResults = [] } = {}) => {
     const observation = await applicationBrowser.inspectUploadControls();
     const boundedObservation = { pageFingerprint: observation.pageFingerprint, controls: observation.controls.slice(0, 80) };
+    const screenshotDataUrl = await applicationBrowser.captureScreenshot().catch(() => null);
+    const uploadRepairText = `OBSERVED_UPLOAD_CONTROLS:\n${JSON.stringify(boundedObservation)}\nFAILED_UPLOADS:\n${JSON.stringify(failureResults.slice(0, 8))}`;
+    const uploadRepairContent = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(String(screenshotDataUrl || ''))
+      ? [{ type: 'text', text: uploadRepairText }, { type: 'image_url', image_url: { url: screenshotDataUrl } }]
+      : uploadRepairText;
     const response = await openRouterChat([
       { role: 'system', content: 'You repair document-upload discovery on a job application page. Return JSON only: {"status":"repair"|"requires_user"|"no_repair","action":"handoff"|"activate_upload_control","targetFingerprint":"","targetLabel":"","targets":{"resume":{"label":""},"cover_letter":{"label":""}},"confidence":0,"reason":""}. Choose exact visible control labels from OBSERVED_UPLOAD_CONTROLS. Use handoff only for a safe visible Apply, Easy Apply, Continue Application, View application, or Apply for this job control that opens the application; never use it for final submission. Use activate_upload_control for a visible control that opens a file input. Never propose credentials, CAPTCHA, MFA, submission, arbitrary scripts, or typing into fields. If the page requires login, CAPTCHA, or a protected action, return requires_user with no targets.' },
-      { role: 'user', content: `OBSERVED_UPLOAD_CONTROLS:\n${JSON.stringify(boundedObservation)}\nFAILED_UPLOADS:\n${JSON.stringify(failureResults.slice(0, 8))}` },
+      { role: 'user', content: uploadRepairContent },
     ], { auditPurpose: 'application_document_upload_repair', response_format: { type: 'json_object' }, max_tokens: 500 });
     if (!response?.ok) throw new Error(response?.error || 'AI document-upload repair planner unavailable.');
     let plan;

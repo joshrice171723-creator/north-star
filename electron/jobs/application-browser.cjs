@@ -184,7 +184,7 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
           const term = request.documentType === 'cover_letter' ? /cover|letter|writing sample/ : /resume|cv/;
           matches.sort((a, b) => Number(term.test(context(b))) - Number(term.test(context(a))) || a.getBoundingClientRect().top - b.getBoundingClientRect().top);
           if (!term.test(context(matches[0]))) return { status: 'blocked', reason: 'upload_repair_target_wrong_document' };
-          matches[0].focus(); matches[0].click();
+          matches[0].focus(); matches[0].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
           return { status: 'activated' };
         }`, { label: repairTarget.label, documentType });
         if (activated?.status === 'activated') { repairActivated = true; await new Promise((resolve) => setTimeout(resolve, 600)); }
@@ -333,9 +333,20 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
     // labels; page text and field values never leave the isolated view.
     return detectConfirmation({ url: active.currentUrl, title: snapshot.pageTitle, text: snapshot.fields.map((field) => field.label).join(' ') });
   };
+  const captureScreenshot = async ({ quality = 55, maxWidth = 1440 } = {}) => {
+    if (!view || view.webContents.isDestroyed()) return null;
+    const image = await view.webContents.capturePage();
+    if (image.isEmpty()) return null;
+    const size = image.getSize();
+    const boundedWidth = Math.max(320, Math.min(Number(maxWidth) || 1440, size.width || 1440));
+    const rendered = size.width > boundedWidth
+      ? image.resize({ width: boundedWidth })
+      : image;
+    return `data:image/jpeg;base64,${rendered.toJPEG(Math.max(35, Math.min(75, Number(quality) || 55))).toString('base64')}`;
+  };
   const setBounds = (bounds) => { if (!view) return; const x = Math.max(0, Math.round(bounds?.x || 0)); const y = Math.max(0, Math.round(bounds?.y || 0)); const width = Math.max(1, Math.round(bounds?.width || 1)); const height = Math.max(1, Math.round(bounds?.height || 1)); view.setBounds({ x, y, width, height }); };
   const close = () => { if (view) { detachView(view); try { view.webContents.close(); } catch {} view = null; } active = null; };
   const publicState = () => active ? { applicationId: active.applicationId, status: active.status, initialHost: active.initialHost, currentHost: active.currentUrl ? (() => { try { return new URL(active.currentUrl).host; } catch { return ''; } })() : '', redirectedToExternalHost: Boolean(active.currentUrl && active.initialHost && (() => { try { return new URL(active.currentUrl).host !== active.initialHost; } catch { return false; } })()), currentUrl: active.currentUrl, pendingHost: active.pendingHost || '', snapshot: active.snapshot, lastObservedAt: active.lastObservedAt || null } : null;
-  return { open, close, hide, setBounds, inspect, inspectUploadControls, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, fillSavedCredentials, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
+  return { open, close, hide, setBounds, inspect, captureScreenshot, inspectUploadControls, approveHost, createFillPlan, fillPlan, uploadDocuments, advance, clickSafeControl, submit, fillSavedCredentials, activate, detectConfirmationPage, publicState, goBack: () => view?.webContents.canGoBack() && view.webContents.goBack(), goForward: () => view?.webContents.canGoForward() && view.webContents.goForward(), reload: () => view?.webContents.reload(), clearSession: async () => session.fromPartition('persist:job-application-copilot').clearStorageData() };
 }
 module.exports = { redactUrl, isHttps, isDismissLabel, decideNavigation, buildContextMenuTemplate, handleMouseNavigationInput, createApplicationBrowser };
