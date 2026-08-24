@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('../electron/jobs/application-fill-planner.cjs');
+const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, aiCandidateFields, buildFillPlanMessages, normalizeFillPlanDecisions } = require('../electron/jobs/application-fill-planner.cjs');
 
 test('fill-plan parser accepts a fenced JSON response', () => {
   assert.deepEqual(parseFillPlanResponse({ message: { content: '```json\n{"fields":[]}\n```' } }), { fields: [] });
@@ -12,6 +12,16 @@ test('AI candidates contain only empty supported non-protected controls', () => 
   assert.equal(isAiFillCandidate({ empty: false, elementType: 'input', inputType: 'text', category: 'unknown' }), false);
   assert.equal(isAiFillCandidate({ empty: true, elementType: 'input', inputType: 'password', category: 'authentication_captcha' }), false);
   assert.equal(isAiFillCandidate({ empty: true, elementType: 'input', inputType: 'text', category: 'identity_contact' }), false);
+});
+
+test('AI candidates exclude fields already resolved by local profile or answer policy', () => {
+  const fields = [
+    { fieldFingerprint: 'email', elementType: 'input', inputType: 'email', label: 'Email', category: 'identity_contact', empty: true },
+    { fieldFingerprint: 'salary', elementType: 'input', inputType: 'text', label: 'Desired salary', category: 'compensation', empty: true },
+    { fieldFingerprint: 'motivation', elementType: 'textarea', inputType: 'textarea', label: 'Why this role?', category: 'free_text', empty: true },
+  ];
+  const profile = { email: 'candidate@example.test', jobContext: { salaryMin: 100000, salaryMax: 150000 }, reusableAnswers: [], answerPolicies: [] };
+  assert.deepEqual(aiCandidateFields(fields, profile).map((field) => field.fieldFingerprint), ['motivation']);
 });
 
 test('fill-plan prompt supplies the full verified profile and job evidence with a coverage goal', () => {

@@ -5,6 +5,7 @@ const MAX_COVER_LETTER_CHARS = 30_000;
 const MAX_FILL_VALUE_CHARS = 5_000;
 const PROTECTED_CATEGORIES = new Set(['sensitive_voluntary_disclosure', 'legal_signature', 'authentication_captcha', 'file_upload', 'final_submit', 'navigation']);
 const SUPPORTED_INPUT_TYPES = new Set(['', 'text', 'email', 'tel', 'url', 'number', 'date', 'search', 'textarea']);
+const { decideField } = require('./application-policy.cjs');
 
 function responseText(response = {}) {
   const content = response?.message?.content;
@@ -26,6 +27,10 @@ function isAiFillCandidate(field = {}) {
   if (field.empty === false || field.disabled || field.readOnly || PROTECTED_CATEGORIES.has(field.category) || field.category === 'identity_contact') return false;
   if (field.elementType === 'select' || field.elementType === 'textarea') return true;
   return field.elementType === 'input' && SUPPORTED_INPUT_TYPES.has(field.inputType || '');
+}
+
+function aiCandidateFields(fields = [], profile = {}) {
+  return fields.filter(isAiFillCandidate).filter((field) => !['fill', 'blocked'].includes(decideField(field, { profile }).action));
 }
 
 function verifiedProfileData(profile = {}) {
@@ -125,4 +130,4 @@ function repairFillPlanMessages(response, fields) {
   ];
 }
 
-module.exports = { MAX_RESUME_CHARS, MAX_FILL_VALUE_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions };
+module.exports = { MAX_RESUME_CHARS, MAX_FILL_VALUE_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, aiCandidateFields, buildFillPlanMessages, normalizeFillPlanDecisions };

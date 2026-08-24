@@ -32,7 +32,7 @@ const { createSafeExecutor } = require('./jobs/automation/executor.cjs');
 const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
 const { createPlaybookRegistry } = require('./jobs/automation/playbook-registry.cjs');
 const { createRepairLoop } = require('./jobs/automation/repair-loop.cjs');
-const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
+const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, aiCandidateFields, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
 const { transcribeAudio, transcribeAudioLong, generateAiResponse, synthesizeSpeech } = require('./voice-conversation.cjs');
@@ -2685,7 +2685,11 @@ function registerDatabaseIpc() {
     const application = state.applicationId ? coachDatabase.applications.get(state.applicationId) : null;
     const job = application ? (coachDatabase.jobs.list().find((entry) => entry.id === application.jobId) || {}) : {};
     const fields = state.snapshot.fields.map((field) => ({ fieldFingerprint: field.fieldFingerprint, elementType: field.elementType, inputType: field.inputType, label: field.label, name: field.name, id: field.id, autocomplete: field.autocomplete, required: field.required, disabled: field.disabled, readOnly: field.readOnly, empty: field.empty, validationMessage: field.validationMessage, category: field.category, options: field.options }));
-    const candidateFields = fields.filter(isAiFillCandidate);
+    // Deterministic profile, reusable-answer, and approved-policy decisions
+    // do not need an AI round trip. Keeping only unresolved safe fields here
+    // reduces model failures and preserves a fully local path when no AI call
+    // is necessary for the current form.
+    const candidateFields = aiCandidateFields(fields, profile);
     const requestDecisions = async (targetFields, { auditPurpose, completionAttempt = false } = {}) => {
       const messages = buildFillPlanMessages({ page: { title: state.snapshot.pageTitle, url: state.currentUrl }, fields: targetFields, profile, resumeText, coverLetterText, job, completionAttempt });
       let response = await openRouterChat(messages, { auditPurpose, max_tokens: 50000, response_format: { type: 'json_object' } });
