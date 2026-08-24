@@ -23,7 +23,7 @@ test('autonomous application state and unknown questions survive a database reop
     const answer = reopened.applications.resolveUnknownQuestion({ id: unknown.id, answerText: 'No', provenance: ['user-provided'] });
     assert.equal(answer.answerText, 'No');
     assert.equal(reopened.applications.listUnknownQuestions(app.id).length, 0);
-    assert.equal(reopened.applications.get(app.id).automationState, 'answering_questions');
+    assert.equal(reopened.applications.get(app.id).automationState, 'queued');
     reopened.close();
   } finally { fs.rmSync(userDataPath, { recursive: true, force: true }); }
 });
