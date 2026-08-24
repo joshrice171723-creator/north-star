@@ -23,7 +23,7 @@ function createPlaybookRegistry({ repository, confidenceThreshold = VERIFIED_THR
     return null;
   }
 
-  function recordVerifiedSuccess({ siteHost, atsKey = '', workflowKind = 'job_application', pageFingerprint, plan, source = 'ai_repair' } = {}) {
+  function recordVerifiedSuccess({ applicationId = '', siteHost, atsKey = '', workflowKind = 'job_application', pageFingerprint, plan, source = 'ai_repair' } = {}) {
     if (!siteHost || !pageFingerprint || !plan?.actionType) throw new Error('A successful playbook step requires site, fingerprint, and action.');
     try {
       const existing = repository.listPlaybooks({ siteHost, atsKey, workflowKind }).find((entry) => entry.status !== 'disabled' && entry.version === 1);
@@ -36,7 +36,7 @@ function createPlaybookRegistry({ repository, confidenceThreshold = VERIFIED_THR
       return playbook;
     } catch (error) {
       if (typeof repository.queuePlaybookLearningRetry === 'function') {
-        try { repository.queuePlaybookLearningRetry({ applicationId: plan.applicationId || '', siteHost, atsKey, workflowKind, stepKey: plan.stepId || plan.stepKey || plan.actionType, pageFingerprint, plan, source, lastError: String(error?.message || error) }); } catch {}
+        try { repository.queuePlaybookLearningRetry({ applicationId, siteHost, atsKey, workflowKind, stepKey: plan.stepId || plan.stepKey || plan.actionType, pageFingerprint, plan, source, lastError: String(error?.message || error) }); } catch {}
       }
       throw error;
     }
@@ -46,7 +46,7 @@ function createPlaybookRegistry({ repository, confidenceThreshold = VERIFIED_THR
     if (typeof repository.listPendingPlaybookLearningRetries !== 'function' || typeof repository.resolvePlaybookLearningRetry !== 'function') return { attempted: 0, resolved: 0, failed: 0 };
     const pending = repository.listPendingPlaybookLearningRetries(limit) || []; let resolved = 0; let failed = 0;
     for (const retry of pending) {
-      try { recordVerifiedSuccess({ siteHost: retry.siteHost, atsKey: retry.atsKey, workflowKind: retry.workflowKind, pageFingerprint: retry.pageFingerprint, plan: retry.plan, source: retry.source }); repository.resolvePlaybookLearningRetry(retry.id); resolved += 1; } catch { failed += 1; }
+      try { recordVerifiedSuccess({ applicationId: retry.applicationId, siteHost: retry.siteHost, atsKey: retry.atsKey, workflowKind: retry.workflowKind, pageFingerprint: retry.pageFingerprint, plan: retry.plan, source: retry.source }); repository.resolvePlaybookLearningRetry(retry.id); resolved += 1; } catch { failed += 1; }
     }
     return { attempted: pending.length, resolved, failed };
   }
