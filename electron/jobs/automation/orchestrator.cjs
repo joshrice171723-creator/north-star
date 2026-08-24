@@ -19,7 +19,7 @@ function resultFromVerification({ applicationId, jobId, plan, verification }) {
   return validateWorkflowResult({ applicationId, jobId, stepId: plan.stepId || plan.actionType, stepType: plan.stepType || plan.actionType, status: verification?.status === 'inconclusive' ? 'inconclusive' : 'failed', outcome: failure.outcome, reasonCode: failure.reasonCode, confidence: 0, retryable: failure.retryable, requiresUser: failure.requiresUser, pageFingerprint: plan.targetFingerprint, source: plan.source || 'deterministic_policy' });
 }
 
-function createApplicationOrchestrator({ repository, observePage, planNextStep, executeSafeStep, verifyStepResult } = {}) {
+function createApplicationOrchestrator({ repository, observePage, planNextStep, executeSafeStep, verifyStepResult, playbookRegistry } = {}) {
   for (const [name, handler] of Object.entries({ observePage, planNextStep, executeSafeStep, verifyStepResult })) if (typeof handler !== 'function') throw new Error(`The orchestrator requires ${name}.`);
   if (!repository || typeof repository.getApplication !== 'function' || typeof repository.getJob !== 'function') throw new Error('The orchestrator requires an application repository.');
 
@@ -30,7 +30,8 @@ function createApplicationOrchestrator({ repository, observePage, planNextStep, 
     if (!job) throw new Error('Application job not found.');
     const observation = await observePage({ applicationId, browserState, expectedStep: checkpoint.stepKey || '', site: context.site || '', atsKey: context.atsKey || application.atsKey || '' });
     if (observation?.result) return applyTransition(observation.result, { application, job, repository });
-    const plan = safePlan(await planNextStep({ observation, currentCheckpoint: checkpoint, profile: context.profile || {}, job, mode: context.mode || 'deterministic' }));
+    const playbook = playbookRegistry?.match?.({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, stepKey: checkpoint.stepKey || '' });
+    const plan = safePlan(await planNextStep({ observation, playbook, currentCheckpoint: checkpoint, profile: context.profile || {}, job, mode: playbook ? 'playbook' : (context.mode || 'deterministic') }));
     const idempotencyKey = makeIdempotencyKey({ applicationId, checkpointVersion: Number.isInteger(checkpoint.version) ? checkpoint.version : 0, actionType: plan.actionType, targetFingerprint: plan.targetFingerprint });
     const prior = typeof repository.findCompletedStep === 'function' ? repository.findCompletedStep(idempotencyKey) : null;
     if (prior) return { status: 'replayed', idempotencyKey, prior };
@@ -38,6 +39,7 @@ function createApplicationOrchestrator({ repository, observePage, planNextStep, 
     const verification = await verifyStepResult({ plan, execution, browserState, applicationId });
     const result = resultFromVerification({ applicationId, jobId: application.jobId, plan, verification });
     if (typeof repository.recordStep === 'function') repository.recordStep({ applicationId, jobId: application.jobId, plan, execution, verification, result, idempotencyKey });
+    if (playbookRegistry?.recordVerifiedSuccess && result.outcome === 'continue' && verification?.status === 'verified') playbookRegistry.recordVerifiedSuccess({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan, source: plan.source });
     return { status: result.outcome === 'continue' ? 'continued' : 'transitioned', idempotencyKey, result, transition: applyTransition(result, { application, job, repository }) };
   }
 

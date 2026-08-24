@@ -15,9 +15,14 @@ function classifyPageType(observation = {}) {
   return 'unknown';
 }
 
-function planNextStep({ observation, currentCheckpoint = {}, mode = 'deterministic' } = {}) {
+function planNextStep({ observation, playbook = null, currentCheckpoint = {}, mode = 'deterministic' } = {}) {
   const pageFingerprint = String(observation?.pageFingerprint || '').trim();
   if (!pageFingerprint) throw new Error('Cannot plan a browser step without a page fingerprint.');
+  if (playbook?.step?.pageFingerprint === pageFingerprint) {
+    // A stored step is still passed through the normal safe executor and
+    // verifier; the registry supplies a target, never permission to submit.
+    return { stepId: playbook.step.stepKey, stepType: playbook.step.pageType || 'safe_navigation', actionType: playbook.step.actionType, targetFingerprint: pageFingerprint, targetLabel: playbook.step.target?.label || '', source: 'playbook', confidence: Number(playbook.step.confidence) || 0, requiresUser: playbook.step.safetyClass !== 'safe_navigation', pageType: playbook.step.pageType || 'unknown' };
+  }
   const pageType = classifyPageType(observation);
   const navigation = (observation.fields || []).find((field) => field.category === 'navigation' && HANDOFF_LABEL.test(String(field.label || '')));
   const login = (observation.fields || []).find((field) => field.category === 'navigation' && LOGIN_LABEL.test(String(field.label || '')));

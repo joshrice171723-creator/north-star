@@ -30,6 +30,7 @@ const { observePage } = require('./jobs/automation/observation.cjs');
 const { planNextStep } = require('./jobs/automation/planner.cjs');
 const { createSafeExecutor } = require('./jobs/automation/executor.cjs');
 const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
+const { createPlaybookRegistry } = require('./jobs/automation/playbook-registry.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, isAiFillCandidate, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
@@ -1597,9 +1598,8 @@ function createWindow() {
     attachView: (view) => mainWindow?.contentView.addChildView(view),
     detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
   });
-  // Phase 2 owns the first Dice/browser handoff checkpoint. The repository
-  // adapter records the workflow contract through existing application events
-  // until the dedicated workflow-step tables arrive in the playbook phase.
+  // Phase 2 owns the first Dice/browser handoff checkpoint. Phase 3 adds the
+  // registry as a storage-backed candidate layer without granting it submit authority.
   applicationWorkflowOrchestrator = createApplicationOrchestrator({
     repository: {
       getApplication: (applicationId) => coachDatabase.applications.get(applicationId),
@@ -1610,6 +1610,14 @@ function createWindow() {
       findCompletedStep: (idempotencyKey) => coachDatabase.applications.listActive().flatMap((entry) => coachDatabase.applications.listEvents(entry.id)).find((event) => event.eventType === 'workflow_step_recorded' && event.metadata?.idempotencyKey === idempotencyKey && event.metadata?.outcome === 'continue') || null,
       recordStep: ({ applicationId, jobId, plan, execution, verification, result, idempotencyKey }) => coachDatabase.applications.recordEvent({ applicationId, eventType: 'workflow_step_recorded', summary: `Safe ${plan.actionType} step ${result.outcome}.`, metadata: { jobId, idempotencyKey, actionType: plan.actionType, stepType: plan.stepType, executionStatus: execution?.status || '', verificationStatus: verification?.status || '', outcome: result.outcome, pageFingerprint: plan.targetFingerprint } }),
     },
+    playbookRegistry: createPlaybookRegistry({
+      repository: {
+        listPlaybooks: (input) => coachDatabase.applications.playbooks.list(input),
+        listPlaybookSteps: (playbookId) => coachDatabase.applications.playbooks.steps(playbookId),
+        savePlaybook: (input) => coachDatabase.applications.playbooks.save(input),
+        savePlaybookStep: (input) => coachDatabase.applications.playbooks.saveStep(input),
+      },
+    }),
     observePage: async ({ browserState }) => observePage({ browserState }),
     planNextStep,
     executeSafeStep: createSafeExecutor({ browser: applicationBrowser }),
