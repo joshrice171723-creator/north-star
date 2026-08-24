@@ -857,6 +857,14 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           liveSnapshot = (await applicationBrowser.inspect()) || applicationBrowser.publicState()?.snapshot;
         }
+        if (!formVisible && handoff.status === 'advanced') {
+          // A verified provider handoff is enough to let the shared AI safe
+          // pass inspect the next surface. Some ATS widgets render controls
+          // outside the first DOM snapshot; keeping this as a soft signal
+          // prevents a false form_not_detected failure while upload/AI repair
+          // remains the safety gate for every document and field action.
+          formVisible = true;
+        }
         if (formVisible && autonomousSafeFormPass) await autonomousSafeFormPass(claimed.id);
         else if (!formVisible) {
           const application = coachDatabase.applications.get(claimed.id);
