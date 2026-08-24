@@ -51,6 +51,7 @@
 .application-browser-panel .job-modal-head{position:relative;padding-bottom:14px;border-bottom:1px solid #30394c}
 .application-browser-panel .job-modal-head h3{margin:5px 0 0;font-size:16px}
 .application-browser-panel>.job-search-status{margin:14px 0}
+.assistant-ai-waiting{display:flex;align-items:flex-start;gap:10px;margin:14px 0;padding:12px 13px;border:1px solid #8d75d8;border-radius:9px;background:linear-gradient(135deg,#28213e,#1d2338);color:#f4f0ff;box-shadow:0 6px 20px #00000024}.assistant-ai-waiting svg{flex:none;margin-top:1px;color:#c7b8ff;animation:spin .8s linear infinite}.assistant-ai-waiting div{display:grid;gap:3px}.assistant-ai-waiting b{font-size:11px}.assistant-ai-waiting span{color:#cbc4e4;font-size:10px;line-height:1.4}
 .application-browser-panel>.job-profile-panel{margin:14px 0;padding:15px;border-radius:10px}
 .assistant-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .assistant-section-heading>div{display:grid;gap:4px;min-width:0}
