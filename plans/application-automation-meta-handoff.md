@@ -145,6 +145,35 @@ Deferred UI improvements discovered during Computer Use:
 - Show answer-policy mode, calculated salary, and provenance beside each planned fill.
 - Add a compact workflow-trace/replay-metrics affordance to the queue review surface so users can inspect why a step paused or recovered without opening raw trace payloads.
 
+### Phase 5 cleanup and Phase 6 / Milestone 6 — Multi-site rollout: complete (2026-08-24)
+
+Phase 5 cleanup completed in commit `d2a270d`:
+
+- Added forward-only migration [electron/migrations/0034_application_workflow_trace_payloads.sql](../electron/migrations/0034_application_workflow_trace_payloads.sql) so stored workflow steps retain the sanitized observation snapshot and `requiresUser` state needed for reliable replay metrics after restart.
+- Wired the new fields through [electron/database.cjs](../electron/database.cjs) and the orchestrator repository adapter in [electron/main.cjs](../electron/main.cjs). Existing traces remain readable because the migration defaults old rows to an empty observation and no human gate.
+
+Phase 6 completed in commit `af1d1d2`:
+
+- Added Dice and Adzuna provider adapters under [electron/jobs/adapters](../electron/jobs/adapters), using the same audited provider contract as Greenhouse, Lever, and Workday.
+- Added sanitized Dice and Adzuna page fixtures under [test/fixtures/provider-adapters](../test/fixtures/provider-adapters). The provider contract suite now covers the complete rollout order and the existing Ashby, SmartRecruiters, and iCIMS/Taleo adapters.
+- Kept live provider execution opt-in: `selectAdapter()` returns the non-mutating generic adapter unless `enableProviderAdapters` is explicitly true, and provider adapters remain `productionEnabled: false` until controlled live validation exists.
+- Preserved safe boundaries across all adapters: HTTPS-only matching, tracking-parameter removal, required-field inspection, safe navigation controls, duplicate detection, confirmation detection, bounded retries, and zero submit retries.
+
+Phase 6 exit criteria are met for fixture-gated rollout: the supported adapter set can be selected by site without new `main.cjs` conditionals, each adapter has replay-ready sanitized coverage, and unknown or unapproved sites remain on the non-mutating generic path. Live multi-site queue execution remains intentionally deferred until controlled browser validation and per-site playbook confidence are available.
+
+Validation completed:
+
+- 17 focused Phase 4/5/6, adapter, orchestrator, policy, and replay tests passing.
+- `node --check` for changed adapter, trace, database, and main-process modules passing.
+- `npm.cmd run build` passing with only existing Vite config and chunk-size warnings.
+- Electron restarted after both Phase 5 cleanup and Phase 6 commits.
+- Fresh Computer Use inspection passed on North Star; Job search rendered normally, the Autonomous Application Queue was visibly paused, and no checkpoint or queue control was clicked.
+
+Deferred UI improvements discovered during this validation:
+
+- Add an adapter/status badge to application review cards showing the selected site adapter and whether provider mode is fixture-gated or live-enabled.
+- Add a “why paused” drilldown linking queue state to the sanitized workflow trace metrics, while keeping raw observations out of the default card view.
+
 ### Phase 1 — Normalize the workflow core: complete (2026-08-23)
 
 The remaining Phase 1 gaps are now closed in commit `0282a9a`:
