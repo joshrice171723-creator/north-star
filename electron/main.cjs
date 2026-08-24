@@ -940,8 +940,9 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
 async function retryAutonomousApplication(applicationId) {
   validateApplicationId(applicationId);
   const current = coachDatabase.applications.get(applicationId);
-  if (!current || current.automationState !== 'failed') throw new Error('Only failed autonomous applications can be retried.');
-  const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current.automationCheckpoint || {}), manualRetryAt: new Date().toISOString(), retryRequestedAt: new Date().toISOString() } });
+  const answerReady = current?.automationState === 'queued' && current.automationCheckpoint?.answerReadyForRetry === true;
+  if (!current || (current.automationState !== 'failed' && !answerReady)) throw new Error('Only failed or answered autonomous applications can be retried.');
+  const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current.automationCheckpoint || {}), manualRetryAt: new Date().toISOString(), retryRequestedAt: new Date().toISOString(), answerReadyForRetry: false } });
   if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) {
     autonomousApplicationQueueState.message = 'Failed application queued to retry after the active checkpoint.';
     return { application: released, status: autonomousApplicationQueueStatus() };
