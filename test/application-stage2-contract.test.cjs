@@ -61,7 +61,7 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /const resumeUrl = claimed\.automationCheckpoint\?\.redactedUrl/);
   assert.match(source, /externalApplicationUrl \|\| application\?\.applicationUrl/);
   assert.match(source, /\.\.\.application\.automationCheckpoint/);
-  assert.match(source, /state: 'failed', checkpoint: \{ stage: 'opening', error: message \}/);
+  assert.match(source, /state: needsUser \? 'needs_user_answer' : 'failed', checkpoint: \{ stage: 'opening', error: message/);
   assert.match(source, /current\?\.applicationId === applicationId/);
 });
 
