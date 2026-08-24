@@ -790,6 +790,23 @@ async function submitAutopilotApplication(applicationId) {
   }
   return { status: confirmation.state === 'confirmed' ? 'awaiting_email' : 'verifying_confirmation', idempotencyKey };
 }
+async function replaySavedAutopilotLogin(applicationId) {
+  const browser = applicationBrowser.publicState();
+  const fields = browser?.snapshot?.fields || [];
+  if (!fields.some((field) => field.inputType === 'password')) return { status: 'not_needed' };
+  if (fields.some((field) => /captcha|recaptcha|hcaptcha|challenge/i.test(`${field.label || ''} ${field.name || ''}`))) return { status: 'needs_user', reason: 'captcha_detected' };
+  const application = coachDatabase.applications.get(applicationId);
+  const profile = coachDatabase.profiles.getCurrent() || {};
+  const host = browser?.currentHost || '';
+  const existing = coachDatabase.applications.getExternalAccount(applicationId);
+  const credentialRef = existing?.credentialRef || credentialReference(host, profile.email || '');
+  const credential = readExternalAccountCredentials()[credentialRef];
+  if (!credential?.password || !credential.username || credential.host !== host) return { status: 'needs_user', reason: 'saved_login_missing' };
+  const result = await applicationBrowser.fillSavedCredentials({ username: credential.username, password: credential.password });
+  if (result.status === 'blocked') return { status: 'needs_user', reason: result.reason || 'login_control_ambiguous' };
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'reusing_account', checkpoint: { ...application.automationCheckpoint, account: { host, credentialRef, reused: true, filledAt: new Date().toISOString() } } });
+  return result;
+}
 async function requeueAndRetryAutonomousApplication({ applicationId, checkpoint, message } = {}) {
   coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint });
   applicationBrowser.close();
@@ -905,6 +922,17 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         autonomousApplicationQueueState.message = googleLogin.status === 'advanced'
           ? 'Followed the Apply handoff and selected Continue with Google. Finish Google sign-in if prompted.'
           : 'Opened the job listing and followed its Apply handoff to the employer application.';
+        const login = await replaySavedAutopilotLogin(claimed.id);
+        if (login.status === 'needs_user') {
+          const application = coachDatabase.applications.get(claimed.id);
+          coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'needs_user_answer', checkpoint: { ...application.automationCheckpoint, stage: 'login_review', reasonCode: login.reason } });
+          applicationBrowser.close();
+          autonomousApplicationQueueState.activeApplicationId = null;
+          autonomousApplicationQueueState.autopilot = false;
+          autonomousApplicationQueueState.paused = true;
+          autonomousApplicationQueueState.message = login.reason === 'captcha_detected' ? 'Autopilot paused for CAPTCHA.' : 'Autopilot paused because this employer login needs your attention.';
+          return autonomousApplicationQueueStatus();
+        }
         // Employer forms often render their controls after the safe handoff
         // promise resolves. Keep the detection bounded so a delayed SPA form
         // enters the shared safe pass instead of being left open indefinitely.
