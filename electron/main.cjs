@@ -737,7 +737,7 @@ const validateApplicationId = (value) => validateCoachId(value, 'application id'
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
 const documentGenerationInFlight = new Set();
-const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
+const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, priorityJobId: null, running: false, paused: true };
 let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
 let autonomousSafeFormPass = null;
@@ -2888,15 +2888,17 @@ function applicationPreparationStatus() {
   const total = jobs.length;
   return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers }, activity, running: applicationPreparationState.running, paused: applicationPreparationState.paused, counts: { total, completed, failed, remaining: Math.max(0, total - completed - failed), queued: Math.max(0, total - completed - failed - active), active } };
 }
-async function runApplicationPreparationQueue() {
-  if (!coachDatabase || applicationPreparationState.activeJobId || applicationPreparationState.paused) return false;
+async function runApplicationPreparationQueue(targetJobId = null) {
+  if (!coachDatabase || applicationPreparationState.activeJobId || (!targetJobId && applicationPreparationState.paused)) return false;
    syncPreparationActivity();
    // A failed job is a manual-review item until the user changes it or retries
    // deliberately. Excluding blockers here prevents the 5-second timer from
    // spending tokens on the same failing job forever.
-   const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && !applicationPreparationState.blockers[job.id]);
-  const job = jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
-  if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return false;
+    const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && (job.id === targetJobId || !applicationPreparationState.blockers[job.id]));
+   const priorityJobId = targetJobId || applicationPreparationState.priorityJobId;
+   const job = (priorityJobId && jobs.find((entry) => entry.id === priorityJobId)) || jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
+   if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return false;
+   if (job.id === applicationPreparationState.priorityJobId) applicationPreparationState.priorityJobId = null;
   applicationPreparationState.activeJobId = job.id;
   applicationPreparationState.activeStep = 'Preparing application workspace';
   try {
@@ -2919,6 +2921,23 @@ async function runApplicationPreparationQueue() {
     applicationPreparationState.activeStep = '';
   }
   return true;
+}
+async function restartApplicationPreparation(jobId) {
+  if (!coachDatabase) throw new Error('Application preparation is not available.');
+  const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId && ['researching', 'target'].includes(entry.stage));
+  if (!job) throw new Error('Only Researching or Target jobs can be restarted.');
+  const application = coachDatabase.applications.getForJob(job.id);
+  if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_retry_requested', summary: 'User restarted this failed preparation.' });
+  syncPreparationActivity();
+  applicationPreparationState.priorityJobId = job.id;
+  // An explicit per-job retry is allowed while the global queue is paused. If
+  // another job is active, the priority is consumed immediately after it.
+  if (applicationPreparationState.running || applicationPreparationState.activeJobId) return applicationPreparationStatus();
+  const wasPaused = applicationPreparationState.paused;
+  applicationPreparationState.paused = false;
+  applicationPreparationState.running = true;
+  try { await runApplicationPreparationQueue(job.id); } finally { applicationPreparationState.running = false; applicationPreparationState.paused = wasPaused; }
+  return applicationPreparationStatus();
 }
 async function drainApplicationPreparationQueue() {
   if (applicationPreparationState.running) return;
@@ -2959,6 +2978,10 @@ async function drainApplicationPreparationQueue() {
     assertTrustedRenderer(event);
     applicationPreparationState.paused = true;
     return applicationPreparationStatus();
+  });
+  ipcMain.handle('jobs:applications:preparation-retry', async (event, input) => {
+    assertTrustedRenderer(event);
+    return restartApplicationPreparation(validateCoachId(input?.jobId, 'job id'));
   });
   ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationPreparationStatus(); });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
