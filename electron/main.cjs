@@ -2741,7 +2741,14 @@ function registerDatabaseIpc() {
           // submission labels.
           const handoff = await applicationBrowser.advance({ handoffOnly: true });
           if (!['advanced', 'activated'].includes(handoff?.status)) throw new Error(`Document upload handoff failed: ${handoff?.reason || 'safe control was not activated'}`);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          // Job-board handoffs often load the employer form asynchronously;
+          // give the isolated view a bounded window to expose its upload
+          // controls before asking AI to classify the surface again.
+          for (let attempt = 0; attempt < 6; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            const uploadSurface = await applicationBrowser.inspectUploadControls();
+            if (uploadSurface.controls.some((control) => /resume|cv|cover|letter|upload|file/i.test(`${control.label} ${control.context}`))) break;
+          }
         }
         if (uploadRepair.status === 'planned') {
           const repairedUpload = await applicationBrowser.uploadDocuments(files, { repairTargets: uploadRepair.targets });
