@@ -22,6 +22,33 @@ observe -> classify -> load playbook -> plan -> execute one safe step
 
 The current application automation foundation is approximately 50–60% complete. The meta-layer—central orchestration, playbooks, AI browser repair, and replay evaluation—is approximately 20% complete. This handoff defines the work required to close that gap.
 
+## Implementation progress
+
+### Milestone 1 — Contracts and policy: complete (2026-08-23)
+
+Completed in commit `efaad61`:
+
+- Added [electron/jobs/automation/result-contract.cjs](../electron/jobs/automation/result-contract.cjs) with the canonical workflow outcomes, step statuses, sources, bounded evidence IDs, and confidence validation.
+- Added [electron/jobs/automation/transition-policy.cjs](../electron/jobs/automation/transition-policy.cjs) with the central outcome-to-application/job/queue policy matrix.
+- Added [test/application-automation-result-contract.test.cjs](../test/application-automation-result-contract.test.cjs).
+- Added [test/application-automation-transition-policy.test.cjs](../test/application-automation-transition-policy.test.cjs).
+- Verified the unavailable-listing path: one `listing_unavailable` result sets the application to `blocked`, moves the job to `rejected`, removes it from the ready queue through the existing archive boundary, and records one transition event.
+- Verified idempotency: reapplying an already terminal unavailable-listing result performs no additional repository writes.
+
+Validation completed:
+
+- Focused contract and transition tests: 5 passing.
+- Production renderer build: passing.
+- Electron app restarted and inspected from the UI with Computer Use. The autonomous queue drawer showed 10 queued/eligible items, 0 active, 0 blocked, and the separate application queue showed 1 failed item requiring deliberate review.
+- No UI bottleneck required a code change in this milestone. `Checkpoint next` was not activated during inspection because it claims a real application and may open an external application flow.
+
+Known unrelated full-suite failures observed during validation:
+
+- Existing browser-source contract assertion in `application-browser-view.test.cjs`.
+- Windows temporary-directory cleanup `EPERM` in `autonomous-application-foundation.test.cjs`.
+
+Next milestone: wrap the existing Dice browser path behind the orchestrator, observation, planning, execution, and verification boundaries without moving final submission authority out of the existing approval-gated path.
+
 ## Current repository anchors
 
 These are the existing execution boundaries. Preserve them unless a change is required to centralize workflow ownership.
