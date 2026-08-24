@@ -373,7 +373,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const preparationBlocked = Object.entries(preparationBlockers).map(([jobId, message]) => ({ job: jobs.find((job) => job.id === jobId), message })).filter((entry) => entry.job);
   const preparationCompleted = new Set(preparationActivity.filter((entry) => entry.eventType === 'preparation_completed').map((entry) => entry.jobId)).size;
   const formatPreparationStep = (step) => String(step || '').replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'Starting';
-  const preparationRetryPanel = preparationBlocked.length > 0 && <section className="jobs-preparation-panel preparation-retry-panel" aria-label="Failed application preparation"><div className="jobs-preparation-copy"><span className="eyebrow">FAILED PREPARATION · RETRY ANY TIME</span><p>Restart one failed preparation without restarting the rest of the queue.</p></div><div className="jobs-preparation-queue">{preparationBlocked.map(({ job, message }) => <div className="jobs-preparation-failed-row" key={job.id}><span><b>{job.company} — {job.roleTitle}</b><small>{message}</small></span><button className="secondary" onClick={() => retryPreparationJob(job)}>Retry now</button></div>)}</div></section>;
+  const preparationRetryPanel = null;
   useEffect(() => {
     let disposed = false;
     const sync = async () => {
@@ -403,16 +403,6 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
     const status = await window.desktopShell?.pauseApplicationPreparationQueue?.();
     if (status) { setPreparationPaused(status.paused !== false); setPreparationRunning(Boolean(status.running)); setPreparationCounts(status.counts || preparationCounts); }
   };
-  const retryPreparationJob = async (job) => {
-    const status = await window.desktopShell?.retryApplicationPreparation?.({ jobId: job.id });
-    if (status) {
-      setPreparationPaused(status.paused !== false);
-      setPreparationRunning(Boolean(status.running));
-      setPreparationBlockers(status.blockers || {});
-      setPreparationActivity(status.activity || []);
-      setPreparationCounts(status.counts || preparationCounts);
-    }
-  };
   const refreshAutomationQueue = async () => {
     const status = await window.desktopShell?.listJobApplicationAutomationQueue?.();
     if (!status) return;
@@ -432,7 +422,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
    };
   const pauseAutomationQueue = async () => { const status = await window.desktopShell?.pauseJobApplicationAutomationQueue?.(); if (status) setAutomationQueueStatus(status); };
   const resolveAutomationQuestion = async (question) => { const answerText = String(automationAnswers[question.id] || '').trim(); if (!answerText) return; await window.desktopShell?.resolveJobApplicationUnknownQuestion?.({ id: question.id, answerText }); setAutomationAnswers((current) => ({ ...current, [question.id]: '' })); await refreshAutomationQueue(); };
-  const releaseAutomationApplication = async (entry) => { await window.desktopShell?.releaseJobApplicationAutomation?.({ applicationId: entry.applicationId }); await refreshAutomationQueue(); };
+  const releaseAutomationApplication = async (entry) => { const result = entry.automationState === 'failed' ? await window.desktopShell?.retryJobApplicationAutomation?.({ applicationId: entry.applicationId }) : await window.desktopShell?.releaseJobApplicationAutomation?.({ applicationId: entry.applicationId }); if (result?.status) setAutomationQueueStatus(result.status); await refreshAutomationQueue(); };
   const changeBoardStage = async (job, stage) => {
     if (stage === job.stage || stageBusyId === job.id) return;
     if (stage === 'archived') {

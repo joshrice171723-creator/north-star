@@ -6,7 +6,7 @@ const path = require('node:path');
 test('background preparation drains Researching before Target and stops on blockers', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
   assert.match(source, /jobs\.find\(\(entry\) => entry\.stage === 'researching'\) \|\| jobs\.find\(\(entry\) => entry\.stage === 'target'\)/);
-  assert.match(source, /if \(!coachDatabase \|\| applicationPreparationState\.activeJobId \|\| \(!targetJobId && applicationPreparationState\.paused\)\) return false;/);
+  assert.match(source, /if \(!coachDatabase \|\| applicationPreparationState\.activeJobId \|\| applicationPreparationState\.paused\) return false;/);
   assert.match(source, /!applicationPreparationState\.blockers\[job\.id\]/);
   assert.match(source, /applicationPreparationState\.retryAt = 0/);
   assert.match(source, /eventType: 'preparation_failed'/);
@@ -14,8 +14,6 @@ test('background preparation drains Researching before Target and stops on block
   assert.match(source, /applicationPreparationTimer = null;/);
   assert.match(source, /preparation-start/);
   assert.match(source, /preparation-pause/);
-  assert.match(source, /preparation-retry/);
-  assert.match(source, /priorityJobId/);
   assert.match(source, /preparation_retry_requested/);
   assert.match(source, /applicationPreparationState\.running/);
   assert.match(source, /ApplicationPreparationPausedError/);

@@ -72,11 +72,17 @@ test('a failed checkpoint can be deliberately returned to the queue for retry', 
     const cover = db.applications.documents.save({ applicationId: app.id, documentType: 'cover_letter', title: 'Cover letter', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
     db.applications.documents.select(resume.id);
     db.applications.documents.select(cover.id);
+    db.jobs.create({ id: 'other-retry-job', company: 'Other', roleTitle: 'Engineer', url: 'https://other.example.test/apply', stage: 'researching' });
+    const other = db.applications.createOrResume({ jobId: 'other-retry-job' });
+    const otherResume = db.applications.documents.save({ applicationId: other.id, documentType: 'resume', title: 'Resume', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
+    const otherCover = db.applications.documents.save({ applicationId: other.id, documentType: 'cover_letter', title: 'Cover letter', content: { headline: 'Engineer' }, validation: { valid: true, errors: [] }, status: 'approved' });
+    db.applications.documents.select(otherResume.id);
+    db.applications.documents.select(otherCover.id);
     db.applications.updateAutomationState({ applicationId: app.id, state: 'failed', checkpoint: { failureClass: 'transient', retryable: true } });
     assert.equal(db.applications.listAutomationQueue().find((entry) => entry.applicationId === app.id).automationState, 'failed');
     const retried = db.applications.releaseAutomation({ applicationId: app.id, state: 'queued', checkpoint: { manualRetryAt: '2026-08-23T00:00:00.000Z' } });
     assert.equal(retried.automationState, 'queued');
-    assert.equal(db.applications.claimNextAutomation().id, app.id);
+    assert.equal(db.applications.claimNextAutomation({ applicationId: app.id }).id, app.id);
   } finally {
     try { db.close(); } catch {}
     fs.rmSync(userDataPath, { recursive: true, force: true });

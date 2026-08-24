@@ -737,7 +737,7 @@ const validateApplicationId = (value) => validateCoachId(value, 'application id'
 const validateApplicationTransition = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application transition.'); validateApplicationId(input.id); if (!APPLICATION_STATUSES.has(input.status) || input.status === 'submitted') throw new Error('Invalid application status.'); return input; };
 const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid application answer.'); if (input.applicationId !== undefined && input.applicationId !== null) validateApplicationId(input.applicationId); if (typeof input.questionKey !== 'string' || !input.questionKey.trim() || input.questionKey.length > 160) throw new Error('Invalid answer question key.'); if (input.provenance !== undefined && (!Array.isArray(input.provenance) || input.provenance.length > 20)) throw new Error('Invalid answer provenance.'); return input; };
 const documentGenerationInFlight = new Set();
-const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, priorityJobId: null, running: false, paused: true };
+const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, activeApplicationId: null, message: '' };
 let autonomousSafeFormPass = null;
@@ -746,7 +746,7 @@ function autonomousApplicationQueueStatus() {
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
   return { running: autonomousApplicationQueueState.running, paused: autonomousApplicationQueueState.paused, activeApplicationId: autonomousApplicationQueueState.activeApplicationId, message: autonomousApplicationQueueState.message, queue, counts: { total: queue.length, eligible: queue.filter((entry) => entry.eligible && entry.automationState === 'queued').length, needsUserAnswer: queue.filter((entry) => entry.automationState === 'needs_user_answer').length, failed: queue.filter((entry) => entry.automationState === 'failed').length, blocked: queue.filter((entry) => entry.automationState === 'blocked').length, active: queue.filter((entry) => activeStates.includes(entry.automationState) || entry.applicationId === autonomousApplicationQueueState.activeApplicationId).length } };
 }
-async function startAutonomousApplicationQueue() {
+async function startAutonomousApplicationQueue(targetApplicationId = null) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   // The browser checkpoint is single-tenant. Guard both the async start window
   // and a claimed checkpoint so two renderer clicks cannot switch applications
@@ -756,7 +756,7 @@ async function startAutonomousApplicationQueue() {
     return autonomousApplicationQueueStatus();
   }
   autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.message = '';
-  const claimed = coachDatabase.applications.claimNextAutomation();
+  const claimed = coachDatabase.applications.claimNextAutomation({ applicationId: targetApplicationId });
   if (claimed) {
     autonomousApplicationQueueState.activeApplicationId = claimed.id;
     try {
@@ -909,6 +909,18 @@ async function startAutonomousApplicationQueue() {
   autonomousApplicationQueueState.running = Boolean(autonomousApplicationQueueState.activeApplicationId);
   autonomousApplicationQueueState.paused = !autonomousApplicationQueueState.activeApplicationId;
   return autonomousApplicationQueueStatus();
+}
+async function retryAutonomousApplication(applicationId) {
+  validateApplicationId(applicationId);
+  const current = coachDatabase.applications.get(applicationId);
+  if (!current || current.automationState !== 'failed') throw new Error('Only failed autonomous applications can be retried.');
+  const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current.automationCheckpoint || {}), manualRetryAt: new Date().toISOString(), retryRequestedAt: new Date().toISOString() } });
+  if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) {
+    autonomousApplicationQueueState.message = 'Failed application queued to retry after the active checkpoint.';
+    return { application: released, status: autonomousApplicationQueueStatus() };
+  }
+  autonomousApplicationQueueState.message = 'Retrying the selected failed application.';
+  return { application: released, status: await startAutonomousApplicationQueue(applicationId) };
 }
 function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
 async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}) {
@@ -2551,6 +2563,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:automation-batch:approve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); if (!application || !['detecting_form', 'navigating_form', 'ready_to_submit'].includes(application.automationState)) throw new Error('Only an application at the final reviewed checkpoint can be added to the batch.'); const checkpoint = { ...application.automationCheckpoint, batchApprovedAt: new Date().toISOString() }; return coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint }); });
   ipcMain.handle('jobs:applications:automation-batch:start', (event) => { assertTrustedRenderer(event); return startApprovedApplicationBatch(); });
   ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const applicationId = input.applicationId; const current = coachDatabase.applications.get(applicationId); const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current?.automationCheckpoint || {}), manualRetryAt: new Date().toISOString() } }); if (autonomousApplicationQueueState.activeApplicationId === applicationId) { applicationBrowser.close(); autonomousApplicationQueueState.activeApplicationId = null; } autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
+  ipcMain.handle('jobs:applications:automation-queue:retry', async (event, input) => { assertTrustedRenderer(event); return retryAutonomousApplication(input?.applicationId); });
   ipcMain.handle('jobs:applications:automation-state:update', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (typeof input?.state !== 'string' || input.state.length > 80) throw new Error('Invalid autonomous application state.'); return coachDatabase.applications.updateAutomationState(input); });
   ipcMain.handle('jobs:applications:unknown-questions:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.listUnknownQuestions(validateApplicationId(input?.applicationId), input?.status === 'all' ? 'all' : 'open'); });
   ipcMain.handle('jobs:applications:unknown-questions:save', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); return coachDatabase.applications.saveUnknownQuestion(input); });
@@ -2888,17 +2901,15 @@ function applicationPreparationStatus() {
   const total = jobs.length;
   return { activeJobId: applicationPreparationState.activeJobId, activeStep: applicationPreparationState.activeStep, blockers: { ...applicationPreparationState.blockers }, activity, running: applicationPreparationState.running, paused: applicationPreparationState.paused, counts: { total, completed, failed, remaining: Math.max(0, total - completed - failed), queued: Math.max(0, total - completed - failed - active), active } };
 }
-async function runApplicationPreparationQueue(targetJobId = null) {
-  if (!coachDatabase || applicationPreparationState.activeJobId || (!targetJobId && applicationPreparationState.paused)) return false;
+async function runApplicationPreparationQueue() {
+  if (!coachDatabase || applicationPreparationState.activeJobId || applicationPreparationState.paused) return false;
    syncPreparationActivity();
    // A failed job is a manual-review item until the user changes it or retries
    // deliberately. Excluding blockers here prevents the 5-second timer from
    // spending tokens on the same failing job forever.
-    const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && (job.id === targetJobId || !applicationPreparationState.blockers[job.id]));
-   const priorityJobId = targetJobId || applicationPreparationState.priorityJobId;
-   const job = (priorityJobId && jobs.find((entry) => entry.id === priorityJobId)) || jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
-   if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return false;
-   if (job.id === applicationPreparationState.priorityJobId) applicationPreparationState.priorityJobId = null;
+   const jobs = coachDatabase.jobs.list().filter((job) => ['researching', 'target'].includes(job.stage) && !applicationPreparationState.blockers[job.id]);
+  const job = jobs.find((entry) => entry.stage === 'researching') || jobs.find((entry) => entry.stage === 'target');
+  if (!job || (applicationPreparationState.retryAt && Date.now() < applicationPreparationState.retryAt)) return false;
   applicationPreparationState.activeJobId = job.id;
   applicationPreparationState.activeStep = 'Preparing application workspace';
   try {
@@ -2921,23 +2932,6 @@ async function runApplicationPreparationQueue(targetJobId = null) {
     applicationPreparationState.activeStep = '';
   }
   return true;
-}
-async function restartApplicationPreparation(jobId) {
-  if (!coachDatabase) throw new Error('Application preparation is not available.');
-  const job = coachDatabase.jobs.list().find((entry) => entry.id === jobId && ['researching', 'target'].includes(entry.stage));
-  if (!job) throw new Error('Only Researching or Target jobs can be restarted.');
-  const application = coachDatabase.applications.getForJob(job.id);
-  if (application) coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_retry_requested', summary: 'User restarted this failed preparation.' });
-  syncPreparationActivity();
-  applicationPreparationState.priorityJobId = job.id;
-  // An explicit per-job retry is allowed while the global queue is paused. If
-  // another job is active, the priority is consumed immediately after it.
-  if (applicationPreparationState.running || applicationPreparationState.activeJobId) return applicationPreparationStatus();
-  const wasPaused = applicationPreparationState.paused;
-  applicationPreparationState.paused = false;
-  applicationPreparationState.running = true;
-  try { await runApplicationPreparationQueue(job.id); } finally { applicationPreparationState.running = false; applicationPreparationState.paused = wasPaused; }
-  return applicationPreparationStatus();
 }
 async function drainApplicationPreparationQueue() {
   if (applicationPreparationState.running) return;
@@ -2978,10 +2972,6 @@ async function drainApplicationPreparationQueue() {
     assertTrustedRenderer(event);
     applicationPreparationState.paused = true;
     return applicationPreparationStatus();
-  });
-  ipcMain.handle('jobs:applications:preparation-retry', async (event, input) => {
-    assertTrustedRenderer(event);
-    return restartApplicationPreparation(validateCoachId(input?.jobId, 'job id'));
   });
   ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationPreparationStatus(); });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
