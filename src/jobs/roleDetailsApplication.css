@@ -67,3 +67,11 @@
 @container (max-width:359px){.application-browser-panel .job-form-grid{grid-template-columns:1fr}}
 .application-browser-splitter.dragging span{width:5px;background:var(--accent)}
 .application-workflow-dock{border-color:#d18b55!important;background:linear-gradient(145deg,#392a24,#25202a)!important}.application-workflow-dock>p{margin:8px 0 12px;line-height:1.45}.application-workflow-links{display:grid;gap:8px}.application-workflow-links>div{display:grid;gap:4px;padding:8px 0;border-top:1px solid #634b4a}.application-workflow-links span{font-size:10px;font-weight:700}.application-workflow-links a{display:inline-flex;align-items:center;gap:4px;color:#ffd18b;font-size:10px;font-weight:700}.application-workflow-links small{color:var(--muted);font-size:9px}
+
+/* The assistant opens alongside the full role context. Reserve space for the
+   employer page only after it is actually opened, avoiding an empty middle pane. */
+.job-details-workspace.assistant-open{margin-right:calc(var(--application-assistant-width) + 24px)}
+.job-details-workspace.assistant-open.employer-page-open{margin-right:calc(var(--application-browser-width) + var(--application-assistant-width) + 24px)}
+.application-workspace-guide{display:block;max-width:620px;margin-top:8px;color:var(--muted);font-size:11px;line-height:1.45}
+.application-browser-panel .assistant-ai-waiting{position:sticky;top:8px;z-index:3}
+@media(max-width:1250px){.job-details-workspace.assistant-open{margin-right:calc(var(--application-assistant-width) + 14px)}.job-details-workspace.assistant-open.employer-page-open{margin-right:calc(var(--application-browser-width) + var(--application-assistant-width) + 14px)}}
