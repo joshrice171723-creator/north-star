@@ -17,9 +17,21 @@ function classifyWorkflowFailure(input = {}) {
 }
 function classifySafePassFailure({ error = {}, plan = null, attempt = 0, maxAttempts = 2 } = {}) {
   const code = String(error.code || error.reason || '').toLowerCase();
+  const message = String(error.message || '').toLowerCase();
   const protectedFields = Array.isArray(plan?.fields)
     ? plan.fields.filter((field) => ['ask', 'blocked'].includes(field?.action))
     : [];
+  // A missing AI plan can mean the model/provider or a delayed page
+  // observation failed before any employer question was discovered. Retry
+  // those transient cases instead of creating an empty answer checkpoint;
+  // missing documents and other non-transient setup errors still require
+  // review below.
+  const transientNoPlan = !plan && /ai|model|openrouter|fill[- ]?plan|response|network|timeout|stale|changed|inspect|form/.test(`${code} ${message}`);
+  if (transientNoPlan) {
+    const nextAttempt = Number(attempt) + 1;
+    const exhausted = nextAttempt > Math.max(0, Number(maxAttempts) || 0);
+    return { state: exhausted ? 'failed' : 'queued', reasonCode: exhausted ? 'safe_pass_retry_exhausted' : 'safe_pass_retryable', retryable: true, exhausted, failureClass: 'provider_changed', nextAttempt };
+  }
   if (code.includes('protected') || protectedFields.length || !plan) {
     return { state: 'needs_user_answer', reasonCode: !plan ? 'safe_pass_requires_review' : 'safe_pass_requires_user', retryable: false, exhausted: false, protectedFieldCount: protectedFields.length };
   }
