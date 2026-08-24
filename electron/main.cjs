@@ -2785,7 +2785,12 @@ function registerDatabaseIpc() {
           return autonomousSafeFormPass(applicationId);
         }
       }
-      const classification = classifySafePassFailure({ error, plan: lastPlan, attempt: application?.automationAttempt || 0 });
+      // Upload discovery failures occur before an AI form plan exists. They
+      // are retryable automation failures, not employer questions; keeping
+      // this boundary explicit prevents an empty Answer modal.
+      const classification = uploadRepair
+        ? { state: 'failed', reasonCode: 'document_upload_repair_failed', retryable: true, exhausted: false, failureClass: 'provider_changed' }
+        : classifySafePassFailure({ error, plan: lastPlan, attempt: application?.automationAttempt || 0 });
       const now = new Date().toISOString();
       const nextCheckpoint = { ...checkpoint, stage: classification.state === 'needs_user_answer' ? 'form_review' : 'form_retry', reasonCode: classification.reasonCode, lastError: message, failureClass: classification.failureClass || '', retryable: classification.retryable, retryQueuedAt: classification.state === 'queued' ? now : undefined, safePassFailedAt: now, ...(uploadRepair ? { uploadRepair } : {}) };
       // Surface protected or unanswered fields instead of spinning them back
