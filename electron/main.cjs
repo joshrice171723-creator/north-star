@@ -1638,7 +1638,11 @@ function createWindow() {
       if (state?.applicationId && state.snapshot?.pageFingerprint) {
         const application = coachDatabase.applications.get(state.applicationId);
         if (application && ['opening', 'detecting_form', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'].includes(application.automationState)) {
-          coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { ...application.automationCheckpoint, pageFingerprint: state.snapshot.pageFingerprint, redactedUrl: state.currentUrl, observedAt: state.lastObservedAt } });
+          const { error, failureClass, retryable, reasonCode, aiRepairError, ...checkpoint } = application.automationCheckpoint || {};
+          const previousFailure = error ? { error, failureClass, retryable, reasonCode, aiRepairError, recoveredAt: state.lastObservedAt } : checkpoint.previousFailure;
+          // A fresh observed page proves this attempt progressed. Preserve old
+          // diagnostics for audit, but never show an obsolete failure as current.
+          coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'detecting_form', checkpoint: { ...checkpoint, ...(previousFailure ? { previousFailure } : {}), pageFingerprint: state.snapshot.pageFingerprint, redactedUrl: state.currentUrl, observedAt: state.lastObservedAt } });
         }
       }
     },
