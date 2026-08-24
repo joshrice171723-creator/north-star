@@ -23,6 +23,21 @@ function createApplicationOrchestrator({ repository, observePage, planNextStep, 
   for (const [name, handler] of Object.entries({ observePage, planNextStep, executeSafeStep, verifyStepResult })) if (typeof handler !== 'function') throw new Error(`The orchestrator requires ${name}.`);
   if (!repository || typeof repository.getApplication !== 'function' || typeof repository.getJob !== 'function') throw new Error('The orchestrator requires an application repository.');
 
+  function persistVerifiedPlaybookStep(input) {
+    if (!playbookRegistry?.recordVerifiedSuccess) return { status: 'skipped' };
+    try {
+      const deferred = playbookRegistry.retryDeferredLearning?.({ limit: 10 }) || { attempted: 0, resolved: 0, failed: 0 };
+      const playbook = playbookRegistry.recordVerifiedSuccess(input);
+      return { status: 'saved', deferred, playbookId: playbook?.id || null };
+    } catch (error) {
+      const diagnostic = { code: 'playbook_persistence_failed', message: String(error?.message || error).slice(0, 1000) };
+      // Learning is auxiliary to a verified browser result. Its failure is
+      // visible and retriable, but must never reclassify the application step.
+      try { repository.recordEvent?.({ applicationId: input.applicationId, eventType: diagnostic.code, summary: 'Verified workflow step completed; playbook learning was deferred.', metadata: diagnostic }); } catch {}
+      return { status: 'deferred', diagnostic };
+    }
+  }
+
   async function runApplicationCheckpoint({ applicationId, browserState, checkpoint = {}, context = {} } = {}) {
     const application = repository.getApplication(applicationId);
     if (!application) throw new Error('Application not found.');
@@ -43,14 +58,14 @@ function createApplicationOrchestrator({ repository, observePage, planNextStep, 
         const repairedPlan = repair.plan;
         const repairedResult = resultFromVerification({ applicationId, jobId: application.jobId, plan: repairedPlan, verification: repair.verification });
         if (typeof repository.recordStep === 'function') repository.recordStep({ applicationId, jobId: application.jobId, observation, plan: repairedPlan, execution: repair.execution, verification: repair.verification, result: repairedResult, idempotencyKey: makeIdempotencyKey({ applicationId, checkpointVersion: Number(checkpoint.version) || 0, actionType: repairedPlan.actionType, targetFingerprint: repairedPlan.targetFingerprint }) });
-        if (playbookRegistry.recordVerifiedSuccess) playbookRegistry.recordVerifiedSuccess({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan: repairedPlan, source: 'ai_repair' });
-        return { status: 'repaired', result: repairedResult, repair };
+        const learning = persistVerifiedPlaybookStep({ applicationId, siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan: repairedPlan, source: 'ai_repair' });
+        return { status: 'repaired', result: repairedResult, repair, learning };
       }
     }
     const result = resultFromVerification({ applicationId, jobId: application.jobId, plan, verification });
     if (typeof repository.recordStep === 'function') repository.recordStep({ applicationId, jobId: application.jobId, plan, execution, verification, result, idempotencyKey });
-    if (playbookRegistry?.recordVerifiedSuccess && result.outcome === 'continue' && verification?.status === 'verified') playbookRegistry.recordVerifiedSuccess({ siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan, source: plan.source });
-    return { status: result.outcome === 'continue' ? 'continued' : 'transitioned', idempotencyKey, result, transition: applyTransition(result, { application, job, repository }) };
+    const learning = result.outcome === 'continue' && verification?.status === 'verified' ? persistVerifiedPlaybookStep({ applicationId, siteHost: observation.site || context.site || '', atsKey: observation.atsKey || context.atsKey || application.atsKey || '', pageFingerprint: observation.pageFingerprint, plan, source: plan.source }) : { status: 'skipped' };
+    return { status: result.outcome === 'continue' ? 'continued' : 'transitioned', idempotencyKey, result, learning, transition: applyTransition(result, { application, job, repository }) };
   }
 
   return { runApplicationCheckpoint };

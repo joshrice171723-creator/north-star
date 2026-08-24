@@ -25,15 +25,33 @@ function createPlaybookRegistry({ repository, confidenceThreshold = VERIFIED_THR
 
   function recordVerifiedSuccess({ siteHost, atsKey = '', workflowKind = 'job_application', pageFingerprint, plan, source = 'ai_repair' } = {}) {
     if (!siteHost || !pageFingerprint || !plan?.actionType) throw new Error('A successful playbook step requires site, fingerprint, and action.');
-    const existing = repository.listPlaybooks({ siteHost, atsKey, workflowKind }).find((entry) => entry.status !== 'disabled' && entry.version === 1);
-    const timestamp = new Date().toISOString();
-    const playbook = repository.savePlaybook({ id: existing?.id || createId('playbook'), siteHost, atsKey, workflowKind, version: existing?.version || 1, status: existing?.status === 'verified' ? 'verified' : 'candidate', confidence: Math.max(Number(existing?.confidence) || 0, Number(plan.confidence) || 0), playbookJson: existing?.playbookJson || {}, source, successCount: (Number(existing?.successCount) || 0) + 1, lastSuccessAt: timestamp, createdAt: existing?.createdAt || timestamp, updatedAt: timestamp });
-    const priorStep = repository.listPlaybookSteps(playbook.id).find((entry) => entry.stepKey === (plan.stepId || plan.actionType) && entry.pageFingerprint === pageFingerprint);
-    repository.savePlaybookStep({ id: priorStep?.id || createId('playbook-step'), playbookId: playbook.id, stepOrder: Number(priorStep?.stepOrder) || 0, stepKey: plan.stepId || plan.actionType, pageType: plan.pageType || plan.stepType || '', pageFingerprint, actionType: plan.actionType, target: { label: plan.targetLabel || '' }, arguments: {}, verification: { required: true }, safetyClass: 'safe_navigation', confidence: Math.max(Number(priorStep?.confidence) || 0, Number(plan.confidence) || 0), successCount: (Number(priorStep?.successCount) || 0) + 1, createdAt: priorStep?.createdAt || timestamp, updatedAt: timestamp });
-    return playbook;
+    try {
+      const existing = repository.listPlaybooks({ siteHost, atsKey, workflowKind }).find((entry) => entry.status !== 'disabled' && entry.version === 1);
+      const timestamp = new Date().toISOString(); const stepKey = plan.stepId || plan.stepKey || plan.actionType;
+      const playbook = repository.savePlaybook({ id: existing?.id || createId('playbook'), siteHost, atsKey, workflowKind, version: existing?.version || 1, status: existing?.status === 'verified' ? 'verified' : 'candidate', confidence: Math.max(Number(existing?.confidence) || 0, Number(plan.confidence) || 0), playbookJson: existing?.playbookJson || {}, source, successCount: (Number(existing?.successCount) || 0) + 1, lastSuccessAt: timestamp, createdAt: existing?.createdAt || timestamp, updatedAt: timestamp });
+      // Fingerprints intentionally do not participate in logical-step lookup.
+      // A changed layout refreshes this row instead of creating a duplicate step.
+      const priorStep = repository.listPlaybookSteps(playbook.id).find((entry) => entry.stepKey === stepKey);
+      repository.savePlaybookStep({ id: priorStep?.id || createId('playbook-step'), playbookId: playbook.id, stepOrder: Number(priorStep?.stepOrder) || 0, stepKey, pageType: plan.pageType || plan.stepType || '', pageFingerprint, actionType: plan.actionType, target: { label: plan.targetLabel || '' }, arguments: {}, verification: { required: true }, safetyClass: 'safe_navigation', confidence: Math.max(Number(priorStep?.confidence) || 0, Number(plan.confidence) || 0), successIncrement: 1, createdAt: priorStep?.createdAt || timestamp, updatedAt: timestamp });
+      return playbook;
+    } catch (error) {
+      if (typeof repository.queuePlaybookLearningRetry === 'function') {
+        try { repository.queuePlaybookLearningRetry({ applicationId: plan.applicationId || '', siteHost, atsKey, workflowKind, stepKey: plan.stepId || plan.stepKey || plan.actionType, pageFingerprint, plan, source, lastError: String(error?.message || error) }); } catch {}
+      }
+      throw error;
+    }
   }
 
-  return { match, recordVerifiedSuccess };
+  function retryDeferredLearning({ limit = 10 } = {}) {
+    if (typeof repository.listPendingPlaybookLearningRetries !== 'function' || typeof repository.resolvePlaybookLearningRetry !== 'function') return { attempted: 0, resolved: 0, failed: 0 };
+    const pending = repository.listPendingPlaybookLearningRetries(limit) || []; let resolved = 0; let failed = 0;
+    for (const retry of pending) {
+      try { recordVerifiedSuccess({ siteHost: retry.siteHost, atsKey: retry.atsKey, workflowKind: retry.workflowKind, pageFingerprint: retry.pageFingerprint, plan: retry.plan, source: retry.source }); repository.resolvePlaybookLearningRetry(retry.id); resolved += 1; } catch { failed += 1; }
+    }
+    return { attempted: pending.length, resolved, failed };
+  }
+
+  return { match, recordVerifiedSuccess, retryDeferredLearning };
 }
 
 module.exports = { createPlaybookRegistry, VERIFIED_THRESHOLD, boundedJson };
