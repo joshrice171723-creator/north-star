@@ -16,6 +16,9 @@ The system may automate safe, reversible navigation and approved field filling. 
 4. Opening the assistant loaded the Adzuna listing in the isolated browser view. The visible `Apply for this job` control was underneath a `Receive similar jobs by email` overlay.
 5. The overlay's safe dismissal text was `No thanks, take me to the job`. The current matcher only recognizes the exact `No thanks` label, so this is a reproducible safe-recovery gap. Testing stopped before any external application handoff or submission.
 
+6. After the matcher fix and app restart, a fresh `Checkpoint next` run selected `Glean — Founding Forward Deployed Engineer` and opened the Application Assistant on the right. The employer page loaded with a visible `Apply` handoff and no popup overlay.
+7. The assistant then exposed the expected `New employer account required` checkpoint with empty username/password fields and `Check Gmail activation`. This was handled as a user checkpoint; no credentials were entered and no external application was submitted.
+
 ## Required checkpoint contract
 
 Every checkpoint should have these boundaries:
@@ -79,6 +82,10 @@ Reusable answers need the original question label, normalized field identity, so
 
 Opening a listing and navigating to an application are not submission. Uploading a resume or cover letter transmits personal files and requires the Computer Use confirmation boundary unless the user has explicitly pre-approved that specific destination and data. Final submission always remains an explicit approval checkpoint.
 
+### Current product decision
+
+The Application Assistant remains the intended right-side control surface. `Checkpoint next` selects the job and opens the role workspace; the assistant owns the browser handoff, account checkpoint, document controls, safe-pass actions, and final approval controls. The queue should not auto-skip a job merely because the assistant is waiting for an account or activation decision.
+
 ## Ideas for the next hardening pass
 
 - Add a `recovery candidate` trace containing the observed label, action class, confidence, and verification result.
@@ -103,4 +110,3 @@ A checkpoint passes only when the same application remains selected, the intende
 - `electron/migrations/0035_harden_playbook_learning.sql` — logical playbook-step identity and learning retry storage.
 - `src/jobs/ApplicationBrowserPanel.jsx` — Application Assistant UI and user checkpoints.
 - `src/jobs/AutonomousApplicationQueue.jsx` — queue status, Checkpoint next, pause, retry, and review surfaces.
-
