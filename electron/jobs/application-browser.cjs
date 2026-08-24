@@ -281,9 +281,12 @@ function createApplicationBrowser({ electron, getApplicationUrl, attachView = ()
   const clickSafeControl = async ({ action = '', targetLabel = '' } = {}) => {
     const snapshot = await inspect(); const label = String(targetLabel || '').replace(/\s+/g, ' ').trim();
     const allowed = action === 'dismiss' ? isDismissLabel : action === 'handoff' ? /^(?:easy )?apply(?: now| for this job| on company site| externally)?$|^continue application$|^view application$/i : /^(next|continue|save and continue|proceed|review)$/i;
-    const candidate = snapshot.fields.find((field) => field.elementType === 'button' && field.category === 'navigation' && field.label === label && allowed.test(field.label));
+    // Recovery may target a visible anchor as well as a button. Keep the
+    // exact label/category/allowlist checks so broader anchor support cannot
+    // turn an AI suggestion into arbitrary navigation.
+    const candidate = snapshot.fields.find((field) => ['button', 'a'].includes(field.elementType) && field.category === 'navigation' && field.label === label && allowed.test(field.label));
     if (!candidate) return { status: 'blocked', reason: 'safe_control_not_found', pageFingerprint: snapshot.pageFingerprint };
-    const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"]')).filter((el) => !el.disabled && !el.readOnly); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'safe_control_changed' }; const el = matches[0]; el.focus(); el['click'](); return { status: 'activated', label: field.label }; }`, candidate);
+    const result = await executeOnDocument(`function (field) { const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const buttons = Array.from(document.querySelectorAll('button,input[type="button"],a[role="button"],a[href]')).filter((el) => !el.disabled && !el.readOnly && el.offsetParent !== null); const matches = buttons.filter((el) => clean(el.innerText || el.value || el.getAttribute('aria-label')) === field.label); if (matches.length !== 1) return { status: 'blocked', reason: 'safe_control_changed' }; const el = matches[0]; el.focus(); el['click'](); return { status: 'activated', label: field.label }; }`, candidate);
     if (result?.status !== 'activated') return result || { status: 'blocked', reason: 'safe_control_failed' };
     await new Promise((resolve) => setTimeout(resolve, 250)); const nextSnapshot = await inspect();
     return { status: 'activated', action, targetLabel: label, previousPageFingerprint: snapshot.pageFingerprint, pageFingerprint: nextSnapshot.pageFingerprint };
