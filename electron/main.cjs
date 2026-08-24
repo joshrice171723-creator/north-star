@@ -843,7 +843,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null) {
         let formVisible = false;
         for (let attempt = 0; attempt < 60; attempt += 1) {
           const applicationFields = liveSnapshot?.fields?.filter((field) => ['identity_contact', 'work_authorization', 'compensation', 'free_text', 'file_upload'].includes(field.category)) || [];
-          const hasAutofillControl = Boolean(liveSnapshot?.fields?.some((field) => /^autofill my application$/i.test(String(field.label || '').trim())));
+          const hasAutofillControl = Boolean(liveSnapshot?.fields?.some((field) => /^autofill(?:\s+my)?\s+application\b/i.test(String(field.label || '').trim())));
           // Listing pages commonly contain one newsletter email field and many
           // navigation links. Require an upload control or multiple classified
           // application fields before attempting the document pass. Some
