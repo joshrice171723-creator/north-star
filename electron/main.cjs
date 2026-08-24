@@ -2810,6 +2810,11 @@ function registerDatabaseIpc() {
     const requestDecisions = async (targetFields, { auditPurpose, completionAttempt = false } = {}) => {
       const messages = buildFillPlanMessages({ page: { title: state.snapshot.pageTitle, url: state.currentUrl }, fields: targetFields, profile, resumeText, coverLetterText, job, completionAttempt, screenshotDataUrl });
       let response = await openRouterChat(messages, { auditPurpose, max_tokens: 50000, response_format: { type: 'json_object' } });
+      // Some configured OpenRouter models are text-only. Preserve the normal
+      // grounded planner path when they reject the supplemental screenshot.
+      if (!response.ok && screenshotDataUrl) {
+        response = await openRouterChat(buildFillPlanMessages({ page: { title: state.snapshot.pageTitle, url: state.currentUrl }, fields: targetFields, profile, resumeText, coverLetterText, job, completionAttempt }), { auditPurpose: `${auditPurpose}-text-fallback`, max_tokens: 50000, response_format: { type: 'json_object' } });
+      }
       if (!response.ok) throw new Error(response.error || 'The AI fill-plan request failed.');
       try { return parseFillPlanResponse(response); }
       catch {
