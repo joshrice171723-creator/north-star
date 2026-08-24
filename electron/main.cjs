@@ -2744,7 +2744,11 @@ function registerDatabaseIpc() {
           // Job-board handoffs often load the employer form asynchronously;
           // give the isolated view a bounded window to expose its upload
           // controls before asking AI to classify the surface again.
-          for (let attempt = 0; attempt < 6; attempt += 1) {
+          // Handoffs can traverse a job-board redirect and then mount an ATS
+          // form asynchronously. Keep polling the isolated document long
+          // enough for both phases; classifying the old listing DOM as a
+          // missing upload surface creates a false retryable failure.
+          for (let attempt = 0; attempt < 16; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 750));
             const uploadSurface = await applicationBrowser.inspectUploadControls();
             if (uploadSurface.controls.some((control) => /resume|cv|cover|letter|upload|file/i.test(`${control.label} ${control.context}`))) break;
