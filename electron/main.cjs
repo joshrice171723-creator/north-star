@@ -816,8 +816,9 @@ async function continueAfterUnavailableApplication(message, depth = 0) {
   autonomousApplicationQueueState.message = `${message}${continuation}`.trim();
   return autonomousApplicationQueueStatus();
 }
-async function startAutonomousApplicationQueue(targetApplicationId = null, unavailableAdvanceDepth = 0) {
+async function startAutonomousApplicationQueue(targetApplicationId = null, unavailableAdvanceDepth = 0, options = {}) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
+  if (options.autopilot === true) autonomousApplicationQueueState.autopilot = true;
   // The browser checkpoint is single-tenant. Guard both the async start window
   // and a claimed checkpoint so two renderer clicks cannot switch applications
   // underneath the first browser session.
@@ -844,7 +845,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
       // initial document load. Give the page a bounded window to expose that
       // control before recording a false “no handoff” checkpoint.
       let handoff;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
         const checkpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
         const workflow = await applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: applicationBrowser.publicState(), checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey: 'dice-handoff' }, context: { site: applicationBrowser.publicState()?.currentHost || 'dice', atsKey: 'dice', mode: 'deterministic' } });
         const result = workflow.result;
@@ -853,7 +854,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
           : result?.outcome === 'continue'
             ? { status: 'advanced', pageFingerprint: result.pageFingerprint }
             : { status: 'blocked', reason: result?.reasonCode || 'next_control_not_found', pageFingerprint: result?.pageFingerprint };
-        if (handoff.status !== 'blocked' || attempt === 39) break;
+        if (handoff.status !== 'blocked' || attempt === 29) break;
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
       if (handoff.status === 'unavailable') {
@@ -871,9 +872,9 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         // chain before returning to the visible application checkpoint.
         let followUp;
         for (let step = 0; step < 2; step += 1) {
-          for (let attempt = 0; attempt < 40; attempt += 1) {
+          for (let attempt = 0; attempt < 30; attempt += 1) {
             followUp = await applicationBrowser.advance({ handoffOnly: true });
-            if (followUp.status !== 'blocked' || followUp.reason !== 'next_control_not_found' || attempt === 39) break;
+            if (followUp.status !== 'blocked' || followUp.reason !== 'next_control_not_found' || attempt === 29) break;
             await new Promise((resolve) => setTimeout(resolve, 400));
           }
           if (followUp.status !== 'advanced') break;
@@ -883,9 +884,9 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         // offers it. The click is safe navigation only; Google account choice,
         // MFA, consent, and any CAPTCHA remain visible user checkpoints.
         let googleLogin;
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
           googleLogin = await applicationBrowser.advance({ googleLoginOnly: true });
-          if (googleLogin.status !== 'blocked' || googleLogin.reason !== 'next_control_not_found' || attempt === 39) break;
+          if (googleLogin.status !== 'blocked' || googleLogin.reason !== 'next_control_not_found' || attempt === 29) break;
           // Employer login controls often arrive after an SPA handoff. Keep the
           // retry bounded and exact-label so delayed rendering does not become a
           // false manual checkpoint or click an unrelated control.
@@ -909,7 +910,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         // enters the shared safe pass instead of being left open indefinitely.
         let liveSnapshot = applicationBrowser.publicState()?.snapshot;
         let formVisible = false;
-        for (let attempt = 0; attempt < 60; attempt += 1) {
+        for (let attempt = 0; attempt < 24; attempt += 1) {
           const applicationFields = liveSnapshot?.fields?.filter((field) => ['identity_contact', 'work_authorization', 'compensation', 'free_text', 'file_upload'].includes(field.category)) || [];
           const hasAutofillControl = Boolean(liveSnapshot?.fields?.some((field) => /^autofill(?:\s+my)?\s+application\b/i.test(String(field.label || '').trim())));
           // Listing pages commonly contain one newsletter email field and many
@@ -921,7 +922,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
           formVisible = Boolean(hasAutofillControl || liveSnapshot?.fields?.some((field) => field.category === 'file_upload') || applicationFields.filter((field) => field.category !== 'file_upload').length >= 2);
           // Keep the full bounded wait so slower employer SPAs get the same
           // form-rendering window promised by the 60-attempt retry loop.
-          if (formVisible || attempt === 59) break;
+          if (formVisible || attempt === 23) break;
           await new Promise((resolve) => setTimeout(resolve, 500));
           liveSnapshot = (await applicationBrowser.inspect()) || applicationBrowser.publicState()?.snapshot;
         }
@@ -1012,13 +1013,21 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         autonomousApplicationQueueState.message = needsUser ? 'Opening requires your sign-in, CAPTCHA, or protected-action decision.' : `Checkpoint failed: ${message}`;
       }
     }
-  } else autonomousApplicationQueueState.message = 'No eligible queued application was found.';
+  } else {
+    autonomousApplicationQueueState.autopilot = false;
+    autonomousApplicationQueueState.message = 'No eligible queued application was found.';
+  }
   // A successful checkpoint keeps the browser-owned application active for
   // review. Do not report that handoff as paused while the active application
   // still owns the isolated browser view; failure/unavailable paths clear the
   // ownership above and correctly settle into the paused state.
-  autonomousApplicationQueueState.running = Boolean(autonomousApplicationQueueState.activeApplicationId);
-  autonomousApplicationQueueState.paused = !autonomousApplicationQueueState.activeApplicationId;
+  if (autonomousApplicationQueueState.autopilot && !autonomousApplicationQueueState.activeApplicationId && !autonomousApplicationQueueState.paused) {
+    autonomousApplicationQueueState.message = autonomousApplicationQueueState.message || 'Autopilot is moving to the next eligible application.';
+    scheduleAutopilotNext();
+  } else {
+    autonomousApplicationQueueState.running = Boolean(autonomousApplicationQueueState.activeApplicationId);
+    autonomousApplicationQueueState.paused = !autonomousApplicationQueueState.activeApplicationId;
+  }
   return autonomousApplicationQueueStatus();
 }
 async function retryAutonomousApplication(applicationId) {
@@ -1034,7 +1043,7 @@ async function retryAutonomousApplication(applicationId) {
   autonomousApplicationQueueState.message = 'Retrying the selected failed application.';
   return { application: released, status: await startAutonomousApplicationQueue(applicationId) };
 }
-function pauseAutonomousApplicationQueue() { autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
+function pauseAutonomousApplicationQueue() { if (autonomousAutopilotTimer) clearTimeout(autonomousAutopilotTimer); autonomousAutopilotTimer = null; autonomousApplicationQueueState.autopilot = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
 async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}) {
   const state = applicationBrowser.publicState();
   if (!state?.applicationId || state.applicationId !== applicationId) throw new Error('Open the application browser before requesting recovery guidance.');
@@ -2692,7 +2701,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
   ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return autonomousApplicationQueueStatus(); });
-  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); const applicationId = input?.applicationId ? validateApplicationId(input.applicationId) : null; return startAutonomousApplicationQueue(applicationId); });
+  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); const applicationId = input?.applicationId ? validateApplicationId(input.applicationId) : null; return startAutonomousApplicationQueue(applicationId, 0, { autopilot: input?.autopilot === true }); });
   ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); return pauseAutonomousApplicationQueue(); });
   ipcMain.handle('jobs:applications:automation-batch:approve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); if (!application || !['detecting_form', 'navigating_form', 'ready_to_submit'].includes(application.automationState)) throw new Error('Only an application at the final reviewed checkpoint can be added to the batch.'); const checkpoint = { ...application.automationCheckpoint, batchApprovedAt: new Date().toISOString() }; return coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint }); });
   ipcMain.handle('jobs:applications:automation-batch:start', (event) => { assertTrustedRenderer(event); return startApprovedApplicationBatch(); });
@@ -2887,6 +2896,15 @@ function registerDatabaseIpc() {
         for (const field of unresolvedFields.slice(0, 20)) {
           coachDatabase.applications.saveUnknownQuestion({ applicationId, providerHost: browserState?.currentHost || browserState?.initialHost || '', pageFingerprint: lastPlan?.pageFingerprint || '', controlLabel: field.label || field.fieldFingerprint, controlType: field.controlType || field.inputType || 'field', questionKey: `safe-pass:${field.fieldFingerprint}`, questionText: `What answer should be entered for “${field.label || field.fieldFingerprint}”?`, options: field.options || [] });
         }
+      }
+      if (!needsUserAnswer && autonomousApplicationQueueState.autopilot) {
+        autonomousApplicationQueueState.activeStep = 'submitting';
+        const submission = await submitAutopilotApplication(applicationId);
+        applicationBrowser.close();
+        autonomousApplicationQueueState.activeApplicationId = null;
+        autonomousApplicationQueueState.activeStep = '';
+        autonomousApplicationQueueState.message = submission.status === 'awaiting_email' ? 'Application submitted; waiting for matching employer email before Applied.' : submission.status === 'verifying_confirmation' ? 'Application submitted; employer confirmation page still needs verification.' : 'The final submit control needs review.';
+        return submission;
       }
       coachDatabase.applications.updateAutomationState({ applicationId, state: needsUserAnswer ? 'needs_user_answer' : 'queued', checkpoint: { ...updated.automationCheckpoint, stage: needsUserAnswer ? 'form_review' : 'form_retry', reasonCode: needsUserAnswer ? 'safe_pass_complete_review_remaining_fields' : 'safe_pass_found_no_answerable_fields', unresolvedFields, safePassCompletedAt: new Date().toISOString() } });
       applicationBrowser.close();
