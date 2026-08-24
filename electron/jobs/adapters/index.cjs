@@ -1,5 +1,5 @@
 const generic = require('./generic.cjs');
-const providerAdapters = [require('./greenhouse.cjs'), require('./lever.cjs'), require('./ashby.cjs'), require('./smartrecruiters.cjs'), require('./workday.cjs'), require('./icims-taleo.cjs')];
+const providerAdapters = [require('./dice.cjs'), require('./adzuna.cjs'), require('./greenhouse.cjs'), require('./lever.cjs'), require('./workday.cjs'), require('./ashby.cjs'), require('./smartrecruiters.cjs'), require('./icims-taleo.cjs')];
 const adapters = [generic, ...providerAdapters];
 function selectAdapter(context = {}) {
   // Provider rules are deliberately opt-in until each live provider has passed
