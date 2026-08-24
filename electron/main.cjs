@@ -61,6 +61,7 @@ app.setPath('userData', path.join(app.getPath('appData'), 'ClaudeArchitectStudyC
 const academyUrl = 'https://anthropic.skilljar.com/';
 const academyOrigin = new URL(academyUrl).origin;
 let mainWindow;
+let mainRendererRecoveryAttempts = 0;
 let academyView;
 let academyViewAttached = false;
 let googleVoiceView;
@@ -1690,6 +1691,21 @@ function createWindow() {
     },
     attachView: (view) => mainWindow?.contentView.addChildView(view),
     detachView: (view) => { try { mainWindow?.contentView.removeChildView(view); } catch {} },
+  });
+
+  // A crashed renderer must not leave the native application view covering a
+  // permanently blank shell. Reload once after a renderer crash; the bounded
+  // attempt avoids an infinite reload loop while preserving the main-process
+  // queue state for the user to resume or review.
+  mainWindow.webContents.on('did-finish-load', () => { mainRendererRecoveryAttempts = 0; });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (mainWindow.isDestroyed() || mainRendererRecoveryAttempts >= 1) return;
+    mainRendererRecoveryAttempts += 1;
+    console.error('[renderer] main window exited', details?.reason || 'unknown');
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      mainWindow.reload();
+    }, 250);
   });
   // Phase 2 owns the first Dice/browser handoff checkpoint. Phase 3 adds the
   // registry as a storage-backed candidate layer without granting it submit authority.
