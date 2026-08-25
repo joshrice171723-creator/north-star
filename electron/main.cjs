@@ -2902,6 +2902,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:workflow-queue:pause', (event) => { assertTrustedRenderer(event); pauseAutonomousApplicationQueue(); return applicationQueueService.pause(); });
   ipcMain.handle('jobs:applications:workflow-queue:retry', (event, input) => { assertTrustedRenderer(event); return applicationQueueService.retry(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:applications:workflow-queue:authorize', async (event, input) => { assertTrustedRenderer(event); return authorizeApplicationSubmission(validateApplicationId(input?.applicationId), input?.scope); });
+  ipcMain.handle('jobs:applications:workflow-queue:evidence', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.listSubmissionEvidence(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:applications:workflow-queue:resolve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return startDurableApplicationQueue({ applicationId, mode: 'entire_pipeline' }); });
   // Compatibility channels now delegate to the same durable owner so an old
   // renderer cannot accidentally start a second in-memory queue.

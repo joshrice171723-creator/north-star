@@ -27,6 +27,14 @@ const stageLabel = (stage) => ({
   applied: 'Applied',
   terminal: 'Finished without applying',
 })[stage] || String(stage || 'Queued').replaceAll('_', ' ');
+const retryLabel = (value) => value ? `Retry scheduled ${new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+const evidenceLabel = (entry) => entry.browserEvidenceId && entry.emailEvidenceId
+  ? 'Browser and employer-email evidence verified'
+  : entry.browserEvidenceId
+    ? 'Browser receipt saved; awaiting employer email'
+    : entry.emailEvidenceId
+      ? 'Employer email matched; awaiting browser evidence'
+      : '';
 
 export default function ApplicationQueueDrawer({
   status,
@@ -78,7 +86,7 @@ export default function ApplicationQueueDrawer({
         return <div className={`assistant-queue-row${active ? ' active' : ''}`} key={entry.applicationId || entry.jobId}>
           <button className="assistant-queue-job" onClick={() => onOpenJob?.(entry)}>
             <span>{entry.company || 'Unknown employer'} — {entry.roleTitle || 'Untitled role'}</span>
-            <small>{stageLabel(state)}{entry.blocker?.message ? ` · ${entry.blocker.message}` : ''}</small>
+            <small>{[stageLabel(state), entry.blocker?.message, retryLabel(entry.nextRetryAt), evidenceLabel(entry)].filter(Boolean).join(' · ')}</small>
           </button>
           {needsAnswer && <button className="secondary assistant-queue-action" onClick={() => onAnswer?.(entry)}><MessageCircle size={12} /> Answer</button>}
           {retryable && <button className="secondary assistant-queue-action" onClick={() => onRetry?.(entry)}><RotateCcw size={12} /> Retry</button>}
