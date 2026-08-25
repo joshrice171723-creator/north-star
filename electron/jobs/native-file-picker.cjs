@@ -13,11 +13,15 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
     // SendKeys/clipboard is unreliable for paths containing parentheses.
     'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
     '$root = [System.Windows.Automation.AutomationElement]::RootElement',
-    '$deadline = (Get-Date).AddMilliseconds(10000)',
+    '$deadline = (Get-Date).AddMilliseconds([int]$env:NORTHSTAR_PICKER_TIMEOUT_MS)',
     'while ((Get-Date) -lt $deadline) {',
-    '  $dialogs = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)',
+    // Some Chromium-hosted dialogs are not returned as direct RootElement
+    // children. Search window descendants by role and accept the standard
+    // Open/Select titles used by the Windows picker variants.
+    '  $windowCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)',
+    '  $dialogs = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $windowCondition)',
     '  foreach ($dialog in $dialogs) {',
-    '    if ($dialog.Current.Name -ne "Open") { continue }',
+    '    if ($dialog.Current.Name -notmatch "^(Open|Select)( .*)?$") { continue }',
     '    $editCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)',
     '    $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)',
     '    if (-not $edit) { continue }',
@@ -37,7 +41,7 @@ async function chooseNativeFile(filePath, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script], {
       windowsHide: true,
-      env: { ...process.env, NORTHSTAR_PICKER_PATH: filePath },
+      env: { ...process.env, NORTHSTAR_PICKER_PATH: filePath, NORTHSTAR_PICKER_TIMEOUT_MS: String(timeoutMs) },
     });
     let settled = false;
     const finish = (result, error) => { if (settled) return; settled = true; clearTimeout(timer); if (error) reject(error); else resolve(result); };
