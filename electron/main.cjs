@@ -794,6 +794,13 @@ let applicationAssistantOwnerApplicationId = null;
 const MAX_UNAVAILABLE_AUTO_ADVANCES = 3;
 let autonomousSafeFormPass = null;
 let autonomousAutopilotTimer = null;
+function withApplicationTimeout(promise, timeoutMs, code = 'application_step_timeout') {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('The employer page did not respond within the safe checkpoint window.'), { code, retryable: true })), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 function autonomousApplicationQueueStatus() {
   const queue = coachDatabase?.applications.listAutomationQueue?.() || [];
   const activeStates = ['opening', 'detecting_form', 'creating_account', 'reusing_account', 'awaiting_activation', 'filling_profile', 'answering_questions', 'uploading_documents', 'navigating_form'];
@@ -918,13 +925,15 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
       // initial document load. Give the page a bounded window to expose that
       // control before recording a false “no handoff” checkpoint.
       let handoff;
+      const flowDeadline = Date.now() + 45000;
       for (let attempt = 0; attempt < 30; attempt += 1) {
+        if (Date.now() >= flowDeadline) throw Object.assign(new Error('Employer flow detection timed out before a stable handoff was observed.'), { code: 'application_flow_timeout', retryable: true });
         reportDurableProgress('detecting_flow', { attempt, stage: 'handoff_detection' });
         const checkpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
         const liveBrowser = applicationBrowser.publicState();
         const adapter = selectAdapter({ url: liveBrowser?.currentUrl || claimed.url, enableProviderAdapters: true });
         const stepKey = `${adapter.key}-${adapter.detectFormStep?.({ snapshot: liveBrowser?.snapshot || {} }) || 'handoff'}`;
-        const workflow = await applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: liveBrowser, checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey }, context: { site: liveBrowser?.currentHost || claimed.externalApplicationHost || '', atsKey: adapter.key, adapterKey: adapter.key, mode: adapter.productionEnabled ? 'provider' : 'deterministic' } });
+        const workflow = await withApplicationTimeout(applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: liveBrowser, checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey }, context: { site: liveBrowser?.currentHost || claimed.externalApplicationHost || '', atsKey: adapter.key, adapterKey: adapter.key, mode: adapter.productionEnabled ? 'provider' : 'deterministic' } }), 10000, 'application_flow_timeout');
         const result = workflow.result;
         handoff = result?.outcome === 'listing_unavailable'
           ? { status: 'unavailable', reason: result.reasonCode, signals: result.evidenceIds, pageFingerprint: result.pageFingerprint }
@@ -1175,6 +1184,7 @@ async function processDurableApplicationQueueItem(item, control) {
   application = coachDatabase.applications.get(application.id);
   let state = LEGACY_TO_CANONICAL_STATE[application.automationState] || 'blocked';
   const reasonCode = application.automationCheckpoint?.reasonCode || '';
+  if (/timeout/i.test(reasonCode)) state = 'retry_wait';
   if (application.automationState === 'needs_user_answer' && /login|captcha/i.test(reasonCode)) state = 'waiting_for_login';
   else if (application.automationState === 'needs_user_answer' && /activation/i.test(reasonCode)) state = 'waiting_for_activation';
   else if (application.automationState === 'blocked' && reasonCode === 'job_listing_unavailable') state = 'terminal';

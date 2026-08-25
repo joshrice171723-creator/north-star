@@ -16,6 +16,8 @@ test('legacy application and preparation channels use the durable workflow owner
   assert.match(main, /durableProgress: \(progress\) => control\.update/);
   assert.match(main, /reportDurableProgress\('uploading_documents'/);
   assert.match(main, /reportDurableProgress\('ready_for_review'/);
+  assert.match(main, /withApplicationTimeout\(applicationWorkflowOrchestrator\.runApplicationCheckpoint/);
+  assert.match(main, /const flowDeadline = Date\.now\(\) \+ 45000/);
   assert.match(preload, /getApplicationWorkflowQueueStatus/);
   assert.match(preload, /startApplicationWorkflowQueue/);
   assert.match(preload, /listApplicationWorkflowEvidence/);
