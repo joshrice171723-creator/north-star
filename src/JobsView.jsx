@@ -438,7 +438,29 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
        setAutomationQueueStarting(false);
      }
    };
-  const pauseAutomationQueue = async () => { const status = await window.desktopShell?.pauseJobApplicationAutomationQueue?.(); if (status) setAutomationQueueStatus(status); };
+   const pauseAutomationQueue = async () => { const status = await window.desktopShell?.pauseJobApplicationAutomationQueue?.(); if (status) setAutomationQueueStatus(status); };
+   const startWorkflowQueue = async (applicationId) => {
+     if (!applicationId || automationQueueStarting) return;
+     setAutomationQueueStarting(true);
+     try {
+       const application = applications.find((entry) => entry.id === applicationId);
+       const job = jobs.find((entry) => entry.id === application?.jobId);
+       if (!application || !job) throw new Error('The selected application is no longer available.');
+       if (['target', 'researching'].includes(job.stage)) {
+         await window.desktopShell?.prepareJobApplication?.({ jobId: job.id });
+         await onRefresh?.();
+       }
+       const status = await window.desktopShell?.startJobApplicationAutomationQueue?.({ applicationId, autopilot: false });
+       if (status) setAutomationQueueStatus(status);
+       await refreshAutomationQueue();
+     } catch (cause) {
+       setAutomationQueueStatus((current) => ({ ...current, message: cause?.message || 'Could not continue the application workflow.' }));
+     } finally {
+       setAutomationQueueStarting(false);
+     }
+   };
+   const pauseWorkflowQueue = async () => { await pausePreparationQueue(); await pauseAutomationQueue(); };
+   const openWorkflowJob = (entry) => { const job = jobs.find((candidate) => candidate.id === entry.jobId); if (job) setDetailJob(job); };
   const resumeAfterAnswer = async (applicationId) => {
     const status = await refreshAutomationQueue();
     const entry = status?.queue?.find((candidate) => candidate.applicationId === applicationId);
@@ -556,6 +578,12 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
   const [applications, setApplications] = useState([]);
   const [applicationDocuments, setApplicationDocuments] = useState({});
   const [detailJob, setDetailJob] = useState(null);
+  const workflowQueue = [...preparationQueue.map((job) => {
+    const application = applications.find((entry) => entry.jobId === job.id);
+    return { applicationId: application?.id, jobId: job.id, company: job.company, roleTitle: job.roleTitle, stage: preparingJobId === job.id ? 'preparing_documents' : job.stage, activeStep: preparingJobId === job.id ? preparationStep : '', canStart: true };
+  }), ...(automationQueueStatus.queue || []).map((entry) => ({ ...entry, stage: ({ queued: entry.eligible ? 'ready' : 'blocked', opening: 'opening', detecting_form: 'applying', creating_account: 'applying', reusing_account: 'applying', awaiting_activation: 'needs_user_answer', filling_profile: 'applying', answering_questions: 'needs_user_answer', uploading_documents: 'applying', navigating_form: 'applying', verifying_email_confirmation: 'awaiting_email', failed: 'failed', blocked: 'blocked', submitted: 'applied' })[entry.automationState] || entry.automationState, canStart: Boolean(entry.eligible && entry.automationState === 'queued') }))].filter((entry, index, all) => entry.applicationId || !all.some((candidate, candidateIndex) => candidateIndex > index && candidate.jobId === entry.jobId));
+  const workflowActiveApplication = automationQueueStatus.activeApplicationId || (preparationJobId && applications.find((entry) => entry.jobId === preparationJobId)?.id) || null;
+  const workflowQueueStatus = { activeApplicationId: workflowActiveApplication, activeJobId: preparationJobId || automationQueueStatus.queue.find((entry) => entry.applicationId === automationQueueStatus.activeApplicationId)?.jobId || null, activeStage: workflowActiveApplication ? (preparationJobId ? 'preparing_documents' : 'applying') : '', activeStep: preparationJobId ? preparationStep : automationQueueStatus.activeStep, queue: workflowQueue.sort((left, right) => Number(right.applicationId === workflowActiveApplication) - Number(left.applicationId === workflowActiveApplication)), paused: preparationPaused && automationQueueStatus.paused, blockedReason: preparationBlocked.length ? preparationBlocked[0].message : '', message: automationQueueStatus.message || '', counts: { total: workflowQueue.length, preparable: workflowQueue.filter((entry) => ['target', 'researching', 'preparing_documents'].includes(entry.stage)).length, eligible: automationQueueStatus.counts.eligible || 0, needsUserAnswer: automationQueueStatus.counts.needsUserAnswer || 0, failed: automationQueueStatus.counts.failed || 0 } };
   const resetResumeVersions = async () => {
     if (!window.confirm('Reset every generated resume and cover-letter version across all applications? The uploaded master resume will be preserved.')) return;
     setResetResumeBusy(true);
@@ -709,7 +737,7 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
       return null;
     }
   };
-  const openApplication = async (job, focusDocumentType = 'resume', openAssistant = false) => { try { const application = await window.desktopShell?.startJobApplication?.({ jobId: job.id }); if (!application) throw new Error('Could not start application.'); if (openAssistant) { const documents = await window.desktopShell?.listApplicationDocuments?.({ applicationId: application.id }) || []; const hasResume = documents.some((document) => document.documentType === 'resume' && document.isSelected); const hasCoverLetter = documents.some((document) => document.documentType === 'cover_letter' && document.isSelected); if (!hasResume || !hasCoverLetter) throw new Error('Select both an approved resume and cover letter before opening the application assistant.'); } const workspaceJob = job.stage === 'target' ? { ...job, stage: 'researching' } : job; setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setDetailJob(workspaceJob); setApplicationWorkspace({ application, job: workspaceJob, focusDocumentType, openAssistant }); return true; } catch (cause) { setError(cause?.message || 'Could not start application.'); return false; } };
+  const openApplication = async (job, focusDocumentType = 'resume', openAssistant = false) => { try { const application = await window.desktopShell?.startJobApplication?.({ jobId: job.id }); if (!application) throw new Error('Could not start application.');  const workspaceJob = job.stage === 'target' ? { ...job, stage: 'researching' } : job; setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setDetailJob(workspaceJob); setApplicationWorkspace({ application, job: workspaceJob, focusDocumentType, openAssistant }); return true; } catch (cause) { setError(cause?.message || 'Could not start application.'); return false; } };
   const refreshApplication = async () => { if (!applicationWorkspace) return; await onRefresh(); const application = await window.desktopShell?.getJobApplication?.(applicationWorkspace.application.id); if (application) { setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); setApplicationWorkspace((current) => ({ ...current, application })); } };
   const changeDetailStage = async (stage) => { if (!detailJob) return; try { const saved = await window.desktopShell?.updateJob?.({ ...detailJob, stage }); setDetailJob(saved); await onRefresh(); if (stage === 'applied' && !applications.some((entry) => entry.jobId === saved.id)) { const application = await window.desktopShell?.startJobApplication?.({ jobId: saved.id }); if (application) setApplications((current) => [...current.filter((entry) => entry.id !== application.id), application]); } } catch (cause) { setError(cause?.message || 'Could not update the application stage.'); } };
   const saveSource = async () => { try { const result = await window.desktopShell?.saveJobSource?.(sourceForm); setSource(result); setSourceForm(emptySourceForm()); setSourceMessage(result?.warning || 'Job-source credentials saved securely on this computer.'); } catch (cause) { setSourceMessage(cause?.message || 'Could not save job-source credentials.'); } };
