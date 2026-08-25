@@ -885,6 +885,12 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
     throw new Error('Open the AI application assistant for this application before starting the workflow.');
   }
   if (options.autopilot === true) autonomousApplicationQueueState.autopilot = true;
+  // The durable queue remains the public source of truth. The older
+  // automation record is updated for compatibility, while this callback keeps
+  // the durable item visible at every browser checkpoint.
+  const reportDurableProgress = (state, checkpoint = {}) => {
+    if (typeof options.durableProgress === 'function') options.durableProgress({ state, checkpoint });
+  };
   // The browser checkpoint is single-tenant. Guard both the async start window
   // and a claimed checkpoint so two renderer clicks cannot switch applications
   // underneath the first browser session.
@@ -896,6 +902,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
   const claimed = coachDatabase.applications.claimNextAutomation({ applicationId: targetApplicationId });
   if (claimed) {
     autonomousApplicationQueueState.activeApplicationId = claimed.id;
+    reportDurableProgress('opening', { ...claimed.automationCheckpoint, stage: 'opening' });
     try {
       // The queue claims one application at a time; the browser boundary owns
       // the first inspection checkpoint and never submits the employer form.
@@ -912,6 +919,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
       // control before recording a false “no handoff” checkpoint.
       let handoff;
       for (let attempt = 0; attempt < 30; attempt += 1) {
+        reportDurableProgress('detecting_flow', { attempt, stage: 'handoff_detection' });
         const checkpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
         const liveBrowser = applicationBrowser.publicState();
         const adapter = selectAdapter({ url: liveBrowser?.currentUrl || claimed.url, enableProviderAdapters: true });
@@ -969,6 +977,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
           if (accountNavigation.status === 'advanced') {
             const application = coachDatabase.applications.get(claimed.id);
             coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'creating_account', checkpoint: { ...application.automationCheckpoint, account: { host: applicationBrowser.publicState()?.currentHost || '', provider: accountAdapter.key, registrationOpenedAt: new Date().toISOString() } } });
+            reportDurableProgress('creating_account', { stage: 'account_registration', provider: accountAdapter.key });
             autonomousApplicationQueueState.message = 'Opened the employer registration flow. Approved profile fields will be filled; password, CAPTCHA, and consent remain yours.';
           }
         }
@@ -989,6 +998,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
         if (login.status === 'needs_user') {
           const application = coachDatabase.applications.get(claimed.id);
           coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'needs_user_answer', checkpoint: { ...application.automationCheckpoint, stage: 'login_review', reasonCode: login.reason } });
+          reportDurableProgress('waiting_for_login', { stage: 'login_review', reasonCode: login.reason });
           applicationBrowser.close();
           autonomousApplicationQueueState.activeApplicationId = null;
           autonomousApplicationQueueState.autopilot = false;
@@ -1025,7 +1035,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
           // remains the safety gate for every document and field action.
           formVisible = true;
         }
-        if (formVisible && autonomousSafeFormPass) await autonomousSafeFormPass(claimed.id);
+        if (formVisible && autonomousSafeFormPass) await autonomousSafeFormPass(claimed.id, options.durableProgress);
         else if (!formVisible) {
           const application = coachDatabase.applications.get(claimed.id);
           coachDatabase.applications.releaseAutomation({ applicationId: claimed.id, state: 'queued', checkpoint: { ...application.automationCheckpoint, stage: 'form_retry', reasonCode: 'form_not_detected_after_handoff', retryQueuedAt: new Date().toISOString() } });
@@ -1157,7 +1167,11 @@ async function processDurableApplicationQueueItem(item, control) {
   }
   if (job.stage !== 'ready') return { state: 'blocked', blocker: { code: 'preparation_incomplete', message: 'Application documents did not reach Ready to apply.', requiresUser: false }, checkpoint: application.automationCheckpoint };
   control.update({ state: 'opening', checkpoint: { ...application.automationCheckpoint, durableRunId: item.runId } });
-  await startAutonomousApplicationQueue(application.id, 0, { durableOwner: true, autopilot: false });
+  await startAutonomousApplicationQueue(application.id, 0, {
+    durableOwner: true,
+    autopilot: false,
+    durableProgress: (progress) => control.update({ state: progress.state, checkpoint: { ...application.automationCheckpoint, ...(progress.checkpoint || {}), durableRunId: item.runId } }),
+  });
   application = coachDatabase.applications.get(application.id);
   let state = LEGACY_TO_CANONICAL_STATE[application.automationState] || 'blocked';
   const reasonCode = application.automationCheckpoint?.reasonCode || '';
@@ -3036,7 +3050,10 @@ function registerDatabaseIpc() {
     if (!Object.keys(targets).length) throw new Error('AI document-upload repair found no safe upload controls.');
     return { status: 'planned', action, targetLabel, targets, confidence: Math.max(0, Math.min(1, Number(plan.confidence) || 0)), reason: String(plan.reason || '').slice(0, 300), pageFingerprint: observation.pageFingerprint };
   };
-  autonomousSafeFormPass = async (applicationId) => {
+  autonomousSafeFormPass = async (applicationId, durableProgress = null) => {
+    const reportDurableProgress = (state, checkpoint = {}) => {
+      if (typeof durableProgress === 'function') durableProgress({ state, checkpoint });
+    };
     let lastPlan = null;
     let uploadRepair = null;
     try {
@@ -3047,6 +3064,7 @@ function registerDatabaseIpc() {
       }
       if (Object.keys(files).length < 2) throw new Error('The selected resume and cover letter could not both be resolved.');
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'uploading_documents', checkpoint: { documentTypes: Object.keys(files) } });
+      reportDurableProgress('uploading_documents', { stage: 'document_upload', documentTypes: Object.keys(files) });
       const upload = await applicationBrowser.uploadDocuments(files);
       let uploadResults = upload.results.map((entry) => ({ documentType: entry.documentType, status: entry.status, optional: Boolean(entry.optional), pageFingerprint: entry.pageFingerprint }));
       let requiredUploadFailures = uploadResults.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
@@ -3087,6 +3105,7 @@ function registerDatabaseIpc() {
       if (requiredUploadFailures.length) throw new Error(`Document upload incomplete: ${requiredUploadFailures.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
       const uploadWarnings = uploadResults.filter((entry) => entry.status !== 'uploaded' && entry.optional);
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults, uploadWarnings } });
+      reportDurableProgress('navigating', { stage: 'form_navigation', uploadResults, uploadWarnings });
       const visitedPageFingerprints = new Set();
       let finalReviewReady = false;
       let navigationReason = '';
@@ -3103,6 +3122,7 @@ function registerDatabaseIpc() {
           if (failed.length) throw new Error(`Document upload incomplete on page ${page + 1}: ${failed.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
         }
         for (let pass = 0; pass < 5; pass += 1) {
+          reportDurableProgress('filling_profile', { stage: 'form_fill', page, pass });
           const plan = await buildAiApplicationFillPlan(browserProfile());
           lastPlan = plan;
           if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
@@ -3119,6 +3139,7 @@ function registerDatabaseIpc() {
       const unresolvedFields = Array.isArray(lastPlan?.diagnostics?.unresolvedFields) ? lastPlan.diagnostics.unresolvedFields : [];
       const needsUserAnswer = unresolvedFields.length > 0;
       if (needsUserAnswer) {
+        reportDurableProgress('waiting_for_answer', { stage: 'form_review', reasonCode: 'safe_pass_complete_review_remaining_fields', unresolvedFields });
         const browserState = applicationBrowser.publicState();
         for (const field of unresolvedFields.slice(0, 20)) {
           coachDatabase.applications.saveUnknownQuestion({ applicationId, providerHost: browserState?.currentHost || browserState?.initialHost || '', pageFingerprint: lastPlan?.pageFingerprint || '', controlLabel: field.label || field.fieldFingerprint, controlType: field.controlType || field.inputType || 'field', questionKey: `safe-pass:${field.fieldFingerprint}`, questionText: `What answer should be entered for “${field.label || field.fieldFingerprint}”?`, options: field.options || [] });
@@ -3127,6 +3148,7 @@ function registerDatabaseIpc() {
       const nextState = needsUserAnswer || !finalReviewReady ? 'needs_user_answer' : 'ready_to_submit';
       const reasonCode = needsUserAnswer ? 'safe_pass_complete_review_remaining_fields' : finalReviewReady ? 'reviewed_submit_required' : navigationReason || 'application_flow_incomplete';
       coachDatabase.applications.updateAutomationState({ applicationId, state: nextState, checkpoint: { ...updated.automationCheckpoint, stage: finalReviewReady ? 'final_submit_review' : 'form_review', reasonCode, unresolvedFields, visitedPageFingerprints: [...visitedPageFingerprints].slice(0, 12), safePassCompletedAt: new Date().toISOString() } });
+      if (finalReviewReady && !needsUserAnswer) reportDurableProgress('ready_for_review', { stage: 'final_submit_review', reasonCode, visitedPageFingerprints: [...visitedPageFingerprints].slice(0, 12) });
       applicationBrowser.close();
       autonomousApplicationQueueState.activeApplicationId = null;
       autonomousApplicationQueueState.message = finalReviewReady && !needsUserAnswer ? 'Application is filled and ready for explicit submission review.' : 'Safe form pass completed; protected or unanswered fields remain for review.';
@@ -3144,7 +3166,7 @@ function registerDatabaseIpc() {
         if (repair.status === 'applied') {
           coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { ...checkpoint, aiRepairAttempts: repairAttempts + 1, stage: 'form_repaired', reasonCode: 'safe_pass_ai_repaired', repairReason: repair.plan?.reason || '' } });
           autonomousApplicationQueueState.message = 'AI repaired the application page; re-running the same form checkpoint.';
-          return autonomousSafeFormPass(applicationId);
+          return autonomousSafeFormPass(applicationId, durableProgress);
         }
       }
       // Upload discovery failures occur before an AI form plan exists. They
