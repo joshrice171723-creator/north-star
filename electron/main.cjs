@@ -490,7 +490,8 @@ async function syncJobEmails() {
     if (assignment.created) autoCreated += 1;
     imported += 1;
   }
-  return { ok: true, configured: true, imported, retrieved: uniqueMessages.length, autoAssigned, autoCreated, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
+  const reconciliation = reconcilePendingSubmissionEvidence();
+  return { ok: true, configured: true, imported, retrieved: uniqueMessages.length, autoAssigned, autoCreated, reconciledSubmissions: reconciliation.applied, jobRelated: coachDatabase.email.list({ jobOnly: true, limit: 200 }).length, syncedAt: new Date().toISOString() };
 }
 async function checkApplicationActivation(applicationId) {
   const application = coachDatabase.applications.get(applicationId);
@@ -531,11 +532,41 @@ async function confirmApplicationSubmission(input = {}) {
   let evidence = coachDatabase.applications.listSubmissionEvidence(applicationId).find((entry) => entry.status === 'awaiting_email');
   if (!evidence) evidence = coachDatabase.applications.beginSubmissionVerification({ applicationId, browserState: confirmation?.signals?.length ? 'confirmed' : 'unverified', browserConfirmationUrl: confirmation.confirmationUrlRedacted || browser?.currentUrl || '', browserConfirmationNumber: confirmation.confirmationNumber || '', requestedAt: new Date().toISOString() });
   const sync = await syncJobEmails();
+  const reconciledApplication = coachDatabase.applications.get(applicationId);
+  if (reconciledApplication?.status === 'submitted') return { status: 'submitted', pending: false, evidence: coachDatabase.applications.listSubmissionEvidence(applicationId).find((entry) => entry.status === 'verified') || evidence, application: reconciledApplication, sync: { ok: Boolean(sync.ok), message: sync.message || '' } };
   const match = coachDatabase.applications.findSubmissionConfirmation(applicationId, { requestedAt: evidence.requestedAt });
   if (!match) return { status: 'verifying_email_confirmation', pending: true, evidence, sync: { ok: Boolean(sync.ok), message: sync.message || '' }, failure: classifyApplicationFailure({ code: 'email_confirmation_missing', message: 'A matching employer confirmation email has not arrived yet.' }) };
   const verified = coachDatabase.applications.recordSubmissionEmailMatch({ applicationId, evidenceId: evidence.id, match });
   const completed = coachDatabase.applications.completeSubmission({ applicationId, userAcknowledged: true, emailConfirmationId: match.emailId, confirmationNumber: input.confirmationNumber || verified.confirmationNumber, confirmationUrl: browser?.currentUrl || confirmation.confirmationUrlRedacted || '', nextAction: 'Watch for employer response.', followUpDate: typeof input.followUpDate === 'string' ? input.followUpDate : '' });
   return { status: 'submitted', pending: false, evidence: verified, application: completed, sync: { ok: Boolean(sync.ok), message: sync.message || '' } };
+}
+function reconcilePendingSubmissionEvidence() {
+  const results = [];
+  for (const evidence of coachDatabase?.applications.listPendingSubmissionEvidence?.() || []) {
+    if (evidence.browserState !== 'confirmed') continue;
+    const application = coachDatabase.applications.get(evidence.applicationId);
+    if (!application || application.status === 'submitted') continue;
+    const match = coachDatabase.applications.findSubmissionConfirmation(application.id, { requestedAt: evidence.requestedAt });
+    if (!match) continue;
+    const verified = coachDatabase.applications.recordSubmissionEmailMatch({ applicationId: application.id, evidenceId: evidence.id, match });
+    const completed = coachDatabase.applications.completeSubmission({ applicationId: application.id, userAcknowledged: true, emailConfirmationId: match.emailId, confirmationNumber: verified.confirmationNumber, confirmationUrl: evidence.browserConfirmationUrl, nextAction: 'Watch for employer response.' });
+    applicationQueueService?.updateApplication(application.id, { state: 'applied', browserEvidenceId: evidence.id, emailEvidenceId: match.emailId, checkpoint: { ...application.automationCheckpoint, submissionEvidenceId: evidence.id, emailConfirmationId: match.emailId, verifiedAt: new Date().toISOString() }, blocker: {}, completedAt: new Date().toISOString() });
+    const timer = submissionVerificationTimers.get(application.id); if (timer) clearTimeout(timer); submissionVerificationTimers.delete(application.id);
+    results.push({ applicationId: application.id, evidenceId: evidence.id, emailId: match.emailId, application: completed });
+  }
+  return { applied: results.length, results };
+}
+function scheduleSubmissionEmailVerification(applicationId, attempt = 0) {
+  const existing = submissionVerificationTimers.get(applicationId); if (existing) clearTimeout(existing);
+  if (attempt >= 20) return;
+  const timer = setTimeout(async () => {
+    submissionVerificationTimers.delete(applicationId);
+    const application = coachDatabase?.applications.get(applicationId);
+    if (!application || application.status === 'submitted') return;
+    await syncJobEmails().catch(() => null);
+    if (coachDatabase?.applications.get(applicationId)?.status !== 'submitted') scheduleSubmissionEmailVerification(applicationId, attempt + 1);
+  }, attempt === 0 ? 15000 : 30000);
+  submissionVerificationTimers.set(applicationId, timer);
 }
 const roadmapSeedCandidates = [
   path.resolve(__dirname, '../../../canonical-ai-executive-coach-roadmap.csv'),
@@ -754,6 +785,7 @@ const validateApplicationAnswer = (input) => { if (!input || typeof input !== 'o
 const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
+const submissionVerificationTimers = new Map();
 const autonomousApplicationQueueState = { running: false, paused: true, autopilot: false, activeApplicationId: null, activeStep: '', message: '' };
 // The native employer view is only allowed to open after the matching React
 // application assistant has claimed ownership. This prevents queue work from
@@ -1137,6 +1169,74 @@ async function processDurableApplicationQueueItem(item, control) {
 function startDurableApplicationQueue(input = {}) {
   return applicationQueueService.start({ applicationIds: workflowApplicationIds(input), mode: input.mode || 'entire_pipeline' });
 }
+function submissionReviewSnapshot(applicationId) {
+  const application = coachDatabase.applications.get(applicationId);
+  if (!application) throw new Error('Application not found.');
+  const browser = applicationBrowser.publicState();
+  if (browser?.applicationId !== applicationId || !browser.snapshot?.pageFingerprint) throw new Error('Open and rescan this application before approving submission.');
+  const documents = coachDatabase.applications.documents.list(applicationId).filter((entry) => entry.isSelected).map((entry) => ({ id: entry.id, type: entry.documentType, version: entry.version, updatedAt: entry.updatedAt }));
+  const answers = coachDatabase.applications.listAnswers(applicationId).filter((entry) => entry.approvalStatus === 'approved').map((entry) => ({ id: entry.id, questionKey: entry.questionKey, updatedAt: entry.updatedAt }));
+  const payload = { applicationId, destination: application.externalApplicationUrl || application.applicationUrl, pageFingerprint: browser.snapshot.pageFingerprint, documents, answers };
+  return { payload, fingerprint: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex') };
+}
+async function authorizeApplicationSubmission(applicationId, scope = 'single') {
+  await applicationBrowser.inspect();
+  const browser = applicationBrowser.publicState();
+  if (!browser?.snapshot?.fields?.some((field) => field.category === 'final_submit')) throw new Error('A unique final submit control must be visible before approval.');
+  const review = submissionReviewSnapshot(applicationId);
+  const authorization = { token: crypto.randomUUID(), scope: scope === 'batch' ? 'batch' : 'single', fingerprint: review.fingerprint, snapshot: review.payload, approvedAt: new Date().toISOString() };
+  const item = coachDatabase.applications.queue.findLatestItemForApplication(applicationId);
+  if (!item) throw new Error('This application is not part of the durable workflow queue.');
+  coachDatabase.applications.queue.updateItem(item.id, { state: 'ready_for_review', authorization, blocker: {} });
+  const application = coachDatabase.applications.get(applicationId);
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint: { ...application.automationCheckpoint, reviewAuthorization: { token: authorization.token, scope: authorization.scope, fingerprint: authorization.fingerprint, approvedAt: authorization.approvedAt } } });
+  return authorization;
+}
+async function validateSubmissionAuthorization(applicationId, authorization, requiredScope) {
+  if (!authorization?.token || !authorization.approvedAt) throw new Error('Review this application again before submission.');
+  if (requiredScope && authorization.scope !== requiredScope) throw new Error(`A ${requiredScope} review authorization is required.`);
+  if (Date.now() - Date.parse(authorization.approvedAt) > 24 * 60 * 60 * 1000) throw new Error('Submission review expired. Review the current application again.');
+  await applicationBrowser.inspect();
+  const current = submissionReviewSnapshot(applicationId);
+  if (current.fingerprint !== authorization.fingerprint) throw new Error('The application, documents, answers, destination, or page changed after review. Review it again before submitting.');
+  if (!applicationBrowser.publicState()?.snapshot?.fields?.some((field) => field.category === 'final_submit')) throw new Error('The reviewed final submit control is no longer visible.');
+  return current;
+}
+async function performAuthorizedSubmission(applicationId, authorization, requiredScope = 'single') {
+  await validateSubmissionAuthorization(applicationId, authorization, requiredScope);
+  const application = coachDatabase.applications.get(applicationId);
+  if (application.automationCheckpoint?.reviewedSubmission?.idempotencyKey) throw new Error('A submission was already attempted for this reviewed page. Verify browser and email evidence; do not submit again.');
+  const pageFingerprint = applicationBrowser.publicState().snapshot.pageFingerprint;
+  const idempotencyKey = makeIdempotencyKey({ applicationId, checkpointVersion: Number(application.automationAttempt) || 0, actionType: 'reviewed_final_submit', targetFingerprint: pageFingerprint });
+  const checkpoint = { ...application.automationCheckpoint, reviewedSubmission: { idempotencyKey, authorizationToken: authorization.token, requestedAt: new Date().toISOString(), pageFingerprint } };
+  // Persist intent before the irreversible click. Any exception after this
+  // point is an uncertainty blocker and can never become an automatic retry.
+  coachDatabase.applications.updateAutomationState({ applicationId, state: 'submitting', checkpoint });
+  applicationQueueService.updateApplication(applicationId, { state: 'submitting', authorization, checkpoint, blocker: {} });
+  try {
+    const submission = await applicationBrowser.submit();
+    if (submission.status !== 'submitted') {
+      coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint: { ...checkpoint, reviewedSubmission: null, reasonCode: submission.reason || 'final_submit_failed' } });
+      applicationQueueService.updateApplication(applicationId, { state: 'ready_for_review', authorization: {}, checkpoint: { ...checkpoint, reviewedSubmission: null }, blocker: { code: submission.reason || 'final_submit_failed', message: 'The final control changed. Review the current page again.', requiresUser: true } });
+      return submission;
+    }
+    const confirmation = await applicationBrowser.detectConfirmationPage();
+    const submittedCheckpoint = { ...checkpoint, reviewedSubmission: { ...checkpoint.reviewedSubmission, submittedAt: new Date().toISOString(), resultPageFingerprint: submission.pageFingerprint }, confirmation: confirmation.state === 'confirmed' ? confirmation : null };
+    coachDatabase.applications.updateAutomationState({ applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint: submittedCheckpoint });
+    if (confirmation.state !== 'confirmed') {
+      applicationQueueService.updateApplication(applicationId, { state: 'verifying_browser', authorization: {}, checkpoint: submittedCheckpoint, blocker: { code: 'browser_confirmation_pending', message: 'Submission was attempted, but the confirmation page is not conclusive. Do not resubmit.', requiresUser: true } });
+      return { ...submission, confirmation };
+    }
+    const evidence = coachDatabase.applications.beginSubmissionVerification({ applicationId, browserState: 'confirmed', browserConfirmationUrl: confirmation.confirmationUrlRedacted || applicationBrowser.publicState()?.currentUrl || '', browserConfirmationNumber: confirmation.confirmationNumber || '', requestedAt: new Date().toISOString() });
+    applicationQueueService.updateApplication(applicationId, { state: 'verifying_email', authorization: {}, browserEvidenceId: evidence.id, checkpoint: { ...submittedCheckpoint, submissionEvidenceId: evidence.id }, blocker: {} });
+    scheduleSubmissionEmailVerification(applicationId);
+    return { ...submission, confirmation, evidence };
+  } catch (error) {
+    coachDatabase.applications.updateAutomationState({ applicationId, state: 'needs_user_answer', checkpoint: { ...checkpoint, reasonCode: 'submission_outcome_uncertain', lastError: String(error?.message || error).slice(0, 500) } });
+    applicationQueueService.updateApplication(applicationId, { state: 'blocked', authorization: {}, checkpoint, blocker: { code: 'submission_outcome_uncertain', message: 'North Star could not prove whether submission occurred. Check the employer page and email; do not resubmit automatically.', requiresUser: true }, lastError: error?.message || String(error) });
+    throw error;
+  }
+}
 function pauseAutonomousApplicationQueue() { if (autonomousAutopilotTimer) clearTimeout(autonomousAutopilotTimer); autonomousAutopilotTimer = null; autonomousApplicationQueueState.autopilot = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
 async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}) {
   const state = applicationBrowser.publicState();
@@ -1151,7 +1251,7 @@ async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}
 async function startApprovedApplicationBatch() {
   if (!coachDatabase) throw new Error('Application database is not ready.');
   if (autonomousApplicationQueueState.running || autonomousApplicationQueueState.activeApplicationId) return { status: autonomousApplicationQueueStatus(), results: [], blocked: 'Finish the active application before starting the approved batch.' };
-  const approved = (coachDatabase.applications.listAutomationQueue?.() || []).filter((entry) => entry.batchApprovedAt && entry.eligible && entry.automationState === 'ready_to_submit');
+  const approved = applicationQueueService.status().queue.filter((entry) => entry.state === 'ready_for_review' && entry.authorization?.scope === 'batch' && entry.authorization?.token);
   autonomousApplicationQueueState.running = true; autonomousApplicationQueueState.paused = false; autonomousApplicationQueueState.message = approved.length ? `Applying ${approved.length} reviewed application(s)…` : 'No reviewed applications are ready to apply.';
   const results = [];
   for (const entry of approved) {
@@ -1160,27 +1260,16 @@ async function startApprovedApplicationBatch() {
     try {
       const resumeUrl = application?.automationCheckpoint?.redactedUrl || '';
       await applicationBrowser.open({ applicationId: entry.applicationId, resumeUrl });
-      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'submitting', checkpoint: { ...application.automationCheckpoint, batchSubmissionStartedAt: new Date().toISOString() } });
-      const submission = await applicationBrowser.submit();
-      if (submission.status !== 'submitted') {
-        coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'blocked', checkpoint: { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, batchSubmissionBlocked: submission.reason || 'unknown' } });
-        results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: 'blocked', reason: submission.reason || 'final_submit_failed' });
-        continue;
-      }
-      const confirmation = await applicationBrowser.detectConfirmationPage();
-      const checkpoint = { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, confirmation: confirmation.state === 'confirmed' ? confirmation : null, batchSubmittedAt: new Date().toISOString() };
-      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint });
-      applicationBrowser.close();
-      const verification = await confirmApplicationSubmission({ applicationId: entry.applicationId, userAcknowledged: true, confirmation });
-      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: verification.status === 'submitted' ? 'submitted' : 'awaiting_email', reason: verification.status === 'submitted' ? '' : 'employer_email_pending' });
+      const submission = await performAuthorizedSubmission(entry.applicationId, entry.authorization, 'batch');
+      const status = submission.status === 'submitted' && submission.confirmation?.state === 'confirmed' ? 'awaiting_email' : 'blocked';
+      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status, reason: status === 'awaiting_email' ? 'employer_email_pending' : (submission.reason || 'browser_confirmation_pending') });
     } catch (error) {
-      coachDatabase.applications.updateAutomationState({ applicationId: entry.applicationId, state: 'failed', checkpoint: { ...coachDatabase.applications.get(entry.applicationId).automationCheckpoint, batchError: String(error?.message || 'Batch submission failed.').slice(0, 500) } });
-      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: 'failed', reason: String(error?.message || 'Batch submission failed.').slice(0, 300) });
+      results.push({ applicationId: entry.applicationId, company: entry.company, roleTitle: entry.roleTitle, status: 'blocked', reason: String(error?.message || 'Batch submission stopped.').slice(0, 300) });
       applicationBrowser.close();
     } finally { autonomousApplicationQueueState.activeApplicationId = null; }
   }
-  autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.message = `Reviewed batch finished: ${results.filter((result) => result.status === 'submitted').length} submitted, ${results.filter((result) => result.status !== 'submitted').length} needing attention.`;
-  return { status: autonomousApplicationQueueStatus(), results };
+  autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.message = `Reviewed batch finished: ${results.filter((result) => result.status === 'awaiting_email').length} submitted and awaiting email, ${results.filter((result) => result.status !== 'awaiting_email').length} needing attention.`;
+  return { status: applicationQueueService.status(), results };
 }
 class ApplicationPreparationPausedError extends Error { constructor() { super('Preparation paused safely before the next document.'); this.code = 'PREPARATION_PAUSED'; } }
 function assertPreparationCanContinue() {
@@ -2798,12 +2887,14 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:workflow-queue:start', (event, input) => { assertTrustedRenderer(event); return startDurableApplicationQueue(input); });
   ipcMain.handle('jobs:applications:workflow-queue:pause', (event) => { assertTrustedRenderer(event); pauseAutonomousApplicationQueue(); return applicationQueueService.pause(); });
   ipcMain.handle('jobs:applications:workflow-queue:retry', (event, input) => { assertTrustedRenderer(event); return applicationQueueService.retry(validateApplicationId(input?.applicationId)); });
+  ipcMain.handle('jobs:applications:workflow-queue:authorize', async (event, input) => { assertTrustedRenderer(event); return authorizeApplicationSubmission(validateApplicationId(input?.applicationId), input?.scope); });
+  ipcMain.handle('jobs:applications:workflow-queue:resolve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return startDurableApplicationQueue({ applicationId, mode: 'entire_pipeline' }); });
   // Compatibility channels now delegate to the same durable owner so an old
   // renderer cannot accidentally start a second in-memory queue.
   ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return applicationQueueService.status(); });
   ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); return startDurableApplicationQueue(input); });
   ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); pauseAutonomousApplicationQueue(); return applicationQueueService.pause(); });
-  ipcMain.handle('jobs:applications:automation-batch:approve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); if (!application || !['detecting_form', 'navigating_form', 'ready_to_submit'].includes(application.automationState)) throw new Error('Only an application at the final reviewed checkpoint can be added to the batch.'); const checkpoint = { ...application.automationCheckpoint, batchApprovedAt: new Date().toISOString() }; return coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint }); });
+  ipcMain.handle('jobs:applications:automation-batch:approve', async (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return authorizeApplicationSubmission(applicationId, 'batch'); });
   ipcMain.handle('jobs:applications:automation-batch:start', (event) => { assertTrustedRenderer(event); return startApprovedApplicationBatch(); });
   ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const applicationId = input.applicationId; const current = coachDatabase.applications.get(applicationId); const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current?.automationCheckpoint || {}), manualRetryAt: new Date().toISOString() } }); if (autonomousApplicationQueueState.activeApplicationId === applicationId) { applicationBrowser.close(); autonomousApplicationQueueState.activeApplicationId = null; } autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
   ipcMain.handle('jobs:applications:automation-queue:retry', async (event, input) => { assertTrustedRenderer(event); return applicationQueueService.retry(validateApplicationId(input?.applicationId)); });
@@ -2812,7 +2903,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:automation-state:update', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (typeof input?.state !== 'string' || input.state.length > 80) throw new Error('Invalid autonomous application state.'); return coachDatabase.applications.updateAutomationState(input); });
   ipcMain.handle('jobs:applications:unknown-questions:list', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.listUnknownQuestions(validateApplicationId(input?.applicationId), input?.status === 'all' ? 'all' : 'open'); });
   ipcMain.handle('jobs:applications:unknown-questions:save', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); return coachDatabase.applications.saveUnknownQuestion(input); });
-  ipcMain.handle('jobs:applications:unknown-questions:resolve', (event, input) => { assertTrustedRenderer(event); if (!input || typeof input.id !== 'string' || input.id.length > 160) throw new Error('Invalid unknown question.'); return coachDatabase.applications.resolveUnknownQuestion(input); });
+  ipcMain.handle('jobs:applications:unknown-questions:resolve', (event, input) => { assertTrustedRenderer(event); if (!input || typeof input.id !== 'string' || input.id.length > 160) throw new Error('Invalid unknown question.'); const answer = coachDatabase.applications.resolveUnknownQuestion(input); if (answer.resolvedApplicationId) { try { applicationQueueService.retry(answer.resolvedApplicationId); } catch {} } return answer; });
   ipcMain.handle('jobs:applications:external-account:get', (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); const account = coachDatabase.applications.getExternalAccount(applicationId); return account ? { ...account, credential: externalAccountCredentialStatus(account.credentialRef) } : null; });
   ipcMain.handle('jobs:applications:external-account:save', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const host = normalizeHost(input?.host); const username = String(input?.username || '').trim(); const credentialRef = credentialReference(host, username); const existing = coachDatabase.applications.findExternalAccountByIdentity({ host, username }); const saved = saveExternalAccountCredentials({ credentialRef, host, username, password: input?.password }); const account = coachDatabase.applications.saveExternalAccount({ applicationId, host, username, credentialRef, status: existing?.status === 'active' && saved.configured ? 'active' : (saved.configured ? 'saved' : 'activation_required') }); const reused = Boolean(existing && existing.credentialRef === credentialRef && existing.applicationId !== applicationId && saved.configured); const application = coachDatabase.applications.get(applicationId); coachDatabase.applications.updateAutomationState({ applicationId, state: reused ? 'reusing_account' : 'creating_account', checkpoint: { ...application.automationCheckpoint, account: { host, credentialRef, reused, configured: saved.configured, savedAt: new Date().toISOString() } } }); return { ...account, credential: saved, reused }; });
   ipcMain.handle('jobs:applications:activation:check', async (event, applicationId) => { assertTrustedRenderer(event); return checkApplicationActivation(validateApplicationId(applicationId)); });
@@ -3116,28 +3207,23 @@ function registerDatabaseIpc() {
     if (input?.userApproved !== true) throw new Error('Explicit user approval is required before submitting an application.');
     const state = applicationBrowser.publicState();
     if (!state?.applicationId || state.applicationId !== applicationId) throw new Error('Open this application in the isolated browser before submitting.');
-    coachDatabase.applications.updateAutomationState({ applicationId, state: 'submitting', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submitRequestedAt: new Date().toISOString() } });
-    try {
-      const result = await applicationBrowser.submit();
-      if (result.status !== 'submitted') {
-        coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submitBlocked: result.reason || 'unknown', pageFingerprint: result.pageFingerprint || '' } });
-        return { ...result, browser: applicationBrowser.publicState() };
-      }
-      const confirmation = await applicationBrowser.detectConfirmationPage();
-      const checkpoint = { ...coachDatabase.applications.get(applicationId).automationCheckpoint, submission: { submittedAt: new Date().toISOString(), previousPageFingerprint: result.previousPageFingerprint, pageFingerprint: result.pageFingerprint }, confirmation: confirmation.state === 'confirmed' ? confirmation : null };
-      coachDatabase.applications.updateAutomationState({ applicationId, state: confirmation.state === 'confirmed' ? 'verifying_email_confirmation' : 'verifying_confirmation', checkpoint });
-      return { ...result, confirmation, browser: applicationBrowser.publicState() };
-    } catch (error) {
-      coachDatabase.applications.updateAutomationState({ applicationId, state: 'failed', checkpoint: { ...coachDatabase.applications.get(applicationId).automationCheckpoint, stage: 'submitting', error: String(error?.message || 'Application submission failed.').slice(0, 500) } });
-      throw error;
-    }
+    const authorization = await authorizeApplicationSubmission(applicationId, 'single');
+    const result = await performAuthorizedSubmission(applicationId, authorization, 'single');
+    return { ...result, browser: applicationBrowser.publicState() };
   });
   ipcMain.handle('jobs:browser:detect-confirmation', async (event) => {
     assertTrustedRenderer(event);
     const state = applicationBrowser.publicState();
     if (!state?.applicationId) throw new Error('Open an application page before checking confirmation evidence.');
     const result = await applicationBrowser.detectConfirmationPage();
-    if (result.state === 'confirmed') coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'ready_to_submit', checkpoint: { confirmation: { signals: result.signals, confirmationNumber: result.confirmationNumber, confirmationUrlRedacted: result.confirmationUrlRedacted, observedAt: result.observedAt } } });
+    if (result.state === 'confirmed') {
+      const application = coachDatabase.applications.get(state.applicationId);
+      if (application.automationCheckpoint?.reviewedSubmission?.idempotencyKey) {
+        const evidence = coachDatabase.applications.beginSubmissionVerification({ applicationId: state.applicationId, browserState: 'confirmed', browserConfirmationUrl: result.confirmationUrlRedacted || state.currentUrl || '', browserConfirmationNumber: result.confirmationNumber || '', requestedAt: application.automationCheckpoint.reviewedSubmission.requestedAt });
+        applicationQueueService.updateApplication(state.applicationId, { state: 'verifying_email', browserEvidenceId: evidence.id, checkpoint: { ...application.automationCheckpoint, confirmation: result, submissionEvidenceId: evidence.id }, blocker: {} });
+        scheduleSubmissionEmailVerification(state.applicationId);
+      } else coachDatabase.applications.updateAutomationState({ applicationId: state.applicationId, state: 'ready_to_submit', checkpoint: { ...application.automationCheckpoint, confirmation: { signals: result.signals, confirmationNumber: result.confirmationNumber, confirmationUrlRedacted: result.confirmationUrlRedacted, observedAt: result.observedAt } } });
+    }
     return { ...result, browser: applicationBrowser.publicState() };
   });
   ipcMain.handle('jobs:browser:approve-host', async (event, host) => { assertTrustedRenderer(event); if (typeof host !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(host)) throw new Error('Invalid navigation host.'); return applicationBrowser.approveHost(host); });
@@ -3609,6 +3695,8 @@ app.whenReady().then(() => {
   coachDatabase.applications.recoverAutomation?.();
   applicationQueueService = createApplicationQueueService({ repository: coachDatabase.applications.queue, worker: processDurableApplicationQueueItem });
   applicationQueueService.recover();
+  reconcilePendingSubmissionEvidence();
+  for (const evidence of coachDatabase.applications.listPendingSubmissionEvidence()) if (evidence.browserState === 'confirmed') scheduleSubmissionEmailVerification(evidence.applicationId);
   protocol.handle('video-factory', async (request) => {
     try {
       const token = new URL(request.url).pathname.split('/').filter(Boolean).pop();
@@ -3650,6 +3738,6 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { isQuitting = true; if (emailMonitorTimer) clearInterval(emailMonitorTimer); if (applicationPreparationTimer) clearInterval(applicationPreparationTimer); stopGoogleVoiceMonitor(); try { googleVoiceTray?.destroy(); } catch {} try { coachDatabase?.close(); } catch { /* best effort */ } });
+app.on('will-quit', () => { isQuitting = true; if (emailMonitorTimer) clearInterval(emailMonitorTimer); if (applicationPreparationTimer) clearInterval(applicationPreparationTimer); for (const timer of submissionVerificationTimers.values()) clearTimeout(timer); submissionVerificationTimers.clear(); stopGoogleVoiceMonitor(); try { googleVoiceTray?.destroy(); } catch {} try { coachDatabase?.close(); } catch { /* best effort */ } });
 
 module.exports = { isAllowedAcademyUrl };

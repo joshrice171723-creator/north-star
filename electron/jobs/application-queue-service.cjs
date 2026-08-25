@@ -71,7 +71,7 @@ function createApplicationQueueService({ repository, worker = null, now = () => 
     return decorateStatus(repository.getRun(run.id));
   }
   function retry(applicationId) {
-    const run = repository.getActiveRun();
+    const run = (currentRunId && repository.getRun(currentRunId)) || repository.getActiveRun();
     if (!run) throw new Error('No application queue run is available.');
     const item = repository.getItemForApplication(run.id, applicationId);
     if (!item || !['blocked', 'retry_wait', 'waiting_for_answer', 'waiting_for_login', 'waiting_for_activation'].includes(item.state)) throw new Error('Only a blocked or waiting application can be retried.');
@@ -80,8 +80,14 @@ function createApplicationQueueService({ repository, worker = null, now = () => 
   }
   function recover() { const result = repository.recoverInterrupted(); currentRunId = result.run?.id || currentRunId; return result; }
   function setWorker(nextWorker) { queueWorker = nextWorker; }
+  function updateApplication(applicationId, input) {
+    const item = repository.findLatestItemForApplication(applicationId);
+    if (!item) return null;
+    repository.updateItem(item.id, input);
+    return decorateStatus(repository.getRun(item.runId));
+  }
 
-  return { start, pause, retry, recover, status: () => decorateStatus(), setWorker, waitForIdle: async () => processing, updateItem: (itemId, input) => repository.updateItem(itemId, input) };
+  return { start, pause, retry, recover, status: () => decorateStatus(), setWorker, waitForIdle: async () => processing, updateItem: (itemId, input) => repository.updateItem(itemId, input), updateApplication };
 }
 
 module.exports = { CANONICAL_APPLICATION_STATES, HUMAN_LABELS, assertCanonicalApplicationState, createApplicationQueueService };

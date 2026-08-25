@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld('desktopShell', {
   ,startApplicationWorkflowQueue: (input) => ipcRenderer.invoke('jobs:applications:workflow-queue:start', input)
   ,pauseApplicationWorkflowQueue: () => ipcRenderer.invoke('jobs:applications:workflow-queue:pause')
   ,retryApplicationWorkflowQueueItem: (input) => ipcRenderer.invoke('jobs:applications:workflow-queue:retry', input)
+  ,authorizeApplicationWorkflowSubmission: (input) => ipcRenderer.invoke('jobs:applications:workflow-queue:authorize', input)
+  ,resolveApplicationWorkflowBlocker: (input) => ipcRenderer.invoke('jobs:applications:workflow-queue:resolve', input)
   ,startJobApplicationAutomationQueue: (input) => ipcRenderer.invoke('jobs:applications:automation-queue:start', input)
   ,pauseJobApplicationAutomationQueue: () => ipcRenderer.invoke('jobs:applications:automation-queue:pause')
   ,approveJobApplicationForBatch: (input) => ipcRenderer.invoke('jobs:applications:automation-batch:approve', input)

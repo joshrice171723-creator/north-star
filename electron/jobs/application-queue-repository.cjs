@@ -74,6 +74,9 @@ function createApplicationQueueRepository({ sqlite, now = () => new Date().toISO
   function getItemForApplication(runId, applicationId) {
     return itemToDto(sqlite.prepare(`${itemSelect} WHERE i.run_id = ? AND i.application_id = ?`).get(bounded(runId, 160), bounded(applicationId, 160)));
   }
+  function findLatestItemForApplication(applicationId) {
+    return itemToDto(sqlite.prepare(`${itemSelect} WHERE i.application_id = ? ORDER BY i.updated_at DESC LIMIT 1`).get(bounded(applicationId, 160)));
+  }
   function ensureRun({ applicationIds = [], mode = 'entire_pipeline' } = {}) {
     const ids = [...new Set(applicationIds.map((value) => bounded(value, 160)).filter(Boolean))];
     if (!ids.length) throw new Error('At least one application is required to start the queue.');
@@ -162,7 +165,7 @@ function createApplicationQueueRepository({ sqlite, now = () => new Date().toISO
     })();
   }
 
-  return { getRun, getActiveRun, getLatestRun, listItems, getItem, getItemForApplication, ensureRun, updateRun, updateItem, claimNext, recoverInterrupted };
+  return { getRun, getActiveRun, getLatestRun, listItems, getItem, getItemForApplication, findLatestItemForApplication, ensureRun, updateRun, updateItem, claimNext, recoverInterrupted };
 }
 
 module.exports = { createApplicationQueueRepository };
