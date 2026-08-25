@@ -752,6 +752,10 @@ const documentGenerationInFlight = new Set();
 const applicationPreparationState = { activeJobId: null, activeStep: '', blockers: {}, retryAt: 0, running: false, paused: true };
 let applicationPreparationTimer = null;
 const autonomousApplicationQueueState = { running: false, paused: true, autopilot: false, activeApplicationId: null, activeStep: '', message: '' };
+// The native employer view is only allowed to open after the matching React
+// application assistant has claimed ownership. This prevents queue work from
+// creating a browser surface outside the assistant workflow.
+let applicationAssistantOwnerApplicationId = null;
 const MAX_UNAVAILABLE_AUTO_ADVANCES = 3;
 let autonomousSafeFormPass = null;
 let autonomousAutopilotTimer = null;
@@ -844,6 +848,9 @@ async function continueAfterUnavailableApplication(message, depth = 0) {
 }
 async function startAutonomousApplicationQueue(targetApplicationId = null, unavailableAdvanceDepth = 0, options = {}) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
+  if (targetApplicationId && applicationAssistantOwnerApplicationId !== targetApplicationId) {
+    throw new Error('Open the AI application assistant for this application before starting the workflow.');
+  }
   if (options.autopilot === true) autonomousApplicationQueueState.autopilot = true;
   // The browser checkpoint is single-tenant. Guard both the async start window
   // and a claimed checkpoint so two renderer clicks cannot switch applications
@@ -2764,6 +2771,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:browser:open', async (event, input) => {
     assertTrustedRenderer(event);
     const applicationId = validateApplicationId(input?.applicationId);
+    if (applicationAssistantOwnerApplicationId !== applicationId) throw new Error('The AI application assistant must own this application before the employer page can open.');
     const current = applicationBrowser.publicState();
     // Checkpoint next may already own the isolated view. Re-opening the same
     // application here would reset the page back to Dice's listing after the
