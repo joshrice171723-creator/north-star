@@ -11,7 +11,7 @@ for (const adapter of providerAdapters) {
     const fixture = JSON.parse(fs.readFileSync(path.join(fixtureDir, `${adapter.key}.json`), 'utf8'));
     const selected = selectAdapter({ url: fixture.url, enableProviderAdapters: true });
     assert.equal(selected.key, adapter.key);
-    assert.equal(adapter.productionEnabled, false, 'live adapter execution remains explicitly gated');
+    assert.equal(adapter.productionEnabled, ['dice', 'workday'].includes(adapter.key), 'only validated Dice and Workday adapters are live-enabled');
     assert.match(adapter.normalizeApplicationUrl(fixture.url), /^https:\/\//);
     assert.doesNotMatch(adapter.normalizeApplicationUrl(fixture.url), /utm_|tracking|source=/i);
 

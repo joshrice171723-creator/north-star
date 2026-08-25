@@ -58,7 +58,7 @@ test('Stage 2 browser adapter supports one guarded final-control submission', ()
 
 test('Stage 2 queue handoff opens one claimed application and checkpoints its first page', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
-  assert.match(source, /async function startAutonomousApplicationQueue\(targetApplicationId = null, unavailableAdvanceDepth = 0\)/);
+  assert.match(source, /async function startAutonomousApplicationQueue\(targetApplicationId = null, unavailableAdvanceDepth = 0, options = \{\}\)/);
   assert.match(source, /await applicationBrowser\.open\(\{ applicationId: claimed\.id, resumeUrl \}\)/);
   assert.match(source, /const resumeUrl = claimed\.automationCheckpoint\?\.redactedUrl/);
   assert.match(source, /externalApplicationUrl \|\| application\?\.applicationUrl/);
@@ -70,7 +70,8 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /state: needsUser \? 'needs_user_answer' : 'failed', checkpoint: \{ stage: 'opening', error: message/);
   assert.match(source, /current\?\.applicationId === applicationId/);
   assert.match(source, /automation-queue:start', \(event, input\)/);
-  assert.match(source, /startAutonomousApplicationQueue\(applicationId\)/);
+  assert.match(source, /startDurableApplicationQueue\(input\)/);
+  assert.match(source, /startAutonomousApplicationQueue\(application\.id, 0, \{ durableOwner: true, autopilot: false \}\)/);
   assert.match(source, /MAX_UNAVAILABLE_AUTO_ADVANCES = 3/);
   assert.match(source, /continueAfterUnavailableApplication\('Job unavailable: archived from the active application run\.'/);
 });

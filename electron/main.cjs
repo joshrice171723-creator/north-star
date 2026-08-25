@@ -33,6 +33,8 @@ const { createStepVerifier } = require('./jobs/automation/verifier.cjs');
 const { createPlaybookRegistry } = require('./jobs/automation/playbook-registry.cjs');
 const { createRepairLoop } = require('./jobs/automation/repair-loop.cjs');
 const { makeIdempotencyKey } = require('./jobs/automation/idempotency.cjs');
+const { createApplicationQueueService } = require('./jobs/application-queue-service.cjs');
+const { selectAdapter } = require('./jobs/adapters/index.cjs');
 const { MAX_RESUME_CHARS, parseFillPlanResponse, repairFillPlanMessages, aiCandidateFields, buildFillPlanMessages, normalizeFillPlanDecisions } = require('./jobs/application-fill-planner.cjs');
 const { buildRecoveryMessages, parseRecoveryResponse } = require('./jobs/application-recovery-planner.cjs');
 const { installApiAuditFetch, setAuditPersistence, setAuditRun, clearAuditRun, setAuditPurpose, getUninstrumentedFetch } = require('./api-audit.cjs');
@@ -73,6 +75,7 @@ let academyLayout = null;
 let coachDatabase;
 let applicationBrowser;
 let applicationWorkflowOrchestrator;
+let applicationQueueService;
 let emailMonitorTimer;
 let googleVoiceWindow;
 let googleVoiceMonitorTimer;
@@ -846,7 +849,7 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
   if (!targetApplicationId) {
     throw new Error('Select the application in the AI application assistant before starting the workflow.');
   }
-  if (applicationAssistantOwnerApplicationId !== targetApplicationId) {
+  if (options.durableOwner !== true && applicationAssistantOwnerApplicationId !== targetApplicationId) {
     throw new Error('Open the AI application assistant for this application before starting the workflow.');
   }
   if (options.autopilot === true) autonomousApplicationQueueState.autopilot = true;
@@ -878,7 +881,10 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
       let handoff;
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const checkpoint = coachDatabase.applications.get(claimed.id)?.automationCheckpoint || {};
-        const workflow = await applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: applicationBrowser.publicState(), checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey: 'dice-handoff' }, context: { site: applicationBrowser.publicState()?.currentHost || 'dice', atsKey: 'dice', mode: 'deterministic' } });
+        const liveBrowser = applicationBrowser.publicState();
+        const adapter = selectAdapter({ url: liveBrowser?.currentUrl || claimed.url, enableProviderAdapters: true });
+        const stepKey = `${adapter.key}-${adapter.detectFormStep?.({ snapshot: liveBrowser?.snapshot || {} }) || 'handoff'}`;
+        const workflow = await applicationWorkflowOrchestrator.runApplicationCheckpoint({ applicationId: claimed.id, browserState: liveBrowser, checkpoint: { ...checkpoint, version: claimed.automationAttempt || 0, stepKey }, context: { site: liveBrowser?.currentHost || claimed.externalApplicationHost || '', atsKey: adapter.key, adapterKey: adapter.key, mode: adapter.productionEnabled ? 'provider' : 'deterministic' } });
         const result = workflow.result;
         handoff = result?.outcome === 'listing_unavailable'
           ? { status: 'unavailable', reason: result.reasonCode, signals: result.evidenceIds, pageFingerprint: result.pageFingerprint }
@@ -922,6 +928,17 @@ async function startAutonomousApplicationQueue(targetApplicationId = null, unava
           // retry bounded and exact-label so delayed rendering does not become a
           // false manual checkpoint or click an unrelated control.
           await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        const accountBrowser = applicationBrowser.publicState();
+        const accountAdapter = selectAdapter({ url: accountBrowser?.currentUrl || claimed.url, enableProviderAdapters: true });
+        const accountFlow = accountAdapter.accountFlow?.({ snapshot: accountBrowser?.snapshot || {} }) || { requiresAccount: false };
+        if (googleLogin?.status !== 'advanced' && accountFlow.requiresAccount) {
+          const accountNavigation = await applicationBrowser.advance({ accountOnly: true });
+          if (accountNavigation.status === 'advanced') {
+            const application = coachDatabase.applications.get(claimed.id);
+            coachDatabase.applications.updateAutomationState({ applicationId: claimed.id, state: 'creating_account', checkpoint: { ...application.automationCheckpoint, account: { host: applicationBrowser.publicState()?.currentHost || '', provider: accountAdapter.key, registrationOpenedAt: new Date().toISOString() } } });
+            autonomousApplicationQueueState.message = 'Opened the employer registration flow. Approved profile fields will be filled; password, CAPTCHA, and consent remain yours.';
+          }
         }
         const unavailableFollowUp = googleLogin?.status === 'unavailable' || followUp?.status === 'unavailable';
         if (unavailableFollowUp) {
@@ -1084,6 +1101,41 @@ async function retryAutonomousApplication(applicationId) {
   }
   autonomousApplicationQueueState.message = 'Retrying the selected failed application.';
   return { application: released, status: await startAutonomousApplicationQueue(applicationId) };
+}
+
+const LEGACY_TO_CANONICAL_STATE = Object.freeze({
+  queued: 'retry_wait', opening: 'opening', detecting_form: 'detecting_flow', creating_account: 'creating_account', reusing_account: 'waiting_for_login', awaiting_activation: 'waiting_for_activation', filling_profile: 'filling_profile', answering_questions: 'answering_questions', uploading_documents: 'uploading_documents', navigating_form: 'navigating', ready_to_submit: 'ready_for_review', submitting: 'submitting', verifying_confirmation: 'verifying_browser', verifying_email_confirmation: 'verifying_email', submitted: 'applied', needs_user_answer: 'waiting_for_answer', blocked: 'blocked', failed: 'blocked',
+});
+function workflowApplicationIds(input = {}) {
+  const requested = [...new Set([...(Array.isArray(input.applicationIds) ? input.applicationIds : []), input.applicationId].filter(Boolean).map(validateApplicationId))];
+  if (requested.length) return requested;
+  return coachDatabase.jobs.list().filter((job) => ['target', 'researching', 'ready'].includes(job.stage)).map((job) => coachDatabase.applications.createOrResume({ jobId: job.id }).id);
+}
+async function processDurableApplicationQueueItem(item, control) {
+  let application = coachDatabase.applications.get(item.applicationId);
+  let job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId);
+  if (!application || !job) return { state: 'terminal', checkpoint: { reasonCode: 'application_or_job_missing' } };
+  if (['target', 'researching'].includes(job.stage)) {
+    control.update({ state: 'researching', checkpoint: { phase: 'researching', jobId: job.id } });
+    control.update({ state: 'preparing_documents', checkpoint: { phase: 'preparing_documents', jobId: job.id } });
+    await prepareJobApplication(job.id);
+    control.update({ state: 'validating_documents', checkpoint: { phase: 'validating_documents', jobId: job.id } });
+    application = coachDatabase.applications.get(item.applicationId);
+    job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId);
+  }
+  if (job.stage !== 'ready') return { state: 'blocked', blocker: { code: 'preparation_incomplete', message: 'Application documents did not reach Ready to apply.', requiresUser: false }, checkpoint: application.automationCheckpoint };
+  control.update({ state: 'opening', checkpoint: { ...application.automationCheckpoint, durableRunId: item.runId } });
+  await startAutonomousApplicationQueue(application.id, 0, { durableOwner: true, autopilot: false });
+  application = coachDatabase.applications.get(application.id);
+  let state = LEGACY_TO_CANONICAL_STATE[application.automationState] || 'blocked';
+  const reasonCode = application.automationCheckpoint?.reasonCode || '';
+  if (application.automationState === 'needs_user_answer' && /login|captcha/i.test(reasonCode)) state = 'waiting_for_login';
+  else if (application.automationState === 'needs_user_answer' && /activation/i.test(reasonCode)) state = 'waiting_for_activation';
+  else if (application.automationState === 'blocked' && reasonCode === 'job_listing_unavailable') state = 'terminal';
+  return { state, checkpoint: application.automationCheckpoint, blocker: ['blocked', 'waiting_for_login', 'waiting_for_activation', 'waiting_for_answer'].includes(state) ? { code: reasonCode || application.automationState, message: application.automationCheckpoint?.lastError || autonomousApplicationQueueState.message || 'This application needs attention.', requiresUser: state !== 'blocked' || !application.automationCheckpoint?.retryable } : {} };
+}
+function startDurableApplicationQueue(input = {}) {
+  return applicationQueueService.start({ applicationIds: workflowApplicationIds(input), mode: input.mode || 'entire_pipeline' });
 }
 function pauseAutonomousApplicationQueue() { if (autonomousAutopilotTimer) clearTimeout(autonomousAutopilotTimer); autonomousAutopilotTimer = null; autonomousApplicationQueueState.autopilot = false; autonomousApplicationQueueState.paused = true; autonomousApplicationQueueState.running = false; autonomousApplicationQueueState.message = 'Queue paused.'; return autonomousApplicationQueueStatus(); }
 async function recoverApplicationStep({ applicationId, blockedReason = '' } = {}) {
@@ -2742,13 +2794,19 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:events:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listEvents(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
-  ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return autonomousApplicationQueueStatus(); });
-  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return startAutonomousApplicationQueue(applicationId, 0, { autopilot: input?.autopilot === true }); });
-  ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); return pauseAutonomousApplicationQueue(); });
+  ipcMain.handle('jobs:applications:workflow-queue:status', (event) => { assertTrustedRenderer(event); return applicationQueueService.status(); });
+  ipcMain.handle('jobs:applications:workflow-queue:start', (event, input) => { assertTrustedRenderer(event); return startDurableApplicationQueue(input); });
+  ipcMain.handle('jobs:applications:workflow-queue:pause', (event) => { assertTrustedRenderer(event); pauseAutonomousApplicationQueue(); return applicationQueueService.pause(); });
+  ipcMain.handle('jobs:applications:workflow-queue:retry', (event, input) => { assertTrustedRenderer(event); return applicationQueueService.retry(validateApplicationId(input?.applicationId)); });
+  // Compatibility channels now delegate to the same durable owner so an old
+  // renderer cannot accidentally start a second in-memory queue.
+  ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return applicationQueueService.status(); });
+  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); return startDurableApplicationQueue(input); });
+  ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); pauseAutonomousApplicationQueue(); return applicationQueueService.pause(); });
   ipcMain.handle('jobs:applications:automation-batch:approve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); if (!application || !['detecting_form', 'navigating_form', 'ready_to_submit'].includes(application.automationState)) throw new Error('Only an application at the final reviewed checkpoint can be added to the batch.'); const checkpoint = { ...application.automationCheckpoint, batchApprovedAt: new Date().toISOString() }; return coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint }); });
   ipcMain.handle('jobs:applications:automation-batch:start', (event) => { assertTrustedRenderer(event); return startApprovedApplicationBatch(); });
   ipcMain.handle('jobs:applications:automation-queue:release', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); const applicationId = input.applicationId; const current = coachDatabase.applications.get(applicationId); const released = coachDatabase.applications.releaseAutomation({ applicationId, state: 'queued', checkpoint: { ...(current?.automationCheckpoint || {}), manualRetryAt: new Date().toISOString() } }); if (autonomousApplicationQueueState.activeApplicationId === applicationId) { applicationBrowser.close(); autonomousApplicationQueueState.activeApplicationId = null; } autonomousApplicationQueueState.message = 'Application returned to the Stage 1 queue.'; return { application: released, status: autonomousApplicationQueueStatus() }; });
-  ipcMain.handle('jobs:applications:automation-queue:retry', async (event, input) => { assertTrustedRenderer(event); return retryAutonomousApplication(input?.applicationId); });
+  ipcMain.handle('jobs:applications:automation-queue:retry', async (event, input) => { assertTrustedRenderer(event); return applicationQueueService.retry(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:applications:assistant:claim', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); if (applicationAssistantOwnerApplicationId && applicationAssistantOwnerApplicationId !== applicationId) throw new Error('Another application assistant already owns the active workflow.'); applicationAssistantOwnerApplicationId = applicationId; return { applicationId, claimed: true }; });
   ipcMain.handle('jobs:applications:assistant:release', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); if (applicationAssistantOwnerApplicationId === applicationId) applicationAssistantOwnerApplicationId = null; return { applicationId, released: true }; });
   ipcMain.handle('jobs:applications:automation-state:update', (event, input) => { assertTrustedRenderer(event); validateApplicationId(input?.applicationId); if (typeof input?.state !== 'string' || input.state.length > 80) throw new Error('Invalid autonomous application state.'); return coachDatabase.applications.updateAutomationState(input); });
@@ -2938,11 +2996,33 @@ function registerDatabaseIpc() {
       if (requiredUploadFailures.length) throw new Error(`Document upload incomplete: ${requiredUploadFailures.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
       const uploadWarnings = uploadResults.filter((entry) => entry.status !== 'uploaded' && entry.optional);
       coachDatabase.applications.updateAutomationState({ applicationId, state: 'navigating_form', checkpoint: { uploadResults, uploadWarnings } });
-      for (let pass = 0; pass < 2; pass += 1) {
-        const plan = await buildAiApplicationFillPlan(browserProfile());
-        lastPlan = plan;
-        if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
-        await applicationBrowser.fillPlan(plan.id, browserProfile());
+      const visitedPageFingerprints = new Set();
+      let finalReviewReady = false;
+      let navigationReason = '';
+      // Application forms mutate after uploads, answers, and each Next click.
+      // Rebuild the bounded plan on every observed page instead of assuming a
+      // two-pass single-page form.
+      for (let page = 0; page < 12; page += 1) {
+        const pageSnapshot = applicationBrowser.publicState()?.snapshot || await applicationBrowser.inspect();
+        if (visitedPageFingerprints.has(pageSnapshot.pageFingerprint)) { navigationReason = 'application_page_loop_detected'; break; }
+        visitedPageFingerprints.add(pageSnapshot.pageFingerprint);
+        if (page > 0 && pageSnapshot.fields?.some((field) => field.category === 'file_upload')) {
+          const pageUpload = await applicationBrowser.uploadDocuments(files);
+          const failed = pageUpload.results.filter((entry) => entry.status !== 'uploaded' && !entry.optional);
+          if (failed.length) throw new Error(`Document upload incomplete on page ${page + 1}: ${failed.map((entry) => `${entry.documentType}:${entry.status}`).join(', ')}`);
+        }
+        for (let pass = 0; pass < 5; pass += 1) {
+          const plan = await buildAiApplicationFillPlan(browserProfile());
+          lastPlan = plan;
+          if (!plan.fields.some((field) => field.action === 'fill' && field.displayValue)) break;
+          await applicationBrowser.fillPlan(plan.id, browserProfile());
+        }
+        const unresolved = Array.isArray(lastPlan?.diagnostics?.unresolvedFields) ? lastPlan.diagnostics.unresolvedFields : [];
+        if (unresolved.length) break;
+        const updatedSnapshot = applicationBrowser.publicState()?.snapshot || await applicationBrowser.inspect();
+        if (updatedSnapshot.fields?.some((field) => field.category === 'final_submit')) { finalReviewReady = true; break; }
+        const navigation = await applicationBrowser.advance();
+        if (navigation.status !== 'advanced') { navigationReason = navigation.reason || 'next_control_not_found'; break; }
       }
       const updated = coachDatabase.applications.get(applicationId);
       const unresolvedFields = Array.isArray(lastPlan?.diagnostics?.unresolvedFields) ? lastPlan.diagnostics.unresolvedFields : [];
@@ -2953,19 +3033,12 @@ function registerDatabaseIpc() {
           coachDatabase.applications.saveUnknownQuestion({ applicationId, providerHost: browserState?.currentHost || browserState?.initialHost || '', pageFingerprint: lastPlan?.pageFingerprint || '', controlLabel: field.label || field.fieldFingerprint, controlType: field.controlType || field.inputType || 'field', questionKey: `safe-pass:${field.fieldFingerprint}`, questionText: `What answer should be entered for “${field.label || field.fieldFingerprint}”?`, options: field.options || [] });
         }
       }
-      if (!needsUserAnswer && autonomousApplicationQueueState.autopilot) {
-        autonomousApplicationQueueState.activeStep = 'submitting';
-        const submission = await submitAutopilotApplication(applicationId);
-        applicationBrowser.close();
-        autonomousApplicationQueueState.activeApplicationId = null;
-        autonomousApplicationQueueState.activeStep = '';
-        autonomousApplicationQueueState.message = submission.status === 'awaiting_email' ? 'Application submitted; waiting for matching employer email before Applied.' : submission.status === 'verifying_confirmation' ? 'Application submitted; employer confirmation page still needs verification.' : 'The final submit control needs review.';
-        return submission;
-      }
-      coachDatabase.applications.updateAutomationState({ applicationId, state: needsUserAnswer ? 'needs_user_answer' : 'queued', checkpoint: { ...updated.automationCheckpoint, stage: needsUserAnswer ? 'form_review' : 'form_retry', reasonCode: needsUserAnswer ? 'safe_pass_complete_review_remaining_fields' : 'safe_pass_found_no_answerable_fields', unresolvedFields, safePassCompletedAt: new Date().toISOString() } });
+      const nextState = needsUserAnswer || !finalReviewReady ? 'needs_user_answer' : 'ready_to_submit';
+      const reasonCode = needsUserAnswer ? 'safe_pass_complete_review_remaining_fields' : finalReviewReady ? 'reviewed_submit_required' : navigationReason || 'application_flow_incomplete';
+      coachDatabase.applications.updateAutomationState({ applicationId, state: nextState, checkpoint: { ...updated.automationCheckpoint, stage: finalReviewReady ? 'final_submit_review' : 'form_review', reasonCode, unresolvedFields, visitedPageFingerprints: [...visitedPageFingerprints].slice(0, 12), safePassCompletedAt: new Date().toISOString() } });
       applicationBrowser.close();
       autonomousApplicationQueueState.activeApplicationId = null;
-      autonomousApplicationQueueState.message = 'Safe form pass completed; protected or unanswered fields remain for review.';
+      autonomousApplicationQueueState.message = finalReviewReady && !needsUserAnswer ? 'Application is filled and ready for explicit submission review.' : 'Safe form pass completed; protected or unanswered fields remain for review.';
     } catch (error) {
       const application = coachDatabase.applications.get(applicationId);
       const message = String(error?.message || 'Safe form pass did not complete.').slice(0, 500);
@@ -3280,15 +3353,15 @@ async function drainApplicationPreparationQueue() {
     }
     syncPreparationActivity();
     applicationPreparationState.paused = false;
-    void drainApplicationPreparationQueue();
-    return applicationPreparationStatus();
+    return startDurableApplicationQueue({ mode: 'entire_pipeline' });
   });
   ipcMain.handle('jobs:applications:preparation-pause', (event) => {
     assertTrustedRenderer(event);
     applicationPreparationState.paused = true;
-    return applicationPreparationStatus();
+    pauseAutonomousApplicationQueue();
+    return applicationQueueService.pause();
   });
-  ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationPreparationStatus(); });
+  ipcMain.handle('jobs:applications:preparation-status', (event) => { assertTrustedRenderer(event); return applicationQueueService.status(); });
   ipcMain.handle('jobs:documents:select-master-resume', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.documents.selectMasterResume(validateApplicationId(input?.applicationId)); });
   ipcMain.handle('jobs:documents:export-text', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; const plainText = doc.plainText || renderPlainText(doc.documentType, doc.content); if (!plainText.trim() || plainText.trim() === 'undefined') throw new Error('This document has no exportable text. Regenerate or save it before exporting.'); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export plain-text document', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'txt', job)), filters: [{ name: 'Plain text', extensions: ['txt'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; fs.writeFileSync(chosen.filePath, plainText, 'utf8'); return { document: coachDatabase.applications.documents.markExport(id, { textPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; });
   ipcMain.handle('jobs:documents:export-pdf', async (event, id) => { assertTrustedRenderer(event); const doc = coachDatabase.applications.documents.get(validateCoachId(id, 'document id')); if (!doc) throw new Error('Document not found.'); const application = coachDatabase.applications.get(doc.applicationId); const job = application && coachDatabase.jobs.list().find((entry) => entry.id === application.jobId); if (!job) throw new Error('Saved job not found.'); const htmlText = doc.htmlText || renderHtml(doc.documentType, doc.content); if (!htmlText.trim() || htmlText.trim() === 'undefined' || !renderPlainText(doc.documentType, doc.content).trim()) throw new Error('This document has no exportable content. Regenerate or save it before exporting.'); const files = ensureApplicationFileStructure(app.getPath('documents'), job, application.id); const exportDirectory = doc.documentType === 'resume' ? files.versionsResumesDirectory : files.versionsCoverLettersDirectory; fs.mkdirSync(exportDirectory, { recursive: true }); const chosen = await dialog.showSaveDialog(mainWindow, { title: 'Export ATS-friendly PDF', defaultPath: path.join(exportDirectory, applicationExportFilename(doc, 'pdf', job)), filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (chosen.canceled || !chosen.filePath) return { canceled: true }; const pdfWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); try { await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlText)}`); const data = await pdfWindow.webContents.printToPDF({ printBackground: false, pageSize: 'Letter', margins: { marginType: 'default' } }); fs.writeFileSync(chosen.filePath, data); return { document: coachDatabase.applications.documents.markExport(id, { pdfPath: chosen.filePath }), savedPath: chosen.filePath, exportDirectory }; } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); } });
@@ -3534,6 +3607,8 @@ app.whenReady().then(() => {
   migrateOpenRouterEnvironmentKey();
   coachDatabase = createDatabase({ userDataPath: app.getPath('userData'), applicationDocumentsPath: app.getPath('documents'), seedPath: roadmapSeedPath, masterResumeSourcePath: path.join(app.getPath('userData'), 'master-resume.pdf') });
   coachDatabase.applications.recoverAutomation?.();
+  applicationQueueService = createApplicationQueueService({ repository: coachDatabase.applications.queue, worker: processDurableApplicationQueueItem });
+  applicationQueueService.recover();
   protocol.handle('video-factory', async (request) => {
     try {
       const token = new URL(request.url).pathname.split('/').filter(Boolean).pop();

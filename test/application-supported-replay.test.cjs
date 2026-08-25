@@ -22,6 +22,6 @@ for (const provider of providerAdapters) {
     assert.ok(replay.some((entry) => entry.requiredFields > 0));
     assert.equal(replay.at(-1).confirmation, 'confirmed');
     assert.ok(replay.every((entry) => entry.submitRetryBudget === 0));
-    assert.equal(adapter.productionEnabled, false, 'fixture replay must not promote a live adapter');
+    assert.equal(adapter.productionEnabled, ['dice', 'workday'].includes(adapter.key), 'only validated Dice and Workday fixture replays are live-enabled');
   });
 }
