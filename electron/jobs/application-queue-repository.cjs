@@ -33,6 +33,7 @@ function createApplicationQueueRepository({ sqlite, now = () => new Date().toISO
     jobId: row.job_id,
     company: row.company || '',
     roleTitle: row.role_title || '',
+    unknownQuestionCount: Number(row.unknown_question_count) || 0,
     position: Number(row.position) || 0,
     state: row.state,
     attempt: Number(row.attempt) || 0,
@@ -51,7 +52,8 @@ function createApplicationQueueRepository({ sqlite, now = () => new Date().toISO
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }) : null;
-  const itemSelect = `SELECT i.*, a.job_id, j.company, j.role_title
+  const itemSelect = `SELECT i.*, a.job_id, j.company, j.role_title,
+    (SELECT COUNT(*) FROM job_application_unknown_questions q WHERE q.application_id = i.application_id AND q.status = 'open') AS unknown_question_count
     FROM application_queue_items i
     JOIN job_applications a ON a.id = i.application_id
     JOIN job_opportunities j ON j.id = a.job_id`;

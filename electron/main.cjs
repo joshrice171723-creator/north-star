@@ -2935,7 +2935,7 @@ function registerDatabaseIpc() {
     applicationBrowser.setBounds(input?.bounds);
     return result;
   });
-  ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); applicationBrowser.close(); return null; });
+  ipcMain.handle('jobs:browser:close', (event) => { assertTrustedRenderer(event); const activeApplicationId = applicationQueueService?.status()?.activeApplicationId; if (activeApplicationId && applicationBrowser.publicState()?.applicationId === activeApplicationId) { applicationBrowser.hide(); return { preserved: true, applicationId: activeApplicationId }; } applicationBrowser.close(); return null; });
   ipcMain.handle('jobs:browser:bounds', (event, bounds) => { assertTrustedRenderer(event); applicationBrowser.setBounds(bounds); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:snapshot', async (event, applicationId) => { assertTrustedRenderer(event); validateApplicationId(applicationId); return applicationBrowser.publicState(); });
   ipcMain.handle('jobs:browser:rescan', async (event) => { assertTrustedRenderer(event); await applicationBrowser.inspect(); return applicationBrowser.publicState(); });
