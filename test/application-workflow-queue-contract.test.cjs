@@ -18,4 +18,6 @@ test('legacy application and preparation channels use the durable workflow owner
   assert.match(main, /reportDurableProgress\('ready_for_review'/);
   assert.match(preload, /getApplicationWorkflowQueueStatus/);
   assert.match(preload, /startApplicationWorkflowQueue/);
+  assert.match(main, /workflow-queue:retry'[\s\S]{0,160}applicationQueueService\.retry/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'JobsView.jsx'), 'utf8'), /retryApplicationWorkflowQueueItem\?\.\(\{ applicationId: entry\.applicationId \}\)/);
 });

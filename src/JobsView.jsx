@@ -488,7 +488,10 @@ export default function JobsView({ jobs = [], onRefresh, onDetailChange }) {
     if (!['blocked', 'retry_wait', 'waiting_for_answer', 'waiting_for_login', 'waiting_for_activation'].includes(entry.state) || entry.blocker?.code === 'submission_outcome_uncertain' || automationRetryingIds.has(entry.applicationId)) return;
     setAutomationRetryingIds((current) => new Set(current).add(entry.applicationId));
     try {
-      const result = await window.desktopShell?.resolveApplicationWorkflowBlocker?.({ applicationId: entry.applicationId });
+      // A row retry must requeue the durable item itself. The compatibility
+      // blocker-resume channel only starts a run and leaves a blocked item
+      // unchanged, which made Retry appear to do nothing.
+      const result = await window.desktopShell?.retryApplicationWorkflowQueueItem?.({ applicationId: entry.applicationId });
       if (result) setAutomationQueueStatus(result);
       await refreshAutomationQueue();
     } catch (cause) {
