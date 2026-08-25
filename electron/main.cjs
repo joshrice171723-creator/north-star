@@ -837,18 +837,16 @@ async function continueAfterUnavailableApplication(message, depth = 0) {
   autonomousApplicationQueueState.running = false;
   autonomousApplicationQueueState.paused = true;
   autonomousApplicationQueueState.message = message;
-  if (depth >= MAX_UNAVAILABLE_AUTO_ADVANCES) return autonomousApplicationQueueStatus();
-  // An unavailable listing is terminal and requires no user decision. Start
-  // the next eligible application automatically, but cap the chain so a bad
-  // provider response cannot consume the whole queue in one click.
-  const next = await startAutonomousApplicationQueue(null, depth + 1);
-  const continuation = next.activeApplicationId ? ' Continuing with the next eligible application.' : ` ${next.message || ''}`;
-  autonomousApplicationQueueState.message = `${message}${continuation}`.trim();
+  // The next application must be opened by the assistant before the native
+  // browser can start. Do not auto-advance from the main process.
   return autonomousApplicationQueueStatus();
 }
 async function startAutonomousApplicationQueue(targetApplicationId = null, unavailableAdvanceDepth = 0, options = {}) {
   if (!coachDatabase) throw new Error('Application database is not ready.');
-  if (targetApplicationId && applicationAssistantOwnerApplicationId !== targetApplicationId) {
+  if (!targetApplicationId) {
+    throw new Error('Select the application in the AI application assistant before starting the workflow.');
+  }
+  if (applicationAssistantOwnerApplicationId !== targetApplicationId) {
     throw new Error('Open the AI application assistant for this application before starting the workflow.');
   }
   if (options.autopilot === true) autonomousApplicationQueueState.autopilot = true;
@@ -2745,7 +2743,7 @@ function registerDatabaseIpc() {
   ipcMain.handle('jobs:applications:answers:list', (event, id) => { assertTrustedRenderer(event); return coachDatabase.applications.listAnswers(validateApplicationId(id)); });
   ipcMain.handle('jobs:applications:answers:save', (event, input) => { assertTrustedRenderer(event); return coachDatabase.applications.saveAnswer(validateApplicationAnswer(input)); });
   ipcMain.handle('jobs:applications:automation-queue:list', (event) => { assertTrustedRenderer(event); return autonomousApplicationQueueStatus(); });
-  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); const applicationId = input?.applicationId ? validateApplicationId(input.applicationId) : null; return startAutonomousApplicationQueue(applicationId, 0, { autopilot: input?.autopilot === true }); });
+  ipcMain.handle('jobs:applications:automation-queue:start', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); return startAutonomousApplicationQueue(applicationId, 0, { autopilot: input?.autopilot === true }); });
   ipcMain.handle('jobs:applications:automation-queue:pause', (event) => { assertTrustedRenderer(event); return pauseAutonomousApplicationQueue(); });
   ipcMain.handle('jobs:applications:automation-batch:approve', (event, input) => { assertTrustedRenderer(event); const applicationId = validateApplicationId(input?.applicationId); const application = coachDatabase.applications.get(applicationId); if (!application || !['detecting_form', 'navigating_form', 'ready_to_submit'].includes(application.automationState)) throw new Error('Only an application at the final reviewed checkpoint can be added to the batch.'); const checkpoint = { ...application.automationCheckpoint, batchApprovedAt: new Date().toISOString() }; return coachDatabase.applications.updateAutomationState({ applicationId, state: 'ready_to_submit', checkpoint }); });
   ipcMain.handle('jobs:applications:automation-batch:start', (event) => { assertTrustedRenderer(event); return startApprovedApplicationBatch(); });
