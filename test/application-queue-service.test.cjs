@@ -95,3 +95,27 @@ test('mixed application batch drains without cross-item state corruption', async
     assert.equal(service.status().counts.awaitingEmail, 1);
   } finally { db.close(); fs.rmSync(userDataPath, { recursive: true, force: true }); }
 });
+
+test('a retry wait yields to the next application instead of stalling the run', async () => {
+  const context = fixture();
+  try {
+    const visited = [];
+    const service = createApplicationQueueService({
+      repository: context.db.applications.queue,
+      worker: async (item) => {
+        visited.push(item.applicationId);
+        return item.applicationId === context.applications[0].id
+          ? { state: 'retry_wait', checkpoint: { reasonCode: 'transient_browser_failure' } }
+          : { state: 'terminal', checkpoint: { reasonCode: 'second_item_completed' } };
+      },
+    });
+    service.start({ applicationIds: context.applications.map((entry) => entry.id) });
+    await service.waitForIdle();
+    assert.deepEqual(visited, context.applications.map((entry) => entry.id));
+    const queue = service.status().queue;
+    assert.equal(queue.find((item) => item.applicationId === context.applications[0].id).state, 'retry_wait');
+    assert.ok(queue.find((item) => item.applicationId === context.applications[0].id).nextRetryAt);
+    assert.equal(queue.find((item) => item.applicationId === context.applications[1].id).state, 'terminal');
+    service.pause();
+  } finally { context.close(); }
+});
