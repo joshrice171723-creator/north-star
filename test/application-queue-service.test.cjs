@@ -58,3 +58,40 @@ test('restart recovery blocks uncertain submissions and requeues safe work', () 
 test('canonical queue state contract includes the full application lifecycle', () => {
   for (const state of ['researching', 'preparing_documents', 'waiting_for_login', 'creating_account', 'waiting_for_answer', 'ready_for_review', 'verifying_browser', 'verifying_email', 'applied', 'retry_wait', 'terminal']) assert.ok(CANONICAL_APPLICATION_STATES.includes(state));
 });
+
+test('mixed application batch drains without cross-item state corruption', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'north-star-mixed-queue-'));
+  const db = createDatabase({ userDataPath, seedPath: path.join(userDataPath, 'missing.csv') });
+  try {
+    const scenarios = [
+      ['dice', 'Dice Co', 'https://www.dice.com/job-detail/fixture', 'ready_for_review'],
+      ['workday', 'Workday Co', 'https://example.wd5.myworkdayjobs.com/job/fixture', 'waiting_for_login'],
+      ['generic', 'Generic Co', 'https://careers.example.test/apply', 'waiting_for_answer'],
+      ['unavailable', 'Closed Co', 'https://closed.example.test/apply', 'terminal'],
+      ['email', 'Email Co', 'https://email.example.test/apply', 'verifying_email'],
+    ];
+    const applications = scenarios.map(([id, company, url]) => {
+      db.jobs.create({ id: `mixed-${id}`, company, roleTitle: 'Engineer', url });
+      return db.applications.createOrResume({ jobId: `mixed-${id}` });
+    });
+    const resultByApplication = new Map(applications.map((application, index) => [application.id, scenarios[index]]));
+    const concurrent = new Set();
+    const visited = [];
+    const service = createApplicationQueueService({ repository: db.applications.queue, worker: async (item, { update }) => {
+      assert.equal(concurrent.size, 0, 'only one mixed-provider item may own execution');
+      concurrent.add(item.applicationId);
+      const [provider, , , state] = resultByApplication.get(item.applicationId);
+      visited.push(provider);
+      update({ state: provider === 'unavailable' ? 'detecting_flow' : 'opening', checkpoint: { provider } });
+      concurrent.delete(item.applicationId);
+      return { state, checkpoint: { provider, isolatedApplicationId: item.applicationId }, blocker: state === 'terminal' ? { code: 'job_listing_unavailable', message: 'The employer listing is no longer available.' } : state.startsWith('waiting_for_') ? { code: state, message: `Action required for ${provider}.`, requiresUser: true } : {} };
+    } });
+    service.start({ applicationIds: applications.map((application) => application.id), mode: 'reviewed_batch' });
+    await service.waitForIdle();
+    assert.deepEqual(visited, scenarios.map(([provider]) => provider));
+    const queue = service.status().queue;
+    for (const application of applications) assert.equal(queue.find((item) => item.applicationId === application.id).checkpoint.isolatedApplicationId, application.id);
+    assert.equal(queue.find((item) => item.checkpoint.provider === 'unavailable').blocker.code, 'job_listing_unavailable');
+    assert.equal(service.status().counts.awaitingEmail, 1);
+  } finally { db.close(); fs.rmSync(userDataPath, { recursive: true, force: true }); }
+});

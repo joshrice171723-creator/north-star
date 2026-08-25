@@ -16,7 +16,8 @@ test('autopilot owns queue progression and records final-submit intent before cl
   assert.match(main, /replaySavedAutopilotLogin/);
   assert.match(browser, /const fillSavedCredentials = async/);
   assert.match(browser, /Credentials are passed from Electron main directly/);
-  assert.match(jobs, /\{ autopilot: true \}/);
-  assert.match(jobs, /Run Autopilot/);
+  assert.match(jobs, /startApplicationWorkflowQueue\?\.\(\{ mode: 'entire_pipeline' \}\)/);
+  assert.match(jobs, /<ApplicationQueueDrawer status=\{workflowQueueStatus\}/);
+  assert.doesNotMatch(jobs, /startJobApplicationAutomationQueue\?\.\(\{ autopilot: true \}\)/);
   assert.doesNotMatch(jobs, /const assistantOpened = queuedJob/);
 });

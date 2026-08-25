@@ -12,6 +12,14 @@ test('submission confirmation requires explicit language and current job evidenc
   assert.equal(matchSubmissionConfirmation({ email: base, candidateEmail: 'other@example.com', job: { company: 'Acme', roleTitle: 'Forward Deployed Engineer' } }), null);
 });
 
+test('submission matching rejects account mail and accepts delayed numbered confirmation once', () => {
+  const context = { candidateEmail: 'josh@example.com', application: { applicationUrl: 'https://jobs.example.com/apply' }, job: { company: 'Acme', roleTitle: 'Forward Deployed Engineer' }, requestedAt: '2026-08-23T15:00:00Z', now: '2026-08-23T17:00:00Z' };
+  assert.equal(matchSubmissionConfirmation({ ...context, email: { id: 'activation', recipients: 'josh@example.com', receivedAt: '2026-08-23T15:01:00Z', subject: 'Activate your account', body: 'Verify your email address to finish creating your Acme account.' } }), null);
+  const delayed = matchSubmissionConfirmation({ ...context, email: { id: 'delayed-confirmation', recipients: 'josh@example.com', receivedAt: '2026-08-23T16:45:00Z', subject: 'Application received', body: 'Thank you for applying to Acme for the Forward Deployed Engineer role. Application ID: FDE-2048.' } });
+  assert.equal(delayed.confirmationNumber, 'FDE-2048');
+  assert.equal(delayed.emailId, 'delayed-confirmation');
+});
+
 test('failure classification is bounded and retry policy never retries protected actions', () => {
   assert.deepEqual(classifyApplicationFailure({ code: 'network_timeout', message: 'Timed out' }), { class: 'network', retryable: true, reasonCode: 'network_timeout', message: 'Timed out' });
   assert.equal(boundedRetry({ attempt: 0, maxAttempts: 2, failure: { code: 'network_timeout' } }).exhausted, false);
