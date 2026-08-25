@@ -30,13 +30,15 @@ This is the durable execution state for a selected application:
 
 Additional states are `retry_wait`, `blocked`, and `terminal`. The queue reaches `applied` only after browser confirmation evidence **and** matching employer email evidence. A board card can therefore be `ready` while its application queue item is blocked or awaiting email.
 
-## Autonomous application target
+## Desired workflow: zero user interaction after Start
 
-The intended end state is full follow-through: once an eligible opportunity is placed in the queue, North Star should research it, prepare and validate documents, open the provider, create or reuse an account, answer supported questions, upload selected files, navigate every page, submit the application, capture browser evidence, reconcile the employer email, and advance to `applied` without routine user intervention.
+This is the real product goal for the next implementation model:
 
-Routine profile fields, approved documents, reusable answers, provider navigation, retries, and delayed-email reconciliation belong inside that autonomous path. The queue should continue across renderer navigation and recover from restart using checkpoints rather than requiring the user to restart an item manually.
+> After the user clicks **Start**, North Star must take each eligible queued opportunity from beginning to end with **zero additional user interaction**. It must research the role, prepare and validate the resume and cover letter, open the provider, create or reuse the account, fill every supported field, answer questions from approved data or saved answers, upload the documents, navigate all pages, submit the application, capture browser evidence, reconcile the employer email, and mark the item `applied` only when the evidence is complete.
 
-The current code is not yet at that end state for every provider. Login, CAPTCHA, unknown/sensitive/legal questions, provider drift, and irreversible submission are still explicit checkpoints. This document treats eliminating routine intervention as the product target while keeping the current implementation status accurate below.
+The user should not need to click into each job, answer routine questions, upload files, log in repeatedly, advance pages, retry ordinary transient failures, or press Submit. The queue must continue across renderer navigation, process restart, retries, and delayed Gmail delivery. Any item that cannot be completed autonomously must be classified and reported; it must not be silently skipped or falsely marked applied.
+
+This is the desired end state, not a claim about the current build. The current implementation still stops at some login, CAPTCHA, unknown/sensitive/legal-question, provider-drift, and irreversible-submission checkpoints. Those are the remaining gaps between the present implementation and the zero-interaction workflow defined above.
 
 ## Search workflow
 
