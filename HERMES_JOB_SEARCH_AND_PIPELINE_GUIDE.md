@@ -6,9 +6,9 @@
 
 ## What this subsystem is for
 
-The job subsystem turns a search intent and candidate evidence into a reviewable pipeline:
+The job subsystem turns a search intent and candidate evidence into an autonomous application pipeline:
 
-`profile + resume → provider search → normalized candidates → deterministic filters → bounded AI assessment → saved opportunity → documents/readiness → durable application queue → reviewed browser submission → Gmail confirmation → applied`
+`profile + resume → provider search → normalized candidates → deterministic filters → bounded AI assessment → saved opportunity → documents/readiness → durable application queue → browser form completion → submission → Gmail confirmation → applied`
 
 It is not a hiring-probability model. Search ranking is an evidence comparison using the supplied resume, role/duty fit, and remote or location fit. Salary, company prestige, posting date, and other unsupported signals are not allowed to masquerade as fit evidence.
 
@@ -29,6 +29,14 @@ This is the durable execution state for a selected application:
 `queued → researching → preparing_documents → validating_documents → opening → detecting_flow → waiting_for_login / creating_account → filling_profile → answering_questions → waiting_for_answer → uploading_documents → navigating → ready_for_review → submitting → verifying_browser → verifying_email → applied`
 
 Additional states are `retry_wait`, `blocked`, and `terminal`. The queue reaches `applied` only after browser confirmation evidence **and** matching employer email evidence. A board card can therefore be `ready` while its application queue item is blocked or awaiting email.
+
+## Autonomous application target
+
+The intended end state is full follow-through: once an eligible opportunity is placed in the queue, North Star should research it, prepare and validate documents, open the provider, create or reuse an account, answer supported questions, upload selected files, navigate every page, submit the application, capture browser evidence, reconcile the employer email, and advance to `applied` without routine user intervention.
+
+Routine profile fields, approved documents, reusable answers, provider navigation, retries, and delayed-email reconciliation belong inside that autonomous path. The queue should continue across renderer navigation and recover from restart using checkpoints rather than requiring the user to restart an item manually.
+
+The current code is not yet at that end state for every provider. Login, CAPTCHA, unknown/sensitive/legal questions, provider drift, and irreversible submission are still explicit checkpoints. This document treats eliminating routine intervention as the product target while keeping the current implementation status accurate below.
 
 ## Search workflow
 
@@ -144,7 +152,7 @@ Account mail, newsletters, password resets, generic job alerts, duplicate messag
 ## Current job-search/pipeline issues
 
 1. **Ten-application goal is not complete.** The repository and UI support the goal, but live evidence must still show ten items with browser and matching Gmail proof.
-2. **Human blockers are expected.** CAPTCHA, login/activation, unknown questions, sensitive/legal attestations, and final submit remain reviewed. Start does not mean blind submission.
+2. **The autonomous path is incomplete at provider checkpoints.** CAPTCHA, login/activation, unknown questions, sensitive/legal attestations, and final submit still stop for user input in the current implementation. Eliminating those stops requires additional provider-specific handling and an explicit product decision.
 3. **Zendesk had a real hang.** The provider-flow detector could wait indefinitely after page load. The bounded timeout/retry fix is committed as `21720e1`; live verification now reaches the filled Zendesk form and stops visibly at the reviewed employer step instead of silently dying.
 4. **Document readiness can block items.** At the last observed run one item was blocked because its cover letter was missing. Fix the document or terminalize the target; do not loop retries.
 5. **Provider drift remains possible.** Cookies, reactive fields, DOM labels, account flows, and questions can change. Fixtures cover supported patterns, but production providers need continued evidence.
@@ -152,16 +160,6 @@ Account mail, newsletters, password resets, generic job alerts, duplicate messag
 7. **Queue state and board stage can diverge.** `ready`, `applied`, and `rejected` are board-level labels; the queue's canonical state and evidence are authoritative for application execution.
 8. **Search quality depends on current profile/resume evidence.** A broad or stale profile can produce low-quality candidates even when provider calls succeed. Use the Advanced Search Report to distinguish provider failure, poor retrieval, poor ranking, and low displayed count.
 9. **Credentials and provider availability are environmental.** USAJOBS/Adzuna credentials, OpenRouter availability, Gmail OAuth, employer accounts, CAPTCHA, and network access can block live acceptance independently of source correctness.
-
-## Safety rules for operating the pipeline
-
-- Never expose or paste API keys, OAuth tokens, cookies, passwords, or activation payloads.
-- Treat external employer navigation and document upload as data transmission.
-- Do not authorize final submission unless the displayed employer, role, URL, documents, answers, required fields, and page fingerprint are still the reviewed version.
-- Do not mark an application Applied from a button click, an ambiguous page, or a generic email.
-- Do not resubmit when email evidence is late; reconcile first.
-- Do not retry protected actions automatically.
-- Use row-specific Retry, Answer, Login, Review, or Resume actions so one blocked item cannot corrupt another.
 
 ## Verification and next acceptance sequence
 
@@ -176,12 +174,11 @@ node --check electron/preload.cjs
 
 Then perform controlled live evidence in this order:
 
-1. One reviewed provider submission with browser confirmation and matching Gmail evidence.
+1. One end-to-end provider submission with browser confirmation and matching Gmail evidence.
 2. One unknown question answered once and reused on a later matching form.
 3. One login/CAPTCHA pause and resume.
 4. One unavailable listing classified terminally without retry.
 5. One restart during active processing with checkpoint recovery.
 6. One mixed Dice/Workday/generic/unavailable/blocker batch.
 7. Confirm no duplicate submissions and no `applied` item without both evidence types.
-8. Repeat until ten explicitly reviewed targets are verified `applied`, with all remaining items in truthful blocker or terminal states.
-
+8. Repeat until ten targets are autonomously driven to verified `applied`, with any genuinely unsupported provider or external checkpoint reported as an actionable exception.
