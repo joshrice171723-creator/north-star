@@ -1154,9 +1154,6 @@ async function retryAutonomousApplication(applicationId) {
   return { application: released, status: await startAutonomousApplicationQueue(applicationId) };
 }
 
-const LEGACY_TO_CANONICAL_STATE = Object.freeze({
-  queued: 'retry_wait', opening: 'opening', detecting_form: 'detecting_flow', creating_account: 'creating_account', reusing_account: 'waiting_for_login', awaiting_activation: 'waiting_for_activation', filling_profile: 'filling_profile', answering_questions: 'answering_questions', uploading_documents: 'uploading_documents', navigating_form: 'navigating', ready_to_submit: 'ready_for_review', submitting: 'submitting', verifying_confirmation: 'verifying_browser', verifying_email_confirmation: 'verifying_email', submitted: 'applied', needs_user_answer: 'waiting_for_answer', blocked: 'blocked', failed: 'blocked',
-});
 function workflowApplicationIds(input = {}) {
   const requested = [...new Set([...(Array.isArray(input.applicationIds) ? input.applicationIds : []), input.applicationId].filter(Boolean).map(validateApplicationId))];
   if (requested.length) return requested;
@@ -1175,20 +1172,11 @@ async function processDurableApplicationQueueItem(item, control) {
     job = coachDatabase.jobs.list().find((entry) => entry.id === application.jobId);
   }
   if (job.stage !== 'ready') return { state: 'blocked', blocker: { code: 'preparation_incomplete', message: 'Application documents did not reach Ready to apply.', requiresUser: false }, checkpoint: application.automationCheckpoint };
-  control.update({ state: 'opening', checkpoint: { ...application.automationCheckpoint, durableRunId: item.runId } });
-  await startAutonomousApplicationQueue(application.id, 0, {
-    durableOwner: true,
-    autopilot: false,
-    durableProgress: (progress) => control.update({ state: progress.state, checkpoint: { ...application.automationCheckpoint, ...(progress.checkpoint || {}), durableRunId: item.runId } }),
-  });
-  application = coachDatabase.applications.get(application.id);
-  let state = LEGACY_TO_CANONICAL_STATE[application.automationState] || 'blocked';
-  const reasonCode = application.automationCheckpoint?.reasonCode || '';
-  if (/timeout/i.test(reasonCode)) state = 'retry_wait';
-  if (application.automationState === 'needs_user_answer' && /login|captcha/i.test(reasonCode)) state = 'waiting_for_login';
-  else if (application.automationState === 'needs_user_answer' && /activation/i.test(reasonCode)) state = 'waiting_for_activation';
-  else if (application.automationState === 'blocked' && reasonCode === 'job_listing_unavailable') state = 'terminal';
-  return { state, checkpoint: application.automationCheckpoint, blocker: ['blocked', 'waiting_for_login', 'waiting_for_activation', 'waiting_for_answer'].includes(state) ? { code: reasonCode || application.automationState, message: application.automationCheckpoint?.lastError || autonomousApplicationQueueState.message || 'This application needs attention.', requiresUser: state !== 'blocked' || !application.automationCheckpoint?.retryable } : {} };
+  // Manual pipeline boundary: batch preparation stops once the application is
+  // Ready to apply. The user reviews the generated documents and applies on
+  // the employer page themselves; no autonomous browser work starts here.
+  control.update({ state: 'ready_to_apply', checkpoint: { ...(application.automationCheckpoint || {}), durableRunId: item.runId, reasonCode: 'ready_to_apply', preparedAt: new Date().toISOString() } });
+  return { state: 'ready_to_apply', checkpoint: coachDatabase.applications.get(application.id)?.automationCheckpoint || {}, blocker: {} };
 }
 function startDurableApplicationQueue(input = {}) {
   return applicationQueueService.start({ applicationIds: workflowApplicationIds(input), mode: input.mode || 'entire_pipeline' });

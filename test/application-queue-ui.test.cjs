@@ -11,7 +11,7 @@ const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
 
 test('one application queue shell wraps the pipeline and owns lifecycle controls', () => {
   assert.match(jobsView, /className="jobs-pipeline-shell"><ApplicationQueueDrawer/);
-  assert.match(queueDrawer, /Start entire pipeline/);
+  assert.match(queueDrawer, /Prepare all jobs/);
   assert.match(queueDrawer, /<Pause size=\{13\} \/> Pause/);
   assert.doesNotMatch(browserPanel, /ApplicationQueueDrawer/);
 });

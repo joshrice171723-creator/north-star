@@ -71,7 +71,9 @@ test('Stage 2 queue handoff opens one claimed application and checkpoints its fi
   assert.match(source, /current\?\.applicationId === applicationId/);
   assert.match(source, /automation-queue:start', \(event, input\)/);
   assert.match(source, /startDurableApplicationQueue\(input\)/);
-  assert.match(source, /startAutonomousApplicationQueue\(application\.id, 0, \{[\s\S]{0,300}durableOwner: true,[\s\S]{0,300}autopilot: false,[\s\S]{0,500}durableProgress:/);
+  assert.match(source, /Manual pipeline boundary: batch preparation stops once the application is/);
+  assert.match(source, /control\.update\(\{ state: 'ready_to_apply', checkpoint: \{ \.\.\.\(application\.automationCheckpoint \|\| \{\}\), durableRunId/);
+  assert.doesNotMatch(source, /durableOwner: true/, 'the durable queue must never hand an application to the autonomous browser flow');
   assert.match(source, /MAX_UNAVAILABLE_AUTO_ADVANCES = 3/);
   assert.match(source, /continueAfterUnavailableApplication\('Job unavailable: archived from the active application run\.'/);
 });

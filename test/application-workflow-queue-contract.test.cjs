@@ -13,7 +13,7 @@ test('legacy application and preparation channels use the durable workflow owner
   assert.doesNotMatch(main, /stepKey: 'dice-handoff'.*atsKey: 'dice'/);
   assert.match(main, /for \(let page = 0; page < 12; page \+= 1\)/);
   assert.match(main, /state: 'creating_account'/);
-  assert.match(main, /durableProgress: \(progress\) => control\.update/);
+  assert.doesNotMatch(main, /durableProgress: \(progress\) => control\.update/, 'the durable queue stops at Ready to apply and never streams browser progress');
   assert.match(main, /reportDurableProgress\('uploading_documents'/);
   assert.match(main, /reportDurableProgress\('ready_for_review'/);
   assert.match(main, /withApplicationTimeout\(applicationWorkflowOrchestrator\.runApplicationCheckpoint/);
