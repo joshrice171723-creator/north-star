@@ -1160,7 +1160,9 @@ async function retryAutonomousApplication(applicationId) {
 function workflowApplicationIds(input = {}) {
   const requested = [...new Set([...(Array.isArray(input.applicationIds) ? input.applicationIds : []), input.applicationId].filter(Boolean).map(validateApplicationId))];
   if (requested.length) return requested;
-  return coachDatabase.jobs.list().filter((job) => ['target', 'researching', 'ready'].includes(job.stage)).map((job) => coachDatabase.applications.createOrResume({ jobId: job.id }).id);
+  // Existing Ready to apply jobs are complete preparation outputs; only
+  // Target and Researching jobs belong in a new preparation run.
+  return coachDatabase.jobs.list().filter((job) => ['target', 'researching'].includes(job.stage)).map((job) => coachDatabase.applications.createOrResume({ jobId: job.id }).id);
 }
 async function processDurableApplicationQueueItem(item, control) {
   let application = coachDatabase.applications.get(item.applicationId);

@@ -26,7 +26,6 @@ const stageLabel = (stage) => ({
   blocked: 'Blocked',
   applied: 'Applied',
   terminal: 'Finished without applying',
-  ready_to_apply: 'Ready to apply',
 })[stage] || String(stage || 'Queued').replaceAll('_', ' ');
 const retryLabel = (value) => value ? `Retry scheduled ${new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
 const evidenceLabel = (entry) => entry.browserEvidenceId && entry.emailEvidenceId
@@ -74,7 +73,6 @@ export default function ApplicationQueueDrawer({
       <span><b>{status?.counts?.queued || 0}</b> queued</span>
       <span><b>{status?.counts?.active || 0}</b> active</span>
       <span><b>{status?.counts?.blocked || 0}</b> need attention</span>
-      <span><b>{status?.counts?.readyToApply || 0}</b> ready to apply</span>
       <span><b>{status?.counts?.awaitingEmail || 0}</b> awaiting email</span>
       <span><b>{status?.counts?.applied || 0}</b> applied</span>
     </div>
@@ -84,7 +82,7 @@ export default function ApplicationQueueDrawer({
         const state = entry.state || entry.stage || entry.automationState;
         const needsAnswer = state === 'waiting_for_answer';
         const retryable = ['blocked', 'retry_wait'].includes(state) && entry.blocker?.code !== 'submission_outcome_uncertain';
-        const needsOpen = ['waiting_for_login', 'waiting_for_activation', 'ready_for_review', 'verifying_browser', 'ready_to_apply'].includes(state);
+        const needsOpen = ['waiting_for_login', 'waiting_for_activation', 'ready_for_review', 'verifying_browser'].includes(state);
         return <div className={`assistant-queue-row${active ? ' active' : ''}`} key={entry.applicationId || entry.jobId}>
           <button className="assistant-queue-job" onClick={() => onOpenJob?.(entry)}>
             <span>{entry.company || 'Unknown employer'} — {entry.roleTitle || 'Untitled role'}</span>
@@ -92,7 +90,7 @@ export default function ApplicationQueueDrawer({
           </button>
           {needsAnswer && <button className="secondary assistant-queue-action" onClick={() => onAnswer?.(entry)}><MessageCircle size={12} /> Answer</button>}
           {retryable && <button className="secondary assistant-queue-action" onClick={() => onRetry?.(entry)}><RotateCcw size={12} /> Retry</button>}
-          {needsOpen && <button className="secondary assistant-queue-action" onClick={() => onOpenJob?.(entry)}><ExternalLink size={12} /> {state === 'ready_to_apply' ? 'Apply' : state === 'ready_for_review' ? 'Review' : state === 'waiting_for_login' ? 'Login' : 'Open'}</button>}
+          {needsOpen && <button className="secondary assistant-queue-action" onClick={() => onOpenJob?.(entry)}><ExternalLink size={12} /> {state === 'ready_for_review' ? 'Review' : state === 'waiting_for_login' ? 'Login' : 'Open'}</button>}
           {entry.blocker?.code && <details className="assistant-queue-diagnostics"><summary>Details</summary><code>{entry.blocker.code}</code></details>}
         </div>;
       }) : <small className="assistant-queue-empty">No application workflow jobs are waiting.</small>}

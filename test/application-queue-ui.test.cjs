@@ -14,6 +14,7 @@ test('one application queue shell wraps the pipeline and owns lifecycle controls
   assert.match(queueDrawer, /Prepare all jobs/);
   assert.match(queueDrawer, /<Pause size=\{13\} \/> Pause/);
   assert.doesNotMatch(browserPanel, /ApplicationQueueDrawer/);
+  assert.doesNotMatch(queueDrawer, /ready_to_apply/);
 });
 
 test('queue rows expose canonical blocker actions and readable diagnostics', () => {
