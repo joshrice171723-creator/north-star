@@ -76,6 +76,9 @@ let coachDatabase;
 let applicationBrowser;
 let applicationWorkflowOrchestrator;
 let applicationQueueService;
+// Assigned when database IPC handlers are registered; the durable queue is
+// created earlier during startup and needs to call the same preparation path.
+let prepareJobApplication;
 let emailMonitorTimer;
 let googleVoiceWindow;
 let googleVoiceMonitorTimer;
@@ -3334,7 +3337,7 @@ function registerDatabaseIpc() {
     await materializeSelectedApplicationDocument(documentId);
     return selected;
   });
-async function prepareJobApplication(jobId) {
+prepareJobApplication = async function prepareJobApplication(jobId) {
     const application = coachDatabase.applications.createOrResume({ jobId });
     coachDatabase.applications.recordEvent({ applicationId: application.id, eventType: 'preparation_started', summary: 'Automatic preparation started.' });
     const prepareDocument = async (documentType) => {
