@@ -1,0 +1,13 @@
+bundle=index-BZqsCBgv.js
+mtime=2026-08-26T07:25:25.101Z
+bytes=571519
+oldInsideReturnPatternAt=-1
+oldPatternCount=0
+newHookCount=1
+activationStringCount=1
+twoSiteHandoffCount=1
+pollingHookAt=222081
+earlyReturnCandidateAt=-1
+firstActiveAppIdAt=218235
+contextAroundAnchor="opyPath:i,onClose:a}){let[o,s]=(0,C.useState)(e||null);(0,C.useEffect)(()=>{!e&&window.__activeApplicationId&&window.desktopShell.getJobApplication(window.__activeApplicationId).then(s).catch(()=>{})},[e]);let c=t.find(e=>e.documentType===`resume`&&e.isSelected),l=t.find(e=>e.doc"
+verify=PASS
