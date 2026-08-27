@@ -24,6 +24,11 @@ test('AI candidates exclude fields already resolved by local profile or answer p
   assert.deepEqual(aiCandidateFields(fields, profile).map((field) => field.fieldFingerprint), ['motivation']);
 });
 
+test('single-line experience questions remain AI candidates for resume-backed answers', () => {
+  const fields = [{ fieldFingerprint: 'angular', elementType: 'input', inputType: 'text', label: 'What current version(s) of Angular do you have experience with?', category: 'free_text', empty: true }];
+  assert.deepEqual(aiCandidateFields(fields, { reusableAnswers: [], answerPolicies: [] }).map((field) => field.fieldFingerprint), ['angular']);
+});
+
 test('fill-plan prompt supplies the full verified profile and job evidence with a coverage goal', () => {
   const messages = buildFillPlanMessages({ fields: [{ fieldFingerprint: 'field-a', elementType: 'select', options: ['Yes', 'No'] }], profile: { workAuthorization: 'US citizen', requiresSponsorship: false, desiredSalary: 120000 }, job: { company: 'Example', roleTitle: 'Engineer', description: 'Build systems.' }, resumeText: 'Candidate resume', coverLetterText: 'Candidate cover letter' });
   assert.match(messages[0].content, /Maximize the number/);

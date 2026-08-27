@@ -21,3 +21,9 @@ test('current salary and protected fields remain user-gated', () => {
   assert.equal(answerPolicyForField({ label: 'Legal attestation' }).action, 'ask');
   assert.equal(answerPolicyForField({ label: 'MFA code', inputType: 'text' }).action, 'blocked');
 });
+
+test('common employer wording maps salary requirements and skills experience to safe categories', () => {
+  assert.equal(answerPolicyForField({ label: 'What are your salary requirements?' }).category, 'salary_expectation');
+  assert.equal(answerPolicyForField({ label: 'What is your experience with Service Oriented Architecture?' }).category, 'free_text');
+  assert.equal(answerPolicyForField({ label: 'What current version(s) of Angular do you have experience with?' }).category, 'free_text');
+});

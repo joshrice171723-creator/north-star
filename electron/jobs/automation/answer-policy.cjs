@@ -15,11 +15,16 @@ function normalizeAnswerCategory(field = {}) {
   if (/captcha/.test(text)) return 'authentication_captcha';
   if (/mfa|one time code|verification code/.test(text)) return 'mfa';
   if (/current salary|previous salary|salary history/.test(text)) return 'current_salary';
-  if (/desired salary|salary expectation|compensation expectation|expected salary/.test(text)) return 'salary_expectation';
+  if (/desired salary|salary expectation|compensation expectation|expected salary|salary requirements?|compensation requirements?/.test(text)) return 'salary_expectation';
   if (/relocat/.test(text)) return 'relocation';
   if (/travel/.test(text)) return 'travel';
   if (/sponsor|authorized|visa|work authorization/.test(text)) return /sponsor/.test(text) ? 'sponsorship' : 'work_authorization';
   if (/start date|available|notice period/.test(text)) return 'availability';
+  // Employer forms frequently phrase ordinary skills questions as
+  // "experience with X" or "familiarity with X" instead of using a
+  // textarea-specific label. Treat those as safe evidence-backed questions
+  // so the resume/cover-letter planner can answer them.
+  if (/experience with|years? of experience|familiarity with|proficien(?:cy|t) in|knowledge of|worked with|have you used/.test(text)) return 'free_text';
   return field.category || 'unknown';
 }
 
